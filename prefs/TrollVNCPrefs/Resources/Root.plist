@@ -175,6 +175,28 @@
 			<true/>
 		</dict>
 
+		<!-- File Transfer -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string></string>
+			<key>footerText</key>
+			<string>Allows connected VNC clients to browse, upload and download files in the mobile user's home folder. Set a VNC password before enabling. Tap Apply to restart the service.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>defaults</key>
+			<string>com.82flex.trollvnc</string>
+			<key>key</key>
+			<string>FileTransferEnabled</string>
+			<key>label</key>
+			<string>File Transfer</string>
+			<key>default</key>
+			<false/>
+		</dict>
+
 		<!-- View-only (global) -->
 		<dict>
 			<key>cell</key>

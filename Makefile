@@ -1,4 +1,4 @@
-export PACKAGE_VERSION := 3.2-272
+export PACKAGE_VERSION := 3.2-285
 export THEOS_PACKAGE_SCHEME
 
 ifeq ($(THEOS_DEVICE_SIMULATOR),1)
@@ -23,6 +23,8 @@ TOOL_NAME += trollvncserver
 trollvncserver_USE_MODULES := 0
 
 trollvncserver_FILES += src/trollvncserver.mm
+trollvncserver_FILES += src/FileManagement.c
+trollvncserver_FILES += src/PhotoLibrary.m
 trollvncserver_FILES += src/BulletinManager.mm
 trollvncserver_FILES += src/ClipboardManager.mm
 trollvncserver_FILES += src/ScreenCapturer.mm
@@ -77,6 +79,7 @@ trollvncserver_FRAMEWORKS += CoreGraphics
 trollvncserver_FRAMEWORKS += CoreMedia
 trollvncserver_FRAMEWORKS += CoreVideo
 trollvncserver_FRAMEWORKS += Foundation
+trollvncserver_FRAMEWORKS += Photos
 trollvncserver_FRAMEWORKS += IOKit
 trollvncserver_FRAMEWORKS += IOSurface
 trollvncserver_FRAMEWORKS += QuartzCore

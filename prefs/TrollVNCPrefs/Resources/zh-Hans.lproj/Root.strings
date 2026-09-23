@@ -38,6 +38,8 @@
 
 "Automatically enables iOS AssistiveTouch while clients are connected to improve input support." = "连接期间自动启用 iOS AssistiveTouch，以改善输入支持。";
 
+"Allows connected VNC clients to browse, upload and download files in the mobile user's home folder. Set a VNC password before enabling. Tap Apply to restart the service." = "允许已连接的 VNC 客户端浏览、上传和下载 mobile 用户主目录中的文件。启用前请设置 VNC 密码，并点击“应用”重启服务。";
+
 "Balance quality, latency and battery." = "平衡画质、延迟与电量消耗。";
 
 "Bind Address" = "绑定地址";
@@ -81,6 +83,8 @@
 "Establish a reverse connection to a listening VNC viewer or repeater without opening a server port. This is useful for bypassing firewalls or NAT." = "建立到监听的 VNC 查看器或中继器的反向连接，而无需打开服务器端口。这对于绕过防火墙或 NAT 非常有用。";
 
 "Export Certificate…" = "导出证书…";
+
+"File Transfer" = "文件传输";
 
 "Frame Rate" = "帧率";
 

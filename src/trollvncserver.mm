@@ -44,8 +44,10 @@
 
 #import "BulletinManager.h"
 #import "ClipboardManager.h"
+#import "ClipboardText.h"
 #import "Control.h"
 #import "FBSOrientationObserver.h"
+#import "FileManagement.h"
 #import "IOKitSPI.h"
 #import "Logging.h"
 #import "PSAssistiveTouchSettingsDetail.h"
@@ -4215,6 +4217,9 @@ static void setXCutTextUTF8(char *str, int len, rfbClientPtr cl) {
     if (!str || len < 0)
         len = 0;
 
+    // Keep Extended Clipboard's wire terminator out of UIPasteboard text.
+    len = tvClipboardUTF8TextLength(str, len);
+
     TVLog(@"Clipboard: received client cut text (UTF-8) len=%d", len);
 
     NSData *data = [NSData dataWithBytes:str length:(NSUInteger)len];
@@ -4744,6 +4749,8 @@ static void setupRfbHttpServer(void) {
 }
 
 static BOOL gFileTransferRegistered = NO;
+static BOOL gFileManagementRegistered = NO;
+extern "C" int SetFtpRoot(char *path);
 
 static void setupRfbFileTransferExtension(void) {
     if (!gFileTransferEnabled) {
@@ -4752,8 +4759,20 @@ static void setupRfbFileTransferExtension(void) {
 
     TVLog(@"TightVNC 1.x file transfer extension registered");
     rfbRegisterTightVNCFileTransferExtension();
-
     gFileTransferRegistered = YES;
+    // Both extensions must interpret / as the same directory. The TightVNC
+    // default is the effective user's home, which can differ under RootHide.
+    const char *fileRoot = access("/rootfs/var/mobile", F_OK) == 0
+        ? "/rootfs/var/mobile" : "/var/mobile";
+    if (!SetFtpRoot((char *)fileRoot)) {
+        TVLog(@"Cannot set file transfer root to %s", fileRoot);
+        return;
+    }
+    if (!gViewOnly) {
+        tvRegisterFileManagement(fileRoot);
+        TVLog(@"File management root: %s", fileRoot);
+        gFileManagementRegistered = YES;
+    }
 }
 
 #pragma mark - Setups (Event Model)
@@ -4977,6 +4996,10 @@ static void cleanupAndExit(int code) {
     tvStopRfbEventThread();
 
     if (gFileTransferRegistered) {
+        if (gFileManagementRegistered) {
+            tvUnregisterFileManagement();
+            gFileManagementRegistered = NO;
+        }
         rfbUnregisterTightVNCFileTransferExtension();
     }
 

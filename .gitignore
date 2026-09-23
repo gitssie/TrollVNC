@@ -1,5 +1,6 @@
 .cache
 .theos
+/.deploy/
 compile_commands.json
 /packages
 /refs
@@ -139,4 +140,3 @@ iOSInjectionProject/
 **/xcshareddata/WorkspaceSettings.xcsettings
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,xcode,swift
-

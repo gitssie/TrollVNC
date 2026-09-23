@@ -34,6 +34,11 @@ TrollVNC is a VNC server for iOS devices, allowing remote access and control of 
 trollvncserver -p 5901 -n "My iPhone" [options]
 ```
 
+For a Sileo-installed service, enable **File Transfer** in the TrollVNC settings
+page and tap **Apply** to restart the service. The switch is off by default and
+does not require command-line arguments. Existing VNC connections disconnect
+during the restart. Set a VNC password before enabling file transfer.
+
 ### Options
 
 **Basic**:
@@ -93,6 +98,12 @@ trollvncserver -p 5901 -n "My iPhone" [options]
 
 - `-C on|off` Enable UltraVNC UTF-8 clipboard extension (default: `on`)
 - `-T on|off` Enable TightVNC 1.x file transfer extension (default: `off`)
+
+With file transfer enabled, version 3.2-285 advertises management flags for
+atomic replacement of a regular file and SHA-256 verification. RV uses these
+after uploading a temporary file so an interrupted replacement leaves the
+original in place. All file paths remain confined to the configured mobile
+home root.
 
 **Logging**:
 
@@ -586,6 +597,34 @@ TrollVNC can be preconfigured via a bundled `Managed.plist` for supervised or fl
 </dict>
 </plist>
 ```
+
+## Local Sileo Development Repository
+
+`scripts/deploy_sileo.sh` publishes the current TrollVNC `iphoneos-arm64e`
+package as a small, unsigned local APT repository. It binds the Mac HTTP server
+to loopback only and uses an existing SSH connection (for example, an `iproxy`
+endpoint) to reverse-forward that server onto device loopback.
+
+```sh
+mkdir -m 700 .deploy
+cp scripts/deploy.env.example .deploy/deploy.env
+chmod 600 .deploy/deploy.env
+# Edit every placeholder, then:
+scripts/deploy_sileo.sh deploy
+```
+
+The SSH account must be `mobile`, use the configured identity file, and already
+be present in `known_hosts`. The optional package override must be an absolute
+path directly inside this repository's `packages` directory. Run `status`,
+`verify`, or `stop` with the same script as needed; `--dry-run deploy` validates
+the package and generated repository without publishing or starting services.
+Device-side verification uses the built-in `/usr/bin/zsh` TCP module.
+
+On the device, manually add `http://127.0.0.1:<device-port>/` (matching
+`TROLLVNC_SILEO_DEVICE_PORT`) to Sileo, refresh it, and manually install
+TrollVNC. The script never changes Sileo sources and never installs a package.
+Because the repository is unsigned HTTP, keep it on device loopback and use it
+only for local development.
 
 ## Build with GitHub Actions
 

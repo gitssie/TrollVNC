@@ -38,6 +38,8 @@
 
 "Automatically enables iOS AssistiveTouch while clients are connected to improve input support." = "Automatically enables iOS AssistiveTouch while clients are connected to improve input support.";
 
+"Allows connected VNC clients to browse, upload and download files in the mobile user's home folder. Set a VNC password before enabling. Tap Apply to restart the service." = "Allows connected VNC clients to browse, upload and download files in the mobile user's home folder. Set a VNC password before enabling. Tap Apply to restart the service.";
+
 "Balance quality, latency and battery." = "Balance quality, latency and battery.";
 
 "Bind Address" = "Bind Address";
@@ -81,6 +83,8 @@
 "Establish a reverse connection to a listening VNC viewer or repeater without opening a server port. This is useful for bypassing firewalls or NAT." = "Establish a reverse connection to a listening VNC viewer or repeater without opening a server port. This is useful for bypassing firewalls or NAT.";
 
 "Export Certificate…" = "Export Certificate…";
+
+"File Transfer" = "File Transfer";
 
 "Frame Rate" = "Frame Rate";
 
