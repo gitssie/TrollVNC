@@ -96,7 +96,9 @@ esac
 package="$root/packages/${package_id}_${version}_iphoneos-arm64e.deb"
 [ ! -L "$package" ] || fail "expected package path must not be a symlink"
 rm -f -- "$package"
+umask 022
 make -C "$root" clean package THEOS_PACKAGE_SCHEME=roothide THEBOOTSTRAP= THEOS_DEVICE_SIMULATOR=
+umask 077
 [ -f "$package" ] && [ ! -L "$package" ] || fail "fresh RootHide package was not produced"
 
 mkdir -p "$root/.deploy/tmp"

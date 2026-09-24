@@ -81,7 +81,8 @@ def deb_control(package: Path) -> dict[str, str]:
         ("ar", "p", str(package), payloads[0]), capture_output=True, check=True
     ).stdout
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as tar:
-        files = {entry.name.removeprefix("./") for entry in tar.getmembers() if entry.isfile()}
+        entries = {entry.name.removeprefix("./").rstrip("/"): entry for entry in tar.getmembers()}
+        files = {name for name, entry in entries.items() if entry.isfile()}
         required = {
             "usr/bin/trollvncserver",
             "Library/LaunchDaemons/com.82flex.trollvnc.plist",
@@ -89,6 +90,21 @@ def deb_control(package: Path) -> dict[str, str]:
         }
         if not required.issubset(files):
             raise PublicationError("deb data archive is missing TrollVNC payload files")
+        for name in ("Library", "Library/PreferenceBundles", "Library/PreferenceBundles/TrollVNCPrefs.bundle"):
+            entry = entries.get(name)
+            if entry is None or not entry.isdir() or entry.mode & 0o005 != 0o005:
+                raise PublicationError(f"deb preferences permissions prevent access to {name}")
+        bundle_prefix = "Library/PreferenceBundles/TrollVNCPrefs.bundle/"
+        for name, entry in entries.items():
+            if not name.startswith(bundle_prefix):
+                continue
+            if entry.isdir() and entry.mode & 0o005 != 0o005:
+                raise PublicationError(f"deb preferences permissions prevent access to {name}")
+            if entry.isfile() and entry.mode & 0o004 != 0o004:
+                raise PublicationError(f"deb preferences permissions prevent reading {name}")
+        for name in ("usr/bin/trollvncserver", bundle_prefix + "TrollVNCPrefs"):
+            if entries[name].mode & 0o005 != 0o005:
+                raise PublicationError(f"deb executable permissions prevent running {name}")
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:*") as tar:
         entries = [entry for entry in tar.getmembers() if entry.name in ("control", "./control")]
         if len(entries) != 1 or not entries[0].isfile():

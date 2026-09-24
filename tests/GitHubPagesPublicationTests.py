@@ -21,7 +21,9 @@ SPEC.loader.exec_module(pages)
 
 
 class GitHubPagesPublicationTests(unittest.TestCase):
-    def make_deb(self, root: Path, author: str = "XenSpace") -> Path:
+    def make_deb(
+        self, root: Path, author: str = "XenSpace", bad_permissions: bool = False
+    ) -> Path:
         source = pages.fields_from_control((ROOT / "layout/DEBIAN/control").read_bytes())
         version = pages.expected_version()
         control = dict(source)
@@ -39,13 +41,27 @@ class GitHubPagesPublicationTests(unittest.TestCase):
         data_archive = io.BytesIO()
         with tarfile.open(fileobj=data_archive, mode="w:gz") as tar:
             for name in (
-                "./usr/bin/trollvncserver",
-                "./Library/LaunchDaemons/com.82flex.trollvnc.plist",
-                "./Library/PreferenceBundles/TrollVNCPrefs.bundle/TrollVNCPrefs",
+                "Library",
+                "Library/LaunchDaemons",
+                "Library/PreferenceBundles",
+                "Library/PreferenceBundles/TrollVNCPrefs.bundle",
+                "usr",
+                "usr/bin",
+            ):
+                info = tarfile.TarInfo("./" + name + "/")
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o700 if bad_permissions and name == "Library/PreferenceBundles" else 0o755
+                tar.addfile(info)
+            for name, mode in (
+                ("usr/bin/trollvncserver", 0o755),
+                ("Library/LaunchDaemons/com.82flex.trollvnc.plist", 0o644),
+                ("Library/PreferenceBundles/TrollVNCPrefs.bundle/TrollVNCPrefs", 0o755),
+                ("Library/PreferenceBundles/TrollVNCPrefs.bundle/Info.plist", 0o644),
             ):
                 payload = b"fixture"
-                info = tarfile.TarInfo(name)
+                info = tarfile.TarInfo("./" + name)
                 info.size = len(payload)
+                info.mode = 0o700 if bad_permissions and name.endswith("/TrollVNCPrefs") else mode
                 tar.addfile(info, io.BytesIO(payload))
         (root / "data.tar.gz").write_bytes(data_archive.getvalue())
         package = root / f"{source['Package']}_{version}_iphoneos-arm64e.deb"
@@ -98,6 +114,13 @@ class GitHubPagesPublicationTests(unittest.TestCase):
             published.write_bytes(published.read_bytes() + b"tampered")
             with self.assertRaisesRegex(pages.PublicationError, "differs"):
                 pages.validate_site(output, package)
+
+    def test_rejects_preferences_bundle_hidden_by_package_permissions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = self.make_deb(root, bad_permissions=True)
+            with self.assertRaisesRegex(pages.PublicationError, "permissions"):
+                pages.render(package, root / "site")
 
 
 if __name__ == "__main__":
