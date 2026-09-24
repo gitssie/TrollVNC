@@ -372,6 +372,41 @@ Connect from your browser. Open the bundled web page at `http://<host>:5801/`. T
 - Enabled by default. Toggle with `-B on|off` or in Settings → TrollVNC → “Enable Auto-Discovery”.
 - Viewers on the same LAN that support Bonjour can find it automatically; otherwise connect by `ip:port` shown in the app/logs.
 
+## WireGuard Access with Karing
+
+The Dopamine/rootless package can expose TrollVNC over an existing WireGuard
+network without activating a second system VPN. Open **WireGuard Access** in
+TrollVNC settings, paste a standard `[Interface]`/`[Peer]` configuration, turn
+it on, then tap **Save and restart VNC**. The WireGuard address shown on that
+page is the address to use in the desktop VNC viewer. The configuration is
+parsed into the existing `com.82flex.trollvnc` preferences domain; no separate
+WireGuard configuration file is created. The private key is hidden until the
+configuration is edited and is never printed in the server log.
+
+The phone must be a peer in your existing WireGuard network, with its own
+`Address` and key. The network's other peers must route the phone's address
+to it. If the phone is behind NAT, `PersistentKeepalive = 25` is often useful.
+Only TCP connections arriving at the phone's WireGuard address on the VNC port
+are forwarded to the local TrollVNC listener. The bridge does not create an
+iOS VPN interface or change system routes.
+
+**Karing routing:** A userspace WireGuard UDP socket still uses the iOS network
+route. If Karing is in Global mode, the WireGuard gateway connection can be
+sent through Karing's selected proxy node. To send that connection directly,
+switch Karing to Rule mode and add a high-priority DIRECT rule for the
+WireGuard gateway's public IP (`/32` for IPv4, `/128` for IPv6), while keeping
+the other traffic on your proxy node. DIRECT still passes through Karing's TUN
+and rule engine; it does not bypass Karing at the system routing layer. Use a
+stable IP in the WireGuard `Endpoint` for a reliable IP-based rule.
+
+WireGuard access requires a local VNC listener. Disable Reverse Connection and
+leave Bind Address empty (or bind to loopback) before enabling it. Supported
+configuration keys are `PrivateKey`, `Address`, `ListenPort`, `MTU`, `DNS`,
+`PublicKey`, `PresharedKey`, `Endpoint`, `AllowedIPs`, and
+`PersistentKeepalive`. Unsupported keys are rejected on save rather than
+silently discarded. `DNS` is retained for editing but does not alter system
+DNS because this bridge only serves VNC.
+
 ## Reverse VNC (Reverse Connection)
 
 TrollVNC can initiate an outbound connection to a listening VNC viewer or an UltraVNC repeater. This avoids opening inbound ports on the device and is helpful behind NAT/firewalls.

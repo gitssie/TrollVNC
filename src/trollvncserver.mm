@@ -48,6 +48,7 @@
 #import "Control.h"
 #import "FBSOrientationObserver.h"
 #import "FileManagement.h"
+#import "TVNCWireGuardConfig.h"
 #import "IOKitSPI.h"
 #import "Logging.h"
 #import "PSAssistiveTouchSettingsDetail.h"
@@ -70,6 +71,14 @@ static BOOL gEnabled = YES;
 static int gPort = 5901;
 static int gTvCtlPort = 0;        // port for control connections (0 = disabled)
 static NSString *gBindHost = nil; // optional bind address from CLI/config
+static NSDictionary *gWireGuardConfig = nil;
+static BOOL gWireGuardEnabled = NO;
+static BOOL gWireGuardStarted = NO;
+#if !TARGET_IPHONE_SIMULATOR
+extern "C" char *TVNCWGStart(const char *configurationJSON, int vncPort);
+extern "C" void TVNCWGStop(void);
+extern "C" void TVNCWGFree(char *value);
+#endif
 static NSString *gDesktopName = @"TrollVNC";
 static BOOL gViewOnly = NO;
 static double gKeepAliveSec = 0.0; // 15..86400
@@ -875,6 +884,20 @@ static void parseDaemonOptions(void) {
         }
         gBonjourEnabled = NO; // disable Bonjour advertisement
         TVLog(@"-daemon: Reverse enabled -> overriding: port=-1, http=0, bonjour=off");
+    }
+
+    id wireGuard = [prefs objectForKey:@"WireGuardConfig"];
+    id wireGuardEnabled = [prefs objectForKey:@"WireGuardEnabled"];
+    if ([wireGuard isKindOfClass:[NSDictionary class]] && [wireGuardEnabled respondsToSelector:@selector(boolValue)] &&
+        [wireGuardEnabled boolValue]) {
+        if (gPort <= 0 || (gBindHost.length && ![gBindHost isEqualToString:@"127.0.0.1"] &&
+                           ![gBindHost isEqualToString:@"::1"])) {
+            TVLog(@"WireGuard access requires a local VNC listener; check Reverse Connection and Bind Address");
+        } else {
+            gWireGuardConfig = wireGuard;
+            gWireGuardEnabled = YES;
+            TVLog(@"WireGuard access configured for %@", TVNCWGPrimaryAddress(wireGuard));
+        }
     }
 
     // Passwords via environment (leveraging existing setupRfbClassicAuthentication).
@@ -4824,6 +4847,26 @@ static void initializeAndRunRfbServer(void) {
     rfbInitServer(gScreen);
     TVLog(@"VNC server initialized on port %d, %dx%d, name '%@'", gPort, gWidth, gHeight, gDesktopName);
 
+#if !TARGET_IPHONE_SIMULATOR
+    if (gWireGuardEnabled) {
+        NSError *serializationError = nil;
+        NSData *json = [NSJSONSerialization dataWithJSONObject:gWireGuardConfig options:0 error:&serializationError];
+        if (!json) {
+            TVLog(@"WireGuard settings could not be serialized: %@", serializationError.localizedDescription);
+        } else {
+            NSString *jsonText = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+            char *errorText = TVNCWGStart(jsonText.UTF8String, gPort);
+            if (errorText) {
+                TVLog(@"WireGuard access failed: %s", errorText);
+                TVNCWGFree(errorText);
+            } else {
+                gWireGuardStarted = YES;
+                TVLog(@"WireGuard access listening on %@:%d", TVNCWGPrimaryAddress(gWireGuardConfig), gPort);
+            }
+        }
+    }
+#endif
+
     if (isRepeaterEnabled()) {
         static CFTimeInterval sRetryInterval = 0.0;
         const char *envRetryInterval = getenv("TROLLVNC_REPEATER_RETRY_INTERVAL");
@@ -4983,6 +5026,12 @@ static void dropPrivileges(void) {
 }
 
 static void cleanupAndExit(int code) {
+#if !TARGET_IPHONE_SIMULATOR
+    if (gWireGuardStarted) {
+        TVNCWGStop();
+        gWireGuardStarted = NO;
+    }
+#endif
     // Stop auto discovery
     stopBonjour();
 

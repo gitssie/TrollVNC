@@ -23,6 +23,7 @@ TOOL_NAME += trollvncserver
 trollvncserver_USE_MODULES := 0
 
 trollvncserver_FILES += src/trollvncserver.mm
+trollvncserver_FILES += src/TVNCWireGuardConfig.m
 trollvncserver_FILES += src/FileManagement.c
 trollvncserver_FILES += src/PhotoLibrary.m
 trollvncserver_FILES += src/BulletinManager.mm
@@ -57,7 +58,8 @@ trollvncserver_LDFLAGS += -Llib-simulator
 trollvncserver_LDFLAGS += -FPrivateFrameworks
 else
 trollvncserver_CFLAGS += -Iinclude
-trollvncserver_LDFLAGS += -Llib
+trollvncserver_LDFLAGS += -Llib -Lwgbridge/build
+trollvncserver_LIBRARIES += tvncwg
 endif
 
 ifeq ($(THEOS_DEVICE_SIMULATOR),1)
@@ -127,6 +129,11 @@ SUBPROJECTS += app/TrollVNC
 endif
 
 include $(THEOS_MAKE_PATH)/aggregate.mk
+
+ifeq ($(THEOS_DEVICE_SIMULATOR),)
+before-all::
+	@sh wgbridge/build-ios.sh
+endif
 
 export THEOS_PACKAGE_SCHEME
 export THEOS_STAGING_DIR

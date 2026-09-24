@@ -16,8 +16,11 @@ TrollVNCPrefs_FILES += TVNCRootListController.m
 TrollVNCPrefs_FILES += TVNCSliderCell.m
 TrollVNCPrefs_FILES += StripedTextTableViewController.m
 TrollVNCPrefs_FILES += ZTSelfSignedCertificate.m
+TrollVNCPrefs_FILES += ../../app/TrollVNC/TrollVNC/TVNCWireGuardController.m
+TrollVNCPrefs_FILES += ../../src/TVNCWireGuardConfig.m
 
 TrollVNCPrefs_CFLAGS += -fobjc-arc
+TrollVNCPrefs_CFLAGS += -I../../src -I../../app/TrollVNC/TrollVNC
 TrollVNCPrefs_CFLAGS += -DPACKAGE_VERSION=\"$(PACKAGE_VERSION)\"
 TrollVNCPrefs_CFLAGS += -DTHEOS_PACKAGE_SCHEME=\"$(THEOS_PACKAGE_SCHEME)\"
 

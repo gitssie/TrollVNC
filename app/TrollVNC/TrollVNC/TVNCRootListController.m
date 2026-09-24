@@ -432,6 +432,14 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 
 #pragma mark - Actions
 
+- (void)openWireGuardSettings {
+    [self.bundle load];
+    Class controllerClass = NSClassFromString(@"TVNCWireGuardController");
+    if (!controllerClass) return;
+    UIViewController *controller = [[controllerClass alloc] init];
+    [self.navigationController pushViewController:controller animated:YES];
+}
+
 - (void)applyChanges {
     // Resign first responder status
     [self.view endEditing:YES];
