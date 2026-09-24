@@ -626,6 +626,28 @@ TrollVNC. The script never changes Sileo sources and never installs a package.
 Because the repository is unsigned HTTP, keep it on device loopback and use it
 only for local development.
 
+## Public Sileo Source on GitHub Pages
+
+The XenSpace RootHide package is published at
+`https://gitssie.github.io/TrollVNC`. Add that URL to Sileo, or use
+`sileo://source/https://gitssie.github.io/TrollVNC` on your device.
+
+The publication script builds a fresh `iphoneos-arm64e` deb locally, checks
+the package identity and metadata, renders a static website and APT indexes,
+then pushes only the generated files to `gh-pages`. It does not switch the
+current `main` worktree or run the device tunnel.
+
+```sh
+scripts/publish_github_pages.sh --dry-run publish
+scripts/publish_github_pages.sh publish
+```
+
+Publish from a clean `main` branch that matches `origin/main`. The first time,
+set GitHub **Settings → Pages → Deploy from a branch → gh-pages → /(root)**.
+The page and package metadata show **XenSpace** as the Sileo developer; the
+site and depiction retain attribution to the original TrollVNC project by
+82Flex.
+
 ## Build with GitHub Actions
 
 You can build TrollVNC entirely in GitHub Actions using the built-in workflow.
