@@ -376,9 +376,15 @@ Connect from your browser. Open the bundled web page at `http://<host>:5801/`. T
 
 The Dopamine/rootless package can expose TrollVNC over an existing WireGuard
 network without activating a second system VPN. Open **WireGuard Access** in
-TrollVNC settings, paste a standard `[Interface]`/`[Peer]` configuration, turn
-it on, then tap **Save and restart VNC**. The WireGuard address shown on that
-page is the address to use in the desktop VNC viewer. The configuration is
+TrollVNC settings, paste a standard `[Interface]`/`[Peer]` configuration, then
+tap **Save** in the navigation bar. Saving a profile leaves access off. Turn on
+**WireGuard access** when ready; the switch requests a VNC restart. Saving an
+edited profile never restarts VNC. If access is already enabled, use the main
+settings page's **Apply** button to restart VNC and load the edited profile.
+The saved screen lists Interface addresses, port, MTU, DNS, and each Peer's
+public key, endpoint, allowed IPs, and keepalive. Private and preshared keys
+stay hidden until you choose Edit. The WireGuard address shown on that page is
+the address to use in the desktop VNC viewer. The configuration is
 parsed into the existing `com.82flex.trollvnc` preferences domain; no separate
 WireGuard configuration file is created. The private key is hidden until the
 configuration is edited and is never printed in the server log.
@@ -637,8 +643,7 @@ TrollVNC can be preconfigured via a bundled `Managed.plist` for supervised or fl
 
 `scripts/deploy_sileo.sh` publishes the current TrollVNC `iphoneos-arm64e`
 package as a small, unsigned local APT repository. It binds the Mac HTTP server
-to loopback only and uses an existing SSH connection (for example, an `iproxy`
-endpoint) to reverse-forward that server onto device loopback.
+to `0.0.0.0`, so a phone on the same Wi-Fi can connect to the Mac's LAN IP.
 
 ```sh
 mkdir -m 700 .deploy
@@ -648,18 +653,19 @@ chmod 600 .deploy/deploy.env
 scripts/deploy_sileo.sh deploy
 ```
 
-The SSH account must be `mobile`, use the configured identity file, and already
-be present in `known_hosts`. The optional package override must be an absolute
-path directly inside this repository's `packages` directory. Run `status`,
+The optional package override must be an absolute path directly inside this
+repository's `packages` directory. Run `status`,
 `verify`, or `stop` with the same script as needed; `--dry-run deploy` validates
 the package and generated repository without publishing or starting services.
-Device-side verification uses the built-in `/usr/bin/zsh` TCP module.
+`verify` checks the Mac HTTP endpoint; it cannot confirm reachability from the
+phone. Allow incoming connections to the chosen port in the Mac firewall.
 
-On the device, manually add `http://127.0.0.1:<device-port>/` (matching
-`TROLLVNC_SILEO_DEVICE_PORT`) to Sileo, refresh it, and manually install
-TrollVNC. The script never changes Sileo sources and never installs a package.
-Because the repository is unsigned HTTP, keep it on device loopback and use it
-only for local development.
+On the device, manually add `http://<Mac-LAN-IP>:<mac-http-port>/` (matching
+`TROLLVNC_SILEO_HTTP_PORT`) to Sileo, refresh it, and manually install TrollVNC.
+The script never changes Sileo sources and never installs a package. The source
+uses unsigned HTTP, so use it only on a trusted local network. If migrating
+from the old SSH deployment, run `scripts/deploy_sileo.sh stop` before editing
+`.deploy/deploy.env` to contain only the HTTP port (and optional package path).
 
 ## Public Sileo Source on GitHub Pages
 

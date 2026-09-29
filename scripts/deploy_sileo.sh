@@ -11,14 +11,12 @@ REPO_DIR="$DEPLOY_ROOT/repo"
 STATE_DIR="$DEPLOY_ROOT/state"
 LOG_DIR="$DEPLOY_ROOT/logs"
 TMP_DIR="$DEPLOY_ROOT/tmp"
-SSH_CONFIG="$STATE_DIR/ssh.conf"
 SIGNATURE_FILE="$STATE_DIR/config.signature"
 COMMAND=""
 DRY_RUN=0
 WORK_DIR=""
 ROLLBACK_SERVICES=0
 STARTED_HTTP=0
-STARTED_TUNNEL=0
 DRY_RUN_REPO_VALIDATED=0
 
 usage() {
@@ -27,9 +25,9 @@ Usage: scripts/deploy_sileo.sh [--dry-run] COMMAND
 
 Commands:
   deploy   Validate the current arm64e package, publish it, start, and verify.
-  start    Start or reuse the loopback HTTP server and SSH reverse tunnel.
-  verify   Verify the local repository and the device-loopback endpoint.
-  status   Report repository, HTTP server, tunnel, and endpoint health.
+  start    Start or reuse the LAN HTTP server.
+  verify   Verify the local repository and HTTP endpoint.
+  status   Report repository and HTTP server health.
   stop     Stop only identity-verified deployment processes.
 
 Options:
@@ -101,13 +99,7 @@ require_private_file() {
     require_private_permissions "$description" "$path"
 }
 
-SOURCE_URL=""
 HTTP_PORT=""
-DEVICE_PORT=""
-SSH_HOST=""
-SSH_PORT=""
-SSH_USER=""
-SSH_IDENTITY=""
 PACKAGE_OVERRIDE=""
 
 load_config() {
@@ -145,13 +137,7 @@ load_config() {
         fi
 
         case "$key" in
-            TROLLVNC_SILEO_SOURCE_URL) SOURCE_URL=$value ;;
             TROLLVNC_SILEO_HTTP_PORT) HTTP_PORT=$value ;;
-            TROLLVNC_SILEO_DEVICE_PORT) DEVICE_PORT=$value ;;
-            TROLLVNC_SILEO_SSH_HOST) SSH_HOST=$value ;;
-            TROLLVNC_SILEO_SSH_PORT) SSH_PORT=$value ;;
-            TROLLVNC_SILEO_SSH_USER) SSH_USER=$value ;;
-            TROLLVNC_SILEO_SSH_IDENTITY) SSH_IDENTITY=$value ;;
             TROLLVNC_SILEO_PACKAGE) PACKAGE_OVERRIDE=$value ;;
             *) config_fail "unknown config key on line $line_number: $key" ;;
         esac
@@ -164,24 +150,9 @@ validate_port() {
         config_fail "$name must be an integer from 1 through 65535"
 }
 
-validate_connection_config() {
-    local name value
-    while (($#)); do
-        name=$1
-        value=$2
-        [[ -n "$value" ]] || config_fail "missing required configuration: $name"
-        shift 2
-    done
+validate_http_config() {
+    [[ -n "$HTTP_PORT" ]] || config_fail "missing required configuration: TROLLVNC_SILEO_HTTP_PORT"
     validate_port TROLLVNC_SILEO_HTTP_PORT "$HTTP_PORT"
-    validate_port TROLLVNC_SILEO_DEVICE_PORT "$DEVICE_PORT"
-    validate_port TROLLVNC_SILEO_SSH_PORT "$SSH_PORT"
-    [[ "$SSH_USER" == mobile ]] || config_fail "TROLLVNC_SILEO_SSH_USER must be mobile"
-    [[ "$SSH_HOST" =~ ^[A-Za-z0-9._:-]+$ ]] || config_fail "TROLLVNC_SILEO_SSH_HOST contains unsupported characters"
-    [[ "$SOURCE_URL" == "http://127.0.0.1:$DEVICE_PORT/" ]] ||
-        config_fail "TROLLVNC_SILEO_SOURCE_URL must equal http://127.0.0.1:<device-port>/"
-    [[ "$SSH_IDENTITY" == /* && "$SSH_IDENTITY" != *['"\\%']* ]] ||
-        config_fail "TROLLVNC_SILEO_SSH_IDENTITY must be a safe absolute path"
-    require_private_file "SSH identity" "$SSH_IDENTITY"
 }
 
 require_command() {
@@ -202,7 +173,7 @@ require_publish_commands() {
 
 require_runtime_commands() {
     local command
-    for command in curl lsof nohup python3 ssh; do require_command "$command"; done
+    for command in curl lsof nohup python3; do require_command "$command"; done
 }
 
 assert_managed_path() {
@@ -223,9 +194,8 @@ initialize_state() {
     done
     mkdir -p "$STATE_DIR" "$LOG_DIR" "$TMP_DIR"
     chmod 700 "$DEPLOY_ROOT" "$STATE_DIR" "$LOG_DIR" "$TMP_DIR"
-    for path in "$SSH_CONFIG" "$SIGNATURE_FILE" \
-        "$STATE_DIR/http.process" "$STATE_DIR/tunnel.process" \
-        "$LOG_DIR/http.log" "$LOG_DIR/tunnel.log"; do
+    for path in "$SIGNATURE_FILE" \
+        "$STATE_DIR/http.process" "$LOG_DIR/http.log"; do
         [[ ! -L "$path" ]] || fail "deployment state files must not be symlinks"
     done
 }
@@ -309,7 +279,6 @@ cleanup() {
     local result=$?
     trap - EXIT HUP INT TERM
     if ((result != 0 && ROLLBACK_SERVICES)); then
-        ((STARTED_TUNNEL == 0)) || stop_process tunnel 1 >/dev/null 2>&1 || true
         ((STARTED_HTTP == 0)) || stop_process http 1 >/dev/null 2>&1 || true
     fi
     if [[ -n "$WORK_DIR" && -e "$WORK_DIR" ]]; then remove_managed "$WORK_DIR"; fi
@@ -523,78 +492,12 @@ publish_repository() {
     printf 'repository=published package=%s\n' "$SELECTED_BASENAME"
 }
 
-write_ssh_config() {
-    local temporary="$SSH_CONFIG.tmp.$$"
-    cat > "$temporary" <<EOF
-Host trollvnc-sileo-client
-    HostName $SSH_HOST
-    User mobile
-    Port $SSH_PORT
-    IdentityFile "$SSH_IDENTITY"
-    IdentitiesOnly yes
-    BatchMode yes
-    NumberOfPasswordPrompts 0
-    StrictHostKeyChecking yes
-    UpdateHostKeys no
-    ConnectTimeout 10
-    LogLevel ERROR
-
-Host trollvnc-sileo-tunnel
-    HostName $SSH_HOST
-    User mobile
-    Port $SSH_PORT
-    IdentityFile "$SSH_IDENTITY"
-    IdentitiesOnly yes
-    BatchMode yes
-    NumberOfPasswordPrompts 0
-    StrictHostKeyChecking yes
-    UpdateHostKeys no
-    ExitOnForwardFailure yes
-    ServerAliveInterval 15
-    ServerAliveCountMax 3
-    LogLevel ERROR
-    RemoteForward 127.0.0.1:$DEVICE_PORT 127.0.0.1:$HTTP_PORT
-EOF
-    chmod 600 "$temporary"
-    mv "$temporary" "$SSH_CONFIG"
-}
-
 configuration_signature() {
-    printf '%s\n' "$SOURCE_URL" "$HTTP_PORT" "$DEVICE_PORT" "$SSH_HOST" "$SSH_PORT" "$SSH_USER" "$SSH_IDENTITY" | hash_text
+    printf 'lan-http-v1\n%s\n' "$HTTP_PORT" | hash_text
 }
 
 local_release_matches() {
     cmp -s "$REPO_DIR/Release" <(curl -fsS --max-time 5 "http://127.0.0.1:$HTTP_PORT/Release" 2>/dev/null)
-}
-
-device_release_matches() {
-    local probe result=1
-    probe=$(mktemp "$TMP_DIR/.device-release.XXXXXX") || return 1
-    if ssh -F "$SSH_CONFIG" trollvnc-sileo-client /usr/bin/zsh -s -- "$DEVICE_PORT" \
-        > "$probe" 2>/dev/null <<'REMOTE_ZSH'
-set -eu
-zmodload zsh/net/tcp
-ztcp 127.0.0.1 "$1"
-socket_fd=$REPLY
-printf 'GET /Release HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' >&$socket_fd
-IFS= read -r response_line <&$socket_fd
-response_line=${response_line%$'\r'}
-case "$response_line" in
-    'HTTP/'*' 200 '*) : ;;
-    *) exit 22 ;;
-esac
-while IFS= read -r header_line <&$socket_fd; do
-    header_line=${header_line%$'\r'}
-    [[ -n "$header_line" ]] || break
-done
-dd bs=65536 <&$socket_fd 2>/dev/null
-ztcp -c "$socket_fd"
-REMOTE_ZSH
-    then
-        cmp -s "$REPO_DIR/Release" "$probe" && result=0
-    fi
-    remove_managed "$probe"
-    return "$result"
 }
 
 http_listener_owned() {
@@ -610,8 +513,7 @@ http_listener_owned() {
 services_healthy() {
     local http_pid
     http_pid=$(owned_pid http 2>/dev/null) || return 1
-    owned_pid tunnel >/dev/null 2>&1 || return 1
-    http_listener_owned "$http_pid" && local_release_matches && device_release_matches
+    http_listener_owned "$http_pid" && local_release_matches
 }
 
 wait_for_http() {
@@ -625,54 +527,34 @@ wait_for_http() {
     return 1
 }
 
-wait_for_tunnel() {
-    local attempt=0
-    while ((attempt < 10)); do
-        owned_pid tunnel >/dev/null 2>&1 || return 1
-        device_release_matches && return 0
-        sleep 1
-        attempt=$((attempt + 1))
-    done
-    return 1
-}
-
 start_services() {
-    local signature http_pid tunnel_pid foreign
+    local signature http_pid foreign
     if ((DRY_RUN)); then
         ((DRY_RUN_REPO_VALIDATED)) || validate_repository "$REPO_DIR" || fail "publish a valid repository before start"
-        printf 'dry-run: would bind HTTP only to Mac loopback\n'
-        printf 'dry-run: would establish the mobile-user device loopback reverse tunnel\n'
+        printf 'dry-run: would bind HTTP to 0.0.0.0:%s\n' "$HTTP_PORT"
         return
     fi
     validate_repository "$REPO_DIR" || fail "publish a valid repository before start"
-    write_ssh_config
     signature=$(configuration_signature)
-    if owned_pid http >/dev/null 2>&1 || owned_pid tunnel >/dev/null 2>&1; then
+    if owned_pid http >/dev/null 2>&1; then
         [[ -f "$SIGNATURE_FILE" && "$(awk 'NR == 1 {print; exit}' "$SIGNATURE_FILE")" == "$signature" ]] ||
             fail "running services use different configuration; run stop first"
         services_healthy || fail "owned services are unhealthy; run stop, then start"
         printf 'services=reused\n'
         return
     fi
-    remove_managed "$(process_state_file http)" "$(process_state_file tunnel)"
+    remove_managed "$(process_state_file http)"
     foreign=$(lsof -nP -tiTCP:"$HTTP_PORT" -sTCP:LISTEN 2>/dev/null | awk '!seen[$0]++' || true)
     [[ -z "$foreign" ]] || fail "configured Mac HTTP port is already in use"
     printf '%s\n' "$signature" > "$SIGNATURE_FILE"
     : >> "$LOG_DIR/http.log"
-    : >> "$LOG_DIR/tunnel.log"
     ROLLBACK_SERVICES=1
-    nohup python3 -m http.server "$HTTP_PORT" --bind 127.0.0.1 --directory "$REPO_DIR" \
+    nohup python3 -m http.server "$HTTP_PORT" --bind 0.0.0.0 --directory "$REPO_DIR" \
         </dev/null >> "$LOG_DIR/http.log" 2>&1 &
     http_pid=$!
     record_process http "$http_pid" "http.server $HTTP_PORT" || fail "HTTP server exited before ownership was recorded"
     STARTED_HTTP=1
-    wait_for_http || fail "loopback HTTP server did not become healthy"
-    nohup ssh -F "$SSH_CONFIG" trollvnc-sileo-tunnel -N -T \
-        </dev/null >> "$LOG_DIR/tunnel.log" 2>&1 &
-    tunnel_pid=$!
-    record_process tunnel "$tunnel_pid" "trollvnc-sileo-tunnel -N -T" || fail "SSH tunnel exited before ownership was recorded"
-    STARTED_TUNNEL=1
-    wait_for_tunnel || fail "SSH reverse tunnel did not expose the repository on device loopback"
+    wait_for_http || fail "LAN HTTP server did not become healthy"
     ROLLBACK_SERVICES=0
     printf 'services=started\n'
 }
@@ -680,14 +562,11 @@ start_services() {
 verify_services() {
     local http_pid
     validate_repository "$REPO_DIR" || fail "published repository is invalid"
-    write_ssh_config
     [[ -f "$SIGNATURE_FILE" && "$(awk 'NR == 1 {print; exit}' "$SIGNATURE_FILE")" == "$(configuration_signature)" ]] ||
         fail "running service configuration does not match deploy.env"
     http_pid=$(owned_pid http 2>/dev/null) || fail "owned HTTP server is not running"
-    owned_pid tunnel >/dev/null 2>&1 || fail "owned SSH tunnel is not running"
-    http_listener_owned "$http_pid" && local_release_matches || fail "Mac loopback repository verification failed"
-    device_release_matches || fail "device loopback repository verification failed"
-    printf 'repository=verified\ndevice_endpoint=verified\n'
+    http_listener_owned "$http_pid" && local_release_matches || fail "LAN HTTP repository verification failed"
+    printf 'repository=verified\nhttp_endpoint=verified\n'
 }
 
 status_services() {
@@ -705,13 +584,6 @@ status_services() {
         printf 'http=stopped\n'
         ok=0
     fi
-    if owned_pid tunnel >/dev/null 2>&1; then
-        printf 'tunnel=running\n'
-        if ((ok)) && device_release_matches; then printf 'device_endpoint=healthy\n'; else printf 'device_endpoint=unreachable-or-mismatched\n'; ok=0; fi
-    else
-        printf 'tunnel=stopped\ndevice_endpoint=unreachable\n'
-        ok=0
-    fi
     ((ok == 1))
 }
 
@@ -720,21 +592,13 @@ stop_services() {
         printf 'dry-run: would stop only identity-verified deployment processes\n'
         return
     fi
-    stop_process tunnel
     stop_process http
-    remove_managed "$SIGNATURE_FILE" "$SSH_CONFIG"
+    remove_managed "$SIGNATURE_FILE"
 }
 
-load_config
 if [[ "$COMMAND" != stop ]]; then
-    validate_connection_config \
-        TROLLVNC_SILEO_SOURCE_URL "$SOURCE_URL" \
-        TROLLVNC_SILEO_HTTP_PORT "$HTTP_PORT" \
-        TROLLVNC_SILEO_DEVICE_PORT "$DEVICE_PORT" \
-        TROLLVNC_SILEO_SSH_HOST "$SSH_HOST" \
-        TROLLVNC_SILEO_SSH_PORT "$SSH_PORT" \
-        TROLLVNC_SILEO_SSH_USER "$SSH_USER" \
-        TROLLVNC_SILEO_SSH_IDENTITY "$SSH_IDENTITY"
+    load_config
+    validate_http_config
 fi
 require_common_commands
 initialize_state
@@ -761,7 +625,6 @@ case "$COMMAND" in
     status)
         require_publish_commands
         require_runtime_commands
-        write_ssh_config
         status_services
         ;;
     stop) stop_services ;;

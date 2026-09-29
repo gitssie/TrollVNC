@@ -20,4 +20,10 @@ if [ -f "$SERV_AGENT" ]; then
     launchctl load -w -F "$SERV_AGENT" || true
 fi
 
+# Settings keeps preference bundles loaded while its process is alive.
+# Make the updated TrollVNC page available when the user opens Settings again.
+if command -v killall >/dev/null 2>&1; then
+    killall Preferences || true
+fi
+
 exit 0
