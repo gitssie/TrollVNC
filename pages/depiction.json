@@ -1,0 +1,48 @@
+{
+  "class": "DepictionTabView",
+  "minVersion": "0.4",
+  "tintColor": "#b6f36a",
+  "tabs": [
+    {
+      "class": "DepictionStackView",
+      "tabname": "Details",
+      "views": [
+        {
+          "class": "DepictionMarkdownView",
+          "markdown": "# TrollVNC {{VERSION}}\n\nControl and view your iPhone over VNC. This **XenSpace** build is packaged for **Dopamine RootHide** on iOS 15 or later.\n\n- VNC access on your local network\n- Reverse connections to a listening viewer or UltraVNC repeater\n- Browser viewer and file transfer support\n\n**Package:** {{ARCHITECTURE}} · {{PACKAGE_SIZE}}\n\n**SHA-256:** `{{SHA256}}`\n\nBased on the open-source TrollVNC project by 82Flex."
+        },
+        {
+          "class": "DepictionSeparatorView"
+        },
+        {
+          "class": "DepictionTableButtonView",
+          "title": "Project website",
+          "action": "{{SOURCE_URL}}",
+          "openExternal": true
+        },
+        {
+          "class": "DepictionTableButtonView",
+          "title": "View source on GitHub",
+          "action": "https://github.com/gitssie/TrollVNC",
+          "openExternal": true
+        }
+      ]
+    },
+    {
+      "class": "DepictionStackView",
+      "tabname": "Install",
+      "views": [
+        {
+          "class": "DepictionMarkdownView",
+          "markdown": "## Install with Sileo\n\nAdd `{{SOURCE_URL}}` as a source, refresh it, then install **TrollVNC**. This package is for Dopamine RootHide on iOS 15+."
+        },
+        {
+          "class": "DepictionTableButtonView",
+          "title": "Add source to Sileo",
+          "action": "{{SILEO_URL}}",
+          "openExternal": true
+        }
+      ]
+    }
+  ]
+}

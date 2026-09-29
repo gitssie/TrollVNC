@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101512">
+  <meta name="description" content="TrollVNC for Dopamine RootHide. View and control your iPhone over VNC.">
+  <title>TrollVNC — remote access for iPhone</title>
+  <link rel="icon" href="icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&amp;family=DM+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#101512; --panel:#19211b; --panel2:#202b23; --line:#344338; --text:#eef4e7; --muted:#9aaa9b; --signal:#b6f36a; --signal-dark:#273a21; --mono:"IBM Plex Mono",monospace; --display:"Chakra Petch",sans-serif; --body:"DM Sans",sans-serif; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; color:var(--text); background:var(--bg); font-family:var(--body); -webkit-font-smoothing:antialiased; }
+    body::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; background:radial-gradient(ellipse 48% 36% at 80% 15%,rgba(116,169,70,.12),transparent),linear-gradient(rgba(182,243,106,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(182,243,106,.018) 1px,transparent 1px); background-size:auto,44px 44px,44px 44px; }
+    a { color:inherit; text-decoration:none; }
+    a:focus-visible,button:focus-visible { outline:2px solid var(--signal); outline-offset:4px; }
+    .wrap { width:min(1160px,calc(100% - 48px)); margin:auto; }
+    .topbar { border-bottom:1px solid var(--line); }
+    .topbar .wrap { min-height:76px; display:flex; align-items:center; justify-content:space-between; gap:24px; }
+    .brand { display:flex; align-items:center; gap:12px; font:700 19px var(--display); letter-spacing:.02em; }
+    .brand img { width:36px; height:36px; border-radius:9px; }
+    .toplinks { display:flex; gap:26px; align-items:center; color:var(--muted); font:500 12px var(--mono); text-transform:uppercase; letter-spacing:.07em; }
+    .toplinks a:hover,.footer a:hover { color:var(--signal); }
+    .status { display:inline-flex; align-items:center; gap:8px; color:var(--signal); white-space:nowrap; }
+    .status::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--signal); box-shadow:0 0 0 5px rgba(182,243,106,.10); }
+    .hero { min-height:640px; display:grid; grid-template-columns:1.08fr .92fr; align-items:center; gap:clamp(42px,6vw,90px); padding:86px 0 96px; }
+    .eyebrow { display:flex; align-items:center; gap:12px; margin:0 0 25px; font:600 11px var(--mono); letter-spacing:.16em; text-transform:uppercase; color:var(--signal); }
+    .eyebrow::before { content:""; width:26px; height:1px; background:var(--signal); }
+    h1,h2,h3,p { margin-top:0; }
+    h1 { max-width:700px; margin-bottom:26px; font:700 clamp(56px,7.2vw,106px)/.89 var(--display); letter-spacing:-.065em; }
+    h1 em { font-style:normal; color:var(--signal); }
+    .lede { max-width:540px; color:#b7c6b7; font-size:18px; line-height:1.72; margin-bottom:32px; }
+    .actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+    .button { min-height:50px; display:inline-flex; align-items:center; justify-content:center; gap:12px; padding:0 20px; border:1px solid var(--line); border-radius:4px; font:600 13px var(--mono); transition:transform .2s,background .2s,border-color .2s; }
+    .button:hover { transform:translateY(-3px); border-color:var(--signal); }
+    .button.primary { background:var(--signal); border-color:var(--signal); color:#111b0e; }
+    .button.primary:hover { background:#ceff94; }
+    .hero-meta { margin-top:32px; display:flex; flex-wrap:wrap; gap:12px 24px; color:var(--muted); font:500 11px var(--mono); text-transform:uppercase; letter-spacing:.08em; }
+    .hero-meta span::before { content:"+"; color:var(--signal); margin-right:9px; }
+    .display { position:relative; max-width:500px; width:100%; margin:auto; padding:12px; border:1px solid #566b58; border-radius:18px; background:#253128; box-shadow:0 40px 90px rgba(0,0,0,.4),inset 0 1px rgba(255,255,255,.1); transform:rotate(2deg); }
+    .display::after { content:""; position:absolute; inset:-16px; border:1px solid rgba(182,243,106,.12); border-radius:28px; pointer-events:none; }
+    .display-head { height:35px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 8px; font:500 10px var(--mono); color:#abc0aa; letter-spacing:.09em; text-transform:uppercase; }
+    .display-head i { display:inline-block; width:7px; height:7px; margin-right:5px; border-radius:50%; background:var(--signal); }
+    .viewport { min-height:380px; position:relative; overflow:hidden; border:1px solid #405440; border-radius:7px; background:radial-gradient(circle at 50% 30%,#344d35,#17251b 67%); }
+    .viewport::before { content:""; position:absolute; inset:0; background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.13) 3px 4px); pointer-events:none; z-index:3; }
+    .crosshair { position:absolute; width:340px; height:340px; left:50%; top:51%; transform:translate(-50%,-50%); border:1px solid rgba(182,243,106,.16); border-radius:50%; box-shadow:0 0 0 57px rgba(182,243,106,.035),0 0 0 114px rgba(182,243,106,.025); }
+    .crosshair::before,.crosshair::after { content:""; position:absolute; background:rgba(182,243,106,.14); }
+    .crosshair::before { left:50%; top:-80px; width:1px; height:500px; }
+    .crosshair::after { top:50%; left:-80px; height:1px; width:500px; }
+    .phone { position:absolute; width:166px; height:305px; left:50%; top:51%; transform:translate(-50%,-50%) rotate(-8deg); border:5px solid #c8dbc7; border-radius:28px; background:linear-gradient(155deg,#465f47,#213b2c 58%,#14271d); box-shadow:17px 25px 30px rgba(0,0,0,.45),inset 0 0 0 2px #102317; }
+    .phone::before { content:""; position:absolute; width:50px; height:10px; border-radius:0 0 10px 10px; background:#c8dbc7; top:-1px; left:calc(50% - 25px); }
+    .phone::after { content:"◉"; position:absolute; left:27px; top:95px; font:120px var(--display); color:rgba(182,243,106,.66); text-shadow:0 0 50px rgba(182,243,106,.45); }
+    .phone-label { position:absolute; left:17px; bottom:21px; font:600 10px var(--mono); color:#d3ecc3; letter-spacing:.08em; }
+    .viewport-tag { position:absolute; z-index:4; padding:7px 9px; border:1px solid rgba(182,243,106,.32); background:rgba(14,28,18,.8); color:var(--signal); font:500 9px var(--mono); letter-spacing:.1em; }
+    .viewport-tag.one { top:23px; left:22px; }.viewport-tag.two { bottom:22px; right:22px; }
+    .display-foot { display:flex; justify-content:space-between; gap:8px; padding:13px 8px 4px; color:#9eae9e; font:500 10px var(--mono); letter-spacing:.08em; }
+    .section { border-top:1px solid var(--line); padding:84px 0; }
+    .section-heading { display:flex; justify-content:space-between; align-items:end; gap:24px; margin-bottom:28px; }
+    .section h2 { margin:0; font:700 clamp(32px,4vw,52px)/1 var(--display); letter-spacing:-.04em; }
+    .section-kicker { margin:0 0 13px; color:var(--signal); font:600 11px var(--mono); letter-spacing:.13em; text-transform:uppercase; }
+    .section-note { max-width:330px; margin:0; color:var(--muted); font-size:14px; line-height:1.6; }
+    .features { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+    .feature { min-height:220px; padding:28px; border:1px solid var(--line); background:linear-gradient(145deg,rgba(43,61,44,.55),rgba(25,33,27,.75)); }
+    .feature .num { color:var(--signal); font:500 11px var(--mono); letter-spacing:.1em; }
+    .feature h3 { margin:47px 0 10px; font:600 21px var(--display); }
+    .feature p { margin:0; color:var(--muted); line-height:1.55; font-size:14px; }
+    .install { display:grid; grid-template-columns:1fr 1fr; gap:48px; align-items:start; }
+    .steps { display:grid; gap:1px; border:1px solid var(--line); background:var(--line); }
+    .step { display:flex; gap:18px; padding:19px 22px; background:var(--panel); }
+    .step b { color:var(--signal); font:600 12px var(--mono); }
+    .step span { font-size:14px; line-height:1.5; }
+    .sourcebox { margin-top:24px; padding:20px; border:1px solid var(--line); background:#131b15; }
+    .sourcebox label { display:block; color:var(--muted); margin-bottom:10px; font:500 10px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+    .sourcebox code { display:block; overflow-wrap:anywhere; color:var(--signal); font:500 13px var(--mono); }
+    .download { display:flex; flex-wrap:wrap; align-items:center; gap:13px; margin-top:24px; }
+    .checksum { max-width:100%; overflow-wrap:anywhere; color:var(--muted); font:11px/1.7 var(--mono); }
+    .footer { display:flex; justify-content:space-between; flex-wrap:wrap; gap:16px; padding:28px 0 44px; border-top:1px solid var(--line); color:var(--muted); font:12px/1.6 var(--mono); }
+    .footer a { color:var(--text); }
+    @media (max-width:850px) { .hero { grid-template-columns:1fr; padding:70px 0; } .display { max-width:480px; } .features { grid-template-columns:1fr; } .feature { min-height:0; } .feature h3 { margin-top:25px; } .install { grid-template-columns:1fr; gap:30px; } }
+    @media (max-width:560px) { .wrap { width:min(100% - 32px,1160px); } .topbar .wrap { min-height:66px; } .toplinks { gap:12px; } .toplinks .status { display:none; } .hero { gap:55px; } h1 { font-size:clamp(54px,14vw,80px); } .lede { font-size:16px; } .viewport { min-height:310px; } .phone { transform:translate(-50%,-50%) rotate(-8deg) scale(.82); } .section { padding:65px 0; } .section-heading { display:block; } .section-note { margin-top:18px; } .display-head,.display-foot { font-size:8px; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } .button { transition:none; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <nav class="wrap" aria-label="Main navigation">
+      <a class="brand" href="#top"><img src="icon.png" alt=""><span>TrollVNC</span></a>
+      <div class="toplinks"><span class="status">RootHide build</span><a href="#install">Install</a><a href="https://github.com/gitssie/TrollVNC">GitHub ↗</a></div>
+    </nav>
+  </header>
+  <main id="top">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div>
+        <p class="eyebrow">Remote access / iPhone</p>
+        <h1 id="hero-title">Your screen.<br><em>Anywhere.</em></h1>
+        <p class="lede">TrollVNC turns your iPhone into a VNC server. View, control, and connect from the tools you already use, with a dedicated build for Dopamine RootHide.</p>
+        <div class="actions"><a class="button primary" href="{{SILEO_URL}}">Add to Sileo <span aria-hidden="true">↗</span></a><a class="button" href="#install">Installation guide <span aria-hidden="true">↓</span></a></div>
+        <div class="hero-meta"><span>iOS 15+</span><span>{{ARCHITECTURE}}</span><span>Version {{VERSION}}</span></div>
+      </div>
+      <div class="display" aria-label="Illustration of a remote iPhone display">
+        <div class="display-head"><span><i></i> TrollVNC / live session</span><span>5901 : TCP</span></div>
+        <div class="viewport"><div class="crosshair"></div><div class="phone"><span class="phone-label">REMOTE DISPLAY</span></div><span class="viewport-tag one">DISPLAY ONLINE</span><span class="viewport-tag two">CONTROL ACTIVE</span></div>
+        <div class="display-foot"><span>SECURE YOUR NETWORK</span><span>ROOT HIDE / IOS 15+</span></div>
+      </div>
+    </section>
+    <section class="section" id="features">
+      <div class="wrap">
+        <div class="section-heading"><div><p class="section-kicker">01 / Capabilities</p><h2>Connect your way.</h2></div><p class="section-note">Use a desktop VNC viewer, connect back to a listening viewer, or open the browser client on your local network.</p></div>
+        <div class="features">
+          <article class="feature"><span class="num">01 / LOCAL NETWORK</span><h3>Direct VNC</h3><p>Reach the device from a compatible VNC viewer and interact with the screen.</p></article>
+          <article class="feature"><span class="num">02 / OUTBOUND</span><h3>Reverse connection</h3><p>Connect to a listening viewer or an UltraVNC repeater without opening an inbound device port.</p></article>
+          <article class="feature"><span class="num">03 / BROWSER</span><h3>Web client</h3><p>Open the bundled browser viewer when the optional HTTP service is enabled.</p></article>
+        </div>
+      </div>
+    </section>
+    <section class="section" id="install">
+      <div class="wrap install">
+        <div><p class="section-kicker">02 / Installation</p><h2>Ready for<br>RootHide.</h2><p class="section-note" style="margin-top:21px">This package is built for Dopamine RootHide on iOS 15 or later. Add the source in Sileo, refresh, and install TrollVNC.</p><div class="sourcebox"><label for="source-url">Sileo source URL</label><code id="source-url">{{SOURCE_URL}}</code></div><div class="download"><a class="button primary" href="{{SILEO_URL}}">Add source to Sileo ↗</a><a class="button" href="{{PACKAGE_URL}}">Download .deb ↓</a></div></div>
+        <div><div class="steps"><div class="step"><b>01</b><span>Open Sileo on your RootHide device.</span></div><div class="step"><b>02</b><span>Add this repository using the source URL or the button on this page.</span></div><div class="step"><b>03</b><span>Refresh sources, find TrollVNC, then install version {{VERSION}}.</span></div></div><p class="checksum">Package size: {{PACKAGE_SIZE}}<br>SHA-256: {{SHA256}}</p></div>
+      </div>
+    </section>
+  </main>
+  <footer class="wrap footer"><span>TrollVNC / XenSpace · Based on TrollVNC by 82Flex.</span><span><a href="https://github.com/gitssie/TrollVNC">Source code</a> · <a href="depiction.json">Sileo depiction</a></span></footer>
+</body>
+</html>

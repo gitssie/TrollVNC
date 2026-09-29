@@ -92,6 +92,34 @@ static BOOL tvImageExtension(NSString *name) {
     return [@[@"png", @"jpg", @"jpeg", @"heic", @"heif"] containsObject:name.pathExtension.lowercaseString];
 }
 
+// A Photos page carries up to twelve previews in one 60 KB file reply. Keep
+// each JPEG small enough for that reply, but preserve detailed images by
+// reducing quality and dimensions instead of silently omitting the preview.
+static NSString *tvThumbnailPreview(UIImage *image) {
+    if (!image || image.size.width <= 0 || image.size.height <= 0)
+        return @"";
+    const CGFloat edges[] = {64, 48, 32, 24, 16, 8, 1};
+    const CGFloat qualities[] = {0.45, 0.30, 0.15, 0.05};
+    for (NSUInteger sizeIndex = 0; sizeIndex < sizeof(edges) / sizeof(edges[0]); sizeIndex++) {
+        CGFloat edge = edges[sizeIndex];
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(edge, edge), YES, 1.0);
+        CGFloat scale = MAX(edge / image.size.width, edge / image.size.height);
+        CGSize scaled = CGSizeMake(image.size.width * scale, image.size.height * scale);
+        [image drawInRect:CGRectMake((edge - scaled.width) / 2,
+                                     (edge - scaled.height) / 2,
+                                     scaled.width, scaled.height)];
+        UIImage *square = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        for (NSUInteger qualityIndex = 0;
+             qualityIndex < sizeof(qualities) / sizeof(qualities[0]); qualityIndex++) {
+            NSData *jpeg = UIImageJPEGRepresentation(square, qualities[qualityIndex]);
+            if (jpeg.length && jpeg.length <= 2400)
+                return [jpeg base64EncodedStringWithOptions:0];
+        }
+    }
+    return @"";
+}
+
 static NSString *tvImport(const char *root, NSString *path, NSString *expected, NSString **error) {
     if (!tvAuthorized(error))
         return nil;
@@ -264,15 +292,14 @@ static NSString *tvList(NSString *requestText, NSString **error) {
                 (void)info;
                 thumbnail = image;
             }];
-        NSData *jpeg = thumbnail ? UIImageJPEGRepresentation(thumbnail, 0.45) : nil;
-        NSString *preview = jpeg.length <= 2400 ? [jpeg base64EncodedStringWithOptions:0] : nil;
+        NSString *preview = tvThumbnailPreview(thumbnail);
         [entries addObject:@{
             @"id": asset.localIdentifier ?: @"",
             @"name": resource.originalFilename ?: @"Photo",
             @"date": @((long long)asset.creationDate.timeIntervalSince1970),
             @"width": @(asset.pixelWidth),
             @"height": @(asset.pixelHeight),
-            @"thumbnail": preview ?: @""
+            @"thumbnail": preview
         }];
     }
     return tvJSON(@{@"total": @(assets.count), @"offset": @(offset), @"album": albumID ?: [NSNull null], @"albums": albums, @"entries": entries});
