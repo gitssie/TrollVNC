@@ -298,7 +298,7 @@
 			<key>key</key>
 			<string>Scale</string>
 			<key>default</key>
-			<real>1.0</real>
+			<real>0.28</real>
 			<key>min</key>
 			<real>0.1</real>
 			<key>max</key>
