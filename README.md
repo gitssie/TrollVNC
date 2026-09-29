@@ -372,12 +372,14 @@ Connect from your browser. Open the bundled web page at `http://<host>:5801/`. T
 - Enabled by default. Toggle with `-B on|off` or in Settings → TrollVNC → “Enable Auto-Discovery”.
 - Viewers on the same LAN that support Bonjour can find it automatically; otherwise connect by `ip:port` shown in the app/logs.
 
-## WireGuard Access with Karing
+## Optional WireGuard VPN Access
 
-The Dopamine/rootless package can expose TrollVNC over an existing WireGuard
-network without activating a second system VPN. Open **WireGuard Access** in
-TrollVNC settings, paste a standard `[Interface]`/`[Peer]` configuration, then
-tap **Save** in the navigation bar. Saving a profile leaves access off. Turn on
+TrollVNC does not require a VPN. It can serve VNC on the local network as usual.
+WireGuard is an optional way to reach VNC through an encrypted tunnel. Its
+built-in userspace client connects to a standard WireGuard peer; it does not
+require Karing or another VPN app. Open **WireGuard Access** in TrollVNC
+settings, paste a standard `[Interface]`/`[Peer]` configuration, then tap
+**Save** in the navigation bar. Saving a profile leaves access off. Turn on
 **WireGuard access** when ready; the switch requests a VNC restart. Saving an
 edited profile never restarts VNC. If access is already enabled, use the main
 settings page's **Apply** button to restart VNC and load the edited profile.
@@ -396,15 +398,6 @@ Only TCP connections arriving at the phone's WireGuard address on the VNC port
 are forwarded to the local TrollVNC listener. The bridge does not create an
 iOS VPN interface or change system routes.
 
-**Karing routing:** A userspace WireGuard UDP socket still uses the iOS network
-route. If Karing is in Global mode, the WireGuard gateway connection can be
-sent through Karing's selected proxy node. To send that connection directly,
-switch Karing to Rule mode and add a high-priority DIRECT rule for the
-WireGuard gateway's public IP (`/32` for IPv4, `/128` for IPv6), while keeping
-the other traffic on your proxy node. DIRECT still passes through Karing's TUN
-and rule engine; it does not bypass Karing at the system routing layer. Use a
-stable IP in the WireGuard `Endpoint` for a reliable IP-based rule.
-
 WireGuard access requires a local VNC listener. Disable Reverse Connection and
 leave Bind Address empty (or bind to loopback) before enabling it. Supported
 configuration keys are `PrivateKey`, `Address`, `ListenPort`, `MTU`, `DNS`,
@@ -412,6 +405,14 @@ configuration keys are `PrivateKey`, `Address`, `ListenPort`, `MTU`, `DNS`,
 `PersistentKeepalive`. Unsupported keys are rejected on save rather than
 silently discarded. `DNS` is retained for editing but does not alter system
 DNS because this bridge only serves VNC.
+
+### If another VPN is enabled
+
+A separate VPN or proxy app can affect the UDP route to the WireGuard gateway.
+If you use Karing at the same time, its Rule mode can send the gateway's public
+IP directly (`/32` for IPv4, `/128` for IPv6) instead of through a proxy node.
+Karing's DIRECT rule still uses its TUN and rule engine. A stable IP in the
+WireGuard `Endpoint` makes an IP-based rule predictable.
 
 ## Reverse VNC (Reverse Connection)
 
