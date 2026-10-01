@@ -6,8 +6,6 @@
 	<string>TrollVNC</string>
 	<key>items</key>
 	<array>
-
-		<!-- General -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -18,18 +16,12 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>defaults</key>
-			<string>com.82flex.trollvnc</string>
-			<key>key</key>
-			<string>Enabled</string>
+			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>Enabled</string>
-			<key>default</key>
-			<true/>
+			<string>Network settings…</string>
+			<key>action</key>
+			<string>openNetworkSettings</string>
 		</dict>
-
-		<!-- Desktop Name -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -54,15 +46,13 @@
 			<key>keyboard</key>
 			<string>alphabet</string>
 		</dict>
-
-		<!-- Bind Address -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string></string>
 			<key>footerText</key>
-			<string>Bind to a specific local IP address. Leave empty to listen on all interfaces.</string>
+			<string>Shared listen address for VNC and ZXTouch. Leave empty for Wi-Fi and WireGuard access.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -78,15 +68,13 @@
 			<key>noAutoCorrect</key>
 			<true/>
 		</dict>
-
-		<!-- TCP Port -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string></string>
 			<key>footerText</key>
-			<string>VNC TCP port. Default 5901. Valid range 1024–65535.</string>
+			<string>VNC and ZXTouch always run together on the same network. Ports must differ. Tap Apply to restart both services.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -96,7 +84,7 @@
 			<key>key</key>
 			<string>Port</string>
 			<key>label</key>
-			<string>TCP Port</string>
+			<string>VNC Port</string>
 			<key>default</key>
 			<integer>5901</integer>
 			<key>decimal</key>
@@ -108,8 +96,26 @@
 			<key>placeholder</key>
 			<string>5901</string>
 		</dict>
-
-		<!-- Full-access Password -->
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextCell</string>
+			<key>defaults</key>
+			<string>com.82flex.trollvnc</string>
+			<key>key</key>
+			<string>ZXTouchPort</string>
+			<key>label</key>
+			<string>ZXTouch Port</string>
+			<key>default</key>
+			<integer>6000</integer>
+			<key>decimal</key>
+			<true/>
+			<key>isNumeric</key>
+			<true/>
+			<key>noAutoCorrect</key>
+			<true/>
+			<key>placeholder</key>
+			<string>6000</string>
+		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -130,8 +136,6 @@
 			<key>placeholder</key>
 			<string>8 characters max.</string>
 		</dict>
-
-		<!-- View-only Password -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -152,8 +156,6 @@
 			<key>placeholder</key>
 			<string>8 characters max.</string>
 		</dict>
-
-		<!-- Clipboard Sync -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -174,8 +176,6 @@
 			<key>default</key>
 			<true/>
 		</dict>
-
-		<!-- File Transfer -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -196,8 +196,6 @@
 			<key>default</key>
 			<false/>
 		</dict>
-
-		<!-- View-only (global) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -218,8 +216,6 @@
 			<key>default</key>
 			<false/>
 		</dict>
-
-		<!-- User Notifications -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -252,8 +248,6 @@
 			<key>default</key>
 			<true/>
 		</dict>
-
-		<!-- Keep-Alive (sec) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -280,8 +274,6 @@
 			<key>format</key>
 			<string>%.0fs</string>
 		</dict>
-
-		<!-- Output Scale -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -308,8 +300,6 @@
 			<key>format</key>
 			<string>%.2f</string>
 		</dict>
-
-		<!-- Frame Rate -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -332,8 +322,6 @@
 			<key>noAutoCorrect</key>
 			<true/>
 		</dict>
-
-		<!-- Sync Orientation -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -391,8 +379,6 @@
 			<key>staticTextMessage</key>
 			<string>Apply a fixed rotation offset to the captured display. Useful for iPad models with non-standard default orientations.</string>
 		</dict>
-
-		<!-- Natural Scroll Direction -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -413,8 +399,6 @@
 			<key>default</key>
 			<false/>
 		</dict>
-
-		<!-- Modifier Mapping -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -454,8 +438,6 @@
 			<key>staticTextMessage</key>
 			<string>Standard: Alt as Option, Super as Command. On macOS clients, Alt as Command (altcmd) is recommended.</string>
 		</dict>
-
-		<!-- Assistive Touch -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -476,8 +458,6 @@
 			<key>default</key>
 			<false/>
 		</dict>
-
-		<!-- Server-Side Cursor -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -498,8 +478,6 @@
 			<key>default</key>
 			<false/>
 		</dict>
-
-		<!-- Defer Window (sec) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -526,8 +504,6 @@
 			<key>format</key>
 			<string>%.3fs</string>
 		</dict>
-
-		<!-- Max In-flight -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -546,9 +522,9 @@
 			<key>default</key>
 			<integer>2</integer>
 			<key>min</key>
-			<real>0</real>
+			<real>0.0</real>
 			<key>max</key>
-			<real>8</real>
+			<real>8.0</real>
 			<key>isSegmented</key>
 			<true/>
 			<key>segmentCount</key>
@@ -556,8 +532,6 @@
 			<key>showValue</key>
 			<true/>
 		</dict>
-
-		<!-- Tile Size (px) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -576,16 +550,14 @@
 			<key>default</key>
 			<integer>32</integer>
 			<key>min</key>
-			<real>8</real>
+			<real>8.0</real>
 			<key>max</key>
-			<real>128</real>
+			<real>128.0</real>
 			<key>showValue</key>
 			<true/>
 			<key>format</key>
 			<string>%.0fpx</string>
 		</dict>
-
-		<!-- Fullscreen Threshold (%) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -604,16 +576,14 @@
 			<key>default</key>
 			<integer>0</integer>
 			<key>min</key>
-			<real>0</real>
+			<real>0.0</real>
 			<key>max</key>
-			<real>100</real>
+			<real>100.0</real>
 			<key>showValue</key>
 			<true/>
 			<key>format</key>
 			<string>%.0f%%</string>
 		</dict>
-
-		<!-- Max Rects -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -632,14 +602,12 @@
 			<key>default</key>
 			<integer>256</integer>
 			<key>min</key>
-			<real>1</real>
+			<real>1.0</real>
 			<key>max</key>
-			<real>4096</real>
+			<real>4096.0</real>
 			<key>showValue</key>
 			<true/>
 		</dict>
-
-		<!-- Non-blocking Swap -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -660,8 +628,6 @@
 			<key>default</key>
 			<false/>
 		</dict>
-
-		<!-- Wheel Step (px) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -688,8 +654,6 @@
 			<key>format</key>
 			<string>%.0fpx</string>
 		</dict>
-
-		<!-- Wheel Tuning (advanced) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -712,8 +676,6 @@
 			<key>noAutoCorrect</key>
 			<true/>
 		</dict>
-
-		<!-- HTTP Port (advanced) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -740,8 +702,6 @@
 			<key>placeholder</key>
 			<string>0</string>
 		</dict>
-
- 		<!-- HTTP Document Root (advanced) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -764,8 +724,6 @@
 			<key>noAutoCorrect</key>
 			<true/>
 		</dict>
-
-		<!-- SSL Certificate File (advanced) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -788,8 +746,6 @@
 			<key>noAutoCorrect</key>
 			<true/>
 		</dict>
-
-		<!-- SSL Private Key File (advanced) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -820,33 +776,13 @@
 			<key>action</key>
 			<string>generateKeys</string>
 		</dict>
-
-		<!-- Userspace WireGuard access -->
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>Remote Access</string>
-			<key>footerText</key>
-			<string>Connect through an existing WireGuard network without activating another system VPN.</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSButtonCell</string>
-			<key>label</key>
-			<string>WireGuard Access…</string>
-			<key>action</key>
-			<string>openWireGuardSettings</string>
-		</dict>
-
-		<!-- Reverse Connection -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>Reverse Connection</string>
 			<key>footerText</key>
-			<string>Establish a reverse connection to a listening VNC viewer or repeater without opening a server port. This is useful for bypassing firewalls or NAT.</string>
+			<string>Connect to a listening VNC viewer or repeater while keeping both local service ports available.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -914,8 +850,6 @@
 			<key>placeholder</key>
 			<string>0</string>
 		</dict>
-
-		<!-- Bonjour / Auto-Discovery -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -936,8 +870,6 @@
 			<key>default</key>
 			<true/>
 		</dict>
-
-		<!-- Log Keyboard Events (debug) -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -958,8 +890,6 @@
 			<key>default</key>
 			<false/>
 		</dict>
-
-		<!-- Quick Action -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -978,8 +908,6 @@
 			<key>isDestructive</key>
 			<true/>
 		</dict>
-
-		<!-- Source Code -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -1004,7 +932,6 @@
 			<key>action</key>
 			<string>source</string>
 		</dict>
-
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -1021,7 +948,6 @@
 			<key>action</key>
 			<string>support</string>
 		</dict>
-
 	</array>
 </dict>
 </plist>

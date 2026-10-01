@@ -2,13 +2,13 @@
 
 #import "TVNCUtil.h"
 #import "TVNCWireGuardConfig.h"
+#import "TVNCServiceStatus.h"
 
 @interface TVNCWireGuardController () <UITextViewDelegate>
 @property(nonatomic, strong) UIBarButtonItem *saveButton;
 @property(nonatomic, strong) UIBarButtonItem *cancelButton;
 @property(nonatomic, strong) UIScrollView *scrollView;
 @property(nonatomic, strong) NSLayoutConstraint *editorBottomConstraint;
-@property(nonatomic, strong) UISwitch *enabledSwitch;
 @property(nonatomic, strong) UITextView *configurationEditor;
 @property(nonatomic, strong) UILabel *addressLabel;
 @property(nonatomic, strong) UIBarButtonItem *editButton;
@@ -20,11 +20,15 @@
 
 @implementation TVNCWireGuardController
 
+- (NSString *)text:(NSString *)key {
+    return NSLocalizedStringFromTableInBundle(key, @"Localizable", self.localizationBundle ?: [NSBundle bundleForClass:self.class], nil);
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"WireGuard";
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
-    self.saveButton = [[UIBarButtonItem alloc] initWithTitle:@"Save"
+    self.saveButton = [[UIBarButtonItem alloc] initWithTitle:[self text:@"Save"]
                                                       style:UIBarButtonItemStyleDone
                                                      target:self
                                                      action:@selector(saveConfiguration)];
@@ -60,17 +64,9 @@
         [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-32]
     ]];
 
-    UIStackView *toggleRow = [[UIStackView alloc] initWithFrame:CGRectZero];
-    toggleRow.axis = UILayoutConstraintAxisHorizontal;
-    toggleRow.alignment = UIStackViewAlignmentCenter;
-    UILabel *toggleTitle = [self label:@"WireGuard access" style:UIFontTextStyleBody];
-    [toggleRow addArrangedSubview:toggleTitle];
-    self.enabledSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
-    self.enabledSwitch.on = [self.preferences boolForKey:@"WireGuardEnabled"];
-    [self.enabledSwitch addTarget:self action:@selector(toggleWireGuard:) forControlEvents:UIControlEventValueChanged];
-    [toggleRow addArrangedSubview:self.enabledSwitch];
-    [stack addArrangedSubview:[self cardWithViews:@[toggleRow]]];
-
+    UILabel *networkNote = [self label:@"Shared network for VNC and ZXTouch" style:UIFontTextStyleFootnote];
+    networkNote.numberOfLines = 0;
+    [stack addArrangedSubview:[self cardWithViews:@[networkNote]]];
     UIStackView *addressCard = [self cardWithViews:@[]];
     addressCard.spacing = 0;
     self.addressLabel = [self label:@"" style:UIFontTextStyleTitle2];
@@ -78,7 +74,7 @@
         scaledFontForFont:[UIFont systemFontOfSize:22 weight:UIFontWeightSemibold]];
     self.addressLabel.adjustsFontSizeToFitWidth = YES;
     self.addressLabel.minimumScaleFactor = 0.7;
-    UILabel *addressCaption = [self label:@"VNC address" style:UIFontTextStyleFootnote];
+    UILabel *addressCaption = [self label:@"Configured interface address" style:UIFontTextStyleFootnote];
     addressCaption.textColor = [UIColor secondaryLabelColor];
     UIStackView *addressText = [[UIStackView alloc] initWithArrangedSubviews:@[self.addressLabel, addressCaption]];
     addressText.axis = UILayoutConstraintAxisVertical;
@@ -91,7 +87,14 @@
     self.detailsStack.spacing = 10;
     [stack addArrangedSubview:self.detailsStack];
 
-    self.editButton = [[UIBarButtonItem alloc] initWithTitle:@"Edit"
+    UIButton *removeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [removeButton setTitle:[self text:@"Remove configuration"] forState:UIControlStateNormal];
+    [removeButton setTitleColor:UIColor.systemRedColor forState:UIControlStateNormal];
+    [removeButton.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
+    [removeButton addTarget:self action:@selector(removeConfiguration) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:[self cardWithViews:@[removeButton]]];
+
+    self.editButton = [[UIBarButtonItem alloc] initWithTitle:[self text:@"Edit"]
                                                       style:UIBarButtonItemStylePlain
                                                      target:self
                                                      action:@selector(editSavedConfiguration)];
@@ -148,7 +151,7 @@
 
 - (UILabel *)label:(NSString *)text style:(UIFontTextStyle)style {
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
-    label.text = text;
+    label.text = [self text:text];
     label.font = [UIFont preferredFontForTextStyle:style];
     label.adjustsFontForContentSizeCategory = YES;
     return label;
@@ -265,15 +268,10 @@
 
 - (void)updateSummary {
     NSString *address = TVNCWGPrimaryAddress(self.savedConfiguration ?: @{});
-    NSNumber *port = [self.preferences objectForKey:@"Port"];
-    NSInteger vncPort = port.integerValue >= 1024 && port.integerValue <= 65535 ? port.integerValue : 5901;
-    NSString *socket = [address containsString:@":"] ?
-        [NSString stringWithFormat:@"[%@]:%ld", address, (long)vncPort] :
-        [NSString stringWithFormat:@"%@:%ld", address, (long)vncPort];
-    self.addressLabel.text = address.length ? socket : @"—";
+    self.addressLabel.text = address.length ? address : @"—";
     self.scrollView.hidden = self.editingConfiguration;
     self.configurationEditor.hidden = !self.editingConfiguration;
-    self.title = self.editingConfiguration ? @"Edit configuration" : @"WireGuard";
+    self.title = self.editingConfiguration ? [self text:@"Edit configuration"] : @"WireGuard";
     self.navigationItem.leftBarButtonItem = self.editingConfiguration ? self.cancelButton : nil;
     self.navigationItem.rightBarButtonItem = self.editingConfiguration ? self.saveButton : self.editButton;
     [self updateConfigurationDetails];
@@ -287,60 +285,37 @@
 }
 
 - (void)showError:(NSString *)message {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WireGuard configuration"
-                                                                   message:message
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:[self text:@"WireGuard configuration"]
+                                                                   message:[self text:message]
                                                             preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:[self text:@"OK"] style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)showNotice:(NSString *)message {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WireGuard"
-                                                                   message:message
+                                                                   message:[self text:message]
                                                             preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:[self text:@"OK"] style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-- (BOOL)canEnableWireGuard {
-    NSString *reverse = [self.preferences stringForKey:@"ReverseMode"] ?: @"none";
-    NSString *bind = [self.preferences stringForKey:@"BindHost"] ?: @"";
-    if (![reverse isEqualToString:@"none"]) {
-        [self showError:@"Turn off Reverse Connection before enabling WireGuard access."];
-        return NO;
-    }
-    if (bind.length && ![bind isEqualToString:@"127.0.0.1"] && ![bind isEqualToString:@"::1"]) {
-        [self showError:@"Clear Bind Address so the local VNC bridge can reach the server."];
-        return NO;
-    }
-    return YES;
-}
-
-- (void)toggleWireGuard:(UISwitch *)sender {
-    BOOL previouslyEnabled = [self.preferences boolForKey:@"WireGuardEnabled"];
-    if (sender.on == previouslyEnabled) return;
-    if (sender.on) {
-        if (!self.savedConfiguration || self.editingConfiguration) {
-            sender.on = previouslyEnabled;
-            [self showError:@"Save the WireGuard configuration before enabling access."];
-            return;
+- (void)removeConfiguration {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:[self text:@"Remove configuration"]
+        message:[self text:@"Remove WireGuard configuration and restart TrollVNC? Local access remains available."]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:[self text:@"Cancel"] style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:[self text:@"Remove"] style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        NSDictionary *previous = self.savedConfiguration;
+        [self.preferences removeObjectForKey:@"WireGuardConfig"];
+        if (![self.preferences synchronize]) {
+            if (previous) [self.preferences setObject:previous forKey:@"WireGuardConfig"];
+            [self showError:@"Could not save the WireGuard configuration."]; return;
         }
-        if (![self canEnableWireGuard]) {
-            sender.on = previouslyEnabled;
-            return;
-        }
-    }
-    [self.preferences setBool:sender.on forKey:@"WireGuardEnabled"];
-    if (![self.preferences synchronize]) {
-        [self.preferences setBool:previouslyEnabled forKey:@"WireGuardEnabled"];
-        sender.on = previouslyEnabled;
-        [self showError:@"Could not save the WireGuard switch setting."];
-        return;
-    }
-    [self updateSummary];
-    TVNCRestartVNCService();
-    [self showNotice:sender.on ?
-        @"Enabled. VNC restarting." : @"Disabled. VNC restarting."];
+        TVNCRestartVNCService();
+        [self.navigationController popViewControllerAnimated:YES];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)saveConfiguration {
@@ -350,6 +325,16 @@
         NSError *error = nil;
         configuration = TVNCWGParseConfiguration(self.configurationEditor.text ?: @"", &error);
         if (!configuration) { [self showError:error.localizedDescription]; return; }
+    }
+    NSString *bind = [self.preferences stringForKey:@"BindHost"] ?: @"";
+    if (!TVNCSharedBindAllowsWireGuard(bind)) {
+        [self showError:@"Clear the shared listen address to use both Wi-Fi and WireGuard."]; return;
+    }
+    int vnc = TVNCParseServicePort([self.preferences objectForKey:@"Port"] ?: @5901, NO);
+    int zx = TVNCParseServicePort([self.preferences objectForKey:@"ZXTouchPort"] ?: @6000, NO);
+    int http = TVNCParseServicePort([self.preferences objectForKey:@"HttpPort"] ?: @0, YES);
+    if (!TVNCServicePortsValid(vnc, zx, http)) {
+        [self showError:@"Ports must be distinct and within 1024–65535. HTTP may be 0. Ports 46751 and 46752 are reserved."]; return;
     }
     NSDictionary *previousConfiguration = self.savedConfiguration;
     [self.preferences setObject:configuration forKey:@"WireGuardConfig"];
@@ -363,8 +348,8 @@
     self.editingConfiguration = NO;
     self.configurationEditor.text = @"";
     [self updateSummary];
-    [self showNotice:[self.preferences boolForKey:@"WireGuardEnabled"] ?
-        @"Saved. Restart VNC to apply." : @"Saved."];
+    TVNCRestartVNCService();
+    [self showNotice:@"Saved. TrollVNC is restarting both services with the shared network configuration."];
 }
 
 @end

@@ -17,6 +17,7 @@ TrollVNCPrefs_FILES += TVNCSliderCell.m
 TrollVNCPrefs_FILES += StripedTextTableViewController.m
 TrollVNCPrefs_FILES += ZTSelfSignedCertificate.m
 TrollVNCPrefs_FILES += ../../app/TrollVNC/TrollVNC/TVNCWireGuardController.m
+TrollVNCPrefs_FILES += ../../app/TrollVNC/TrollVNC/TVNCNetworkController.m
 TrollVNCPrefs_FILES += ../../src/TVNCWireGuardConfig.m
 
 TrollVNCPrefs_CFLAGS += -fobjc-arc

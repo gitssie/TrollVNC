@@ -1,5 +1,5 @@
+// GPL-2.0-only.
 #import <UIKit/UIKit.h>
-
-@interface TVNCWireGuardController : UIViewController
+@interface TVNCNetworkController : UITableViewController
 @property(nonatomic, strong) NSBundle *localizationBundle;
 @end

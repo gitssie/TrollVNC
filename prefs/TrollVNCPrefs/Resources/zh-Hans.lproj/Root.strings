@@ -239,3 +239,10 @@
 "Wheel Tuning" = "滚轮调校";
 
 "When dirty rectangles exceed this count, collapse to a bounding box. Too high increases protocol overhead." = "当脏矩形数量超过此值时，合并为外接矩形。过高会增加协议开销。";
+
+"Network settings…" = "网络设置…";
+"VNC Port" = "VNC 端口";
+"ZXTouch Port" = "ZXTouch 端口";
+"VNC and ZXTouch always run together on the same network. Ports must differ. Tap Apply to restart both services." = "VNC 与 ZXTouch 常驻运行，共用同一网络。两个端口不能相同。点击“应用”后一起重启服务。";
+"Shared listen address for VNC and ZXTouch. Leave empty for Wi-Fi and WireGuard access." = "VNC 与 ZXTouch 共用此监听地址。留空可同时通过 Wi-Fi 和 WireGuard 连接。";
+"Connect to a listening VNC viewer or repeater while keeping both local service ports available." = "连接到监听中的 VNC 客户端或中继器，同时保留两个本地服务端口。";

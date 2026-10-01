@@ -20,20 +20,7 @@
 
 #import <notify.h>
 
-@implementation CCTrollVNC {
-    NSUserDefaults *_defaults;
-}
-
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        _defaults = [[NSUserDefaults alloc] initWithSuiteName:@"com.82flex.trollvnc"];
-        [_defaults registerDefaults:@{
-            @"Enabled" : @YES,
-        }];
-    }
-    return self;
-}
+@implementation CCTrollVNC
 
 - (UIImage *)iconGlyph {
     return [UIImage imageNamed:@"icon"
@@ -45,12 +32,9 @@
     return [UIColor colorWithRed:35 / 255.0 green:158 / 255.0 blue:171 / 255.0 alpha:1.0];
 }
 
-- (BOOL)isSelected {
-    return [_defaults boolForKey:@"Enabled"];
-}
-
+// The unified daemon is always running. This tile is a restart action.
+- (BOOL)isSelected { return YES; }
 - (void)setSelected:(BOOL)selected {
-    [_defaults setBool:selected forKey:@"Enabled"];
     TVNCRestartVNCService();
     notify_post(TVNC_NOTIFY_PREFS_CHANGED);
 }

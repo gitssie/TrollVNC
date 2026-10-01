@@ -71,16 +71,20 @@
 
 int gOrientationFixQuad = 0; // 0=0°, 1=90°CW, 2=180°, 3=270°CW
 
-static BOOL gEnabled = YES;
 static int gPort = 5901;
 static int gTvCtlPort = 0;        // port for control connections (0 = disabled)
 static NSString *gBindHost = nil; // optional bind address from CLI/config
 static NSDictionary *gWireGuardConfig = nil;
 static BOOL gWireGuardEnabled = NO;
 static BOOL gWireGuardStarted = NO;
-static BOOL gZXTouchEnabled = NO;
 static int gZXTouchPort = 6000;
-static NSString *gZXTouchBindHost = @"::";
+static NSString *gWireGuardError = @"";
+static NSData *gServiceStatusJSON = nil;
+static std::atomic<bool> gReverseConnected(false);
+static std::atomic<bool> gReverseStopping(false);
+static thread_local bool gCreatingReverseClient = false;
+static dispatch_source_t gReverseRetryTimer = nil;
+
 static TVNCZXTouchService *gZXTouchService = nil;
 #if !TARGET_IPHONE_SIMULATOR
 extern "C" char *TVNCWGStartServices(const char *configurationJSON, const char *servicesJSON);
@@ -319,10 +323,7 @@ static void printUsageAndExit(const char *prog) {
 
     fprintf(stderr, "Basic:\n");
     fprintf(stderr, "  -b host    Bind host address (IPv4/IPv6 literal, default to all)\n");
-    fprintf(stderr, "  -zxtouch on|off   Enable ZXTouch TCP control (default off)\n");
-    fprintf(stderr, "  -zxtouch-only     Run ZXTouch without a VNC listener\n");
     fprintf(stderr, "  -zxtouch-port n   ZXTouch TCP port (default 6000)\n");
-    fprintf(stderr, "  -zxtouch-bind ip  ZXTouch numeric bind address (default ::, dual stack)\n");
     fprintf(stderr, "  -p port    VNC TCP port (default: %d)\n", gPort);
     fprintf(stderr, "  -c port    Client management TCP port (0=off, default: 0)\n");
     fprintf(stderr, "  -n name    Desktop name (default: %s)\n", [gDesktopName UTF8String]);
@@ -667,9 +668,7 @@ static void parseDaemonOptions(void) {
     }
 
     // Booleans
-    NSNumber *enableN = [prefs objectForKey:@"Enabled"];
-    if ([enableN isKindOfClass:[NSNumber class]])
-        gEnabled = enableN.boolValue;
+    // Legacy protocol switches are ignored: both listeners always run.
     NSNumber *clipN = [prefs objectForKey:@"ClipboardEnabled"];
     if ([clipN isKindOfClass:[NSNumber class]])
         gClipboardEnabled = clipN.boolValue;
@@ -890,39 +889,20 @@ static void parseDaemonOptions(void) {
         gRepeaterId = revIdN.intValue;
     }
 
-    // If reverse connection is configured, override mutually exclusive options here in daemon mode
-    if (isRepeaterEnabled()) {
-        gPort = -1;    // disable local listening
-        gHttpPort = 0; // disable HTTP server
-        if (gHttpDirOverride) {
-            free(gHttpDirOverride);
-            gHttpDirOverride = NULL;
-        }
-        gBonjourEnabled = NO; // disable Bonjour advertisement
-        TVLog(@"-daemon: Reverse enabled -> overriding: port=-1, http=0, bonjour=off");
-    }
-
-    id zxEnabled = prefs[@"ZXTouchEnabled"];
-    gZXTouchEnabled = [zxEnabled respondsToSelector:@selector(boolValue)] && [zxEnabled boolValue];
     id zxPort = prefs[@"ZXTouchPort"];
     if (zxPort) {
         int port = 0;
-        if (!zxtouch::integer([[zxPort description] UTF8String], port) || port < 1 || port > 65535) {
+        if (!zxtouch::integer([[zxPort description] UTF8String], port) || port < 1024 || port > 65535) {
             TVPrintError("Invalid ZXTouchPort preference");
             exit(EXIT_FAILURE);
         }
         gZXTouchPort = port;
     }
-    id zxHost = prefs[@"ZXTouchBindAddress"];
-    if ([zxHost isKindOfClass:NSString.class] && [zxHost length]) gZXTouchBindHost = zxHost;
-
     id wireGuard = prefs[@"WireGuardConfig"];
-    id wireGuardEnabled = prefs[@"WireGuardEnabled"];
-    if ([wireGuard isKindOfClass:NSDictionary.class] && [wireGuardEnabled respondsToSelector:@selector(boolValue)] &&
-        [wireGuardEnabled boolValue]) {
+    if ([wireGuard isKindOfClass:NSDictionary.class]) {
         gWireGuardConfig = wireGuard;
         gWireGuardEnabled = YES;
-        TVLog(@"WireGuard access configured for %@", TVNCWGPrimaryAddress(wireGuard));
+        TVLog(@"Shared WireGuard network configured for %@", TVNCWGPrimaryAddress(wireGuard));
     }
 
     // Passwords via environment (leveraging existing setupRfbClassicAuthentication).
@@ -1004,26 +984,18 @@ static void parseCLI(int argc, const char *argv[]) {
     __filtered.reserve((size_t)argc);
     __filtered.push_back(argv[0]);
 
-    BOOL __reverseEnabled = NO;
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
-        if (strcmp(arg, "-zxtouch") == 0 || strcmp(arg, "-zxtouch-port") == 0 || strcmp(arg, "-zxtouch-bind") == 0) {
-            if (i + 1 >= argc) { TVPrintError("%s requires an argument", arg); exit(EXIT_FAILURE); }
-            const char *value = argv[++i];
-            if (strcmp(arg, "-zxtouch") == 0) {
-                if (strcmp(value, "on") && strcmp(value, "off")) { TVPrintError("-zxtouch requires on|off"); exit(EXIT_FAILURE); }
-                gZXTouchEnabled = strcmp(value, "on") == 0;
-            } else if (strcmp(arg, "-zxtouch-port") == 0) {
-                if (!zxtouch::integer(value, gZXTouchPort) || gZXTouchPort < 1 || gZXTouchPort > 65535) {
-                    TVPrintError("Invalid ZXTouch port"); exit(EXIT_FAILURE);
-                }
-            } else gZXTouchBindHost = [NSString stringWithUTF8String:value];
+        if (strcmp(arg, "-zxtouch-port") == 0) {
+            if (++i >= argc || !zxtouch::integer(argv[i], gZXTouchPort) ||
+                gZXTouchPort < 1024 || gZXTouchPort > 65535) {
+                TVPrintError("Invalid ZXTouch port (1024..65535)"); exit(EXIT_FAILURE);
+            }
             continue;
         }
-        if (strcmp(arg, "-zxtouch-only") == 0) {
-            gEnabled = NO;
-            gZXTouchEnabled = YES;
-            continue;
+        if (!strcmp(arg, "-zxtouch") || !strcmp(arg, "-zxtouch-only") || !strcmp(arg, "-zxtouch-bind")) {
+            TVPrintError("VNC and ZXTouch always run together; use the shared bind address and distinct ports");
+            exit(EXIT_FAILURE);
         }
         if (strcmp(arg, "-reverse") == 0) {
             if (i + 1 >= argc) {
@@ -1090,7 +1062,6 @@ static void parseCLI(int argc, const char *argv[]) {
 
             TVLog(@"CLI: Reverse connection to %@:%d", [NSString stringWithUTF8String:gRepeaterHost], gRepeaterPort);
 
-            __reverseEnabled = YES;
             continue; // skip adding this arg
         }
         if (strcmp(arg, "-repeater") == 0) {
@@ -1167,7 +1138,6 @@ static void parseCLI(int argc, const char *argv[]) {
             TVLog(@"CLI: Repeater mode id=%d target=%@:%d", gRepeaterId, [NSString stringWithUTF8String:gRepeaterHost],
                   gRepeaterPort);
 
-            __reverseEnabled = YES;
             continue; // skip adding this arg
         }
 
@@ -1601,17 +1571,7 @@ static void parseCLI(int argc, const char *argv[]) {
         }
     }
 
-    // Reverse connection active -> override conflicting settings
-    if (__reverseEnabled) {
-        gPort = -1;    // disable listening port
-        gHttpPort = 0; // disable HTTP server
-        if (gHttpDirOverride) {
-            free(gHttpDirOverride);
-            gHttpDirOverride = NULL;
-        }
-        gBonjourEnabled = NO; // disable Bonjour when reverse is used
-        TVLog(@"CLI: Reverse enabled -> port=-1, http=0, bonjour=off");
-    }
+
 }
 
 #pragma mark - Display
@@ -3615,7 +3575,7 @@ static void tvStopControlSocket(void) {
 }
 
 static void tvStartControlSocketIfNeeded(void) {
-    if (!gTvCtlPort || isRepeaterEnabled())
+    if (!gTvCtlPort)
         return;
     if (gTvCtlAcceptSource)
         return; // already started
@@ -3968,6 +3928,8 @@ void tvCtlHandleConnection(int cfd, struct sockaddr_in caddr) {
     BOOL keepOpen = NO;
     if (cmd.length == 0) {
         resp = [@"ERR Empty\n" dataUsingEncoding:NSUTF8StringEncoding];
+    } else if ([cmd isEqualToString:@"status"]) {
+        resp = gServiceStatusJSON ?: [@"{}\n" dataUsingEncoding:NSUTF8StringEncoding];
     } else if ([cmd isEqualToString:@"count"]) {
         NSString *s = [NSString stringWithFormat:@"%d\n", gClientCount];
         resp = [s dataUsingEncoding:NSUTF8StringEncoding];
@@ -4164,10 +4126,8 @@ static void clientGoneHook(rfbClientPtr cl) {
     // Notify client disconnected
     tvPublishClientDisconnectedNotif(host);
 
-    // Stop the main run loop if this was a repeater client
-    if (isRepeaterClient) {
-        CFRunLoopStop(CFRunLoopGetMain());
-    }
+    // Reconnect the outbound peer without interrupting local service clients.
+    if (isRepeaterClient) gReverseConnected.store(false);
 }
 
 static enum rfbNewClientAction newClientHook(rfbClientPtr cl) {
@@ -4178,6 +4138,7 @@ static enum rfbNewClientAction newClientHook(rfbClientPtr cl) {
     // Allocate per-client state bag
     TVClientState *st = (TVClientState *)calloc(1, sizeof(TVClientState));
     if (st) {
+        st->isRepeaterClient = gCreatingReverseClient;
         st->lastButtonMask = 0;
         st->wheelAccumPx = 0;
         st->wheelFlushScheduled = NO;
@@ -4185,6 +4146,7 @@ static enum rfbNewClientAction newClientHook(rfbClientPtr cl) {
         cl->clientData = st;
     }
 
+    if (gCreatingReverseClient) gReverseConnected.store(true);
     gClientCount++;
     TVLog(@"Client connected, active clients=%d", gClientCount);
 
@@ -4649,6 +4611,7 @@ static void setupRfbScreen(int argc, const char *argv[]) {
     TVBindHostKind hostKind = tvClassifyBindHost(gBindHost, &v4Addr, &v6Addr);
     if (hostKind == kTVBindHostKindIPv4) {
         gScreen->listenInterface = v4Addr;
+        gScreen->ipv6port = -1; // Both protocols bind the same address family.
     } else if (hostKind == kTVBindHostKindIPv6) {
         char ifaceBuf[INET6_ADDRSTRLEN];
         const char *iface = inet_ntop(AF_INET6, &v6Addr, ifaceBuf, sizeof(ifaceBuf));
@@ -4656,7 +4619,8 @@ static void setupRfbScreen(int argc, const char *argv[]) {
             TVPrintError("Failed to normalize IPv6 bind host");
             exit(EXIT_FAILURE);
         }
-        gScreen->listen6Interface = strdup(iface);
+        gScreen->listen6Interface = strdup(gBindHost.UTF8String);
+        if (!IN6_IS_ADDR_UNSPECIFIED(&v6Addr)) gScreen->port = -1;
     } else if (hostKind == kTVBindHostKindInvalid && gBindHost) {
         TVPrintError("Invalid host address: %s", [gBindHost UTF8String]);
         exit(EXIT_FAILURE);
@@ -4847,128 +4811,91 @@ static void setupRfbFileTransferExtension(void) {
 
 static const long cSelectTimeout = 1e4; // 10 ms
 
-// Background event thread for reverse-connection mode
-static pthread_t gRfbEventThread = 0;
-static std::atomic<int> gRfbEventThreadRunning(0);
-
-static void *tvRfbEventThreadMain(void *arg) {
-    (void)arg;
-    for (;;) {
-        if (!gRfbEventThreadRunning.load(std::memory_order_relaxed))
-            break;
-        if (!gScreen)
-            break;
-        rfbProcessEvents(gScreen, cSelectTimeout);
-        if (!rfbIsActive(gScreen))
-            break;
+static void startReverseConnectionRetries(void) {
+    if (!isRepeaterEnabled()) return;
+    double interval = 5;
+    const char *configured = getenv("TROLLVNC_REPEATER_RETRY_INTERVAL");
+    if (configured) {
+        double value = atof(configured);
+        if (isfinite(value) && value > 0) interval = MIN(300.0, MAX(1.0, value));
     }
-    CFRunLoopStop(CFRunLoopGetMain());
-    gRfbEventThreadRunning.store(0, std::memory_order_relaxed);
-    return NULL;
-}
-
-static void tvStartRfbEventThread(void) {
-    if (gRfbEventThreadRunning.exchange(1, std::memory_order_acq_rel))
-        return;
-    int rc = pthread_create(&gRfbEventThread, NULL, tvRfbEventThreadMain, NULL);
-    if (rc != 0) {
-        gRfbEventThreadRunning.store(0, std::memory_order_relaxed);
-        TVPrintError("Failed to create VNC event thread (rc=%d)", rc);
-        exit(EXIT_FAILURE);
-    }
-}
-
-static void tvStopRfbEventThread(void) {
-    if (!gRfbEventThreadRunning.exchange(0, std::memory_order_acq_rel))
-        return;
-    if (gRfbEventThread) {
-        if (!pthread_equal(gRfbEventThread, pthread_self()))
-            pthread_join(gRfbEventThread, NULL);
-        gRfbEventThread = 0;
-    }
+    dispatch_queue_t queue = dispatch_queue_create("com.82flex.trollvnc.reverse", DISPATCH_QUEUE_SERIAL);
+    gReverseRetryTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    dispatch_source_set_timer(gReverseRetryTimer, DISPATCH_TIME_NOW, (uint64_t)(interval * NSEC_PER_SEC), NSEC_PER_SEC / 4);
+    dispatch_source_set_event_handler(gReverseRetryTimer, ^{
+        // Serial queue ensures only one attempt; cancellation drains this handler.
+        if (!gReverseStopping.load() && !gReverseConnected.load()) {
+            gCreatingReverseClient = true;
+            NSString *identifier = [NSString stringWithFormat:@"%d", gRepeaterId];
+            rfbClientPtr client = gRepeaterMode == 2 ?
+                rfbUltraVNCRepeaterMode2Connection(gScreen, gRepeaterHost, gRepeaterPort, identifier.UTF8String) :
+                rfbReverseConnection(gScreen, gRepeaterHost, gRepeaterPort);
+            gCreatingReverseClient = false;
+            // Client state is marked inside newClientHook, before event processing
+            // can disconnect/free it. Do not dereference the returned pointer.
+            if (!client) TVLog(@"Reverse connection failed; retrying while local services stay available");
+        }
+    });
+    dispatch_resume(gReverseRetryTimer);
 }
 
 static void initializeAndRunRfbServer(void) {
+    if (gPort < 1024 || gPort > 65535 || gPort == kTvAlivePort || gPort == gTvCtlPort ||
+        (gHttpPort && (gHttpPort == gPort || gHttpPort == gZXTouchPort ||
+                      gHttpPort == kTvAlivePort || gHttpPort == gTvCtlPort))) {
+        TVPrintError("Invalid or conflicting service ports"); exit(EXIT_FAILURE);
+    }
     rfbInitServer(gScreen);
+    if (gScreen->listenSock < 0 && gScreen->listen6Sock < 0) {
+        TVPrintError("VNC could not listen on its configured port"); exit(EXIT_FAILURE);
+    }
     TVLog(@"VNC server initialized on port %d, %dx%d, name '%@'", gPort, gWidth, gHeight, gDesktopName);
 
-    if (isRepeaterEnabled()) {
-        static CFTimeInterval sRetryInterval = 0.0;
-        const char *envRetryInterval = getenv("TROLLVNC_REPEATER_RETRY_INTERVAL");
-        if (envRetryInterval) {
-            sRetryInterval = atof(envRetryInterval);
-        }
-
-        static rfbClientPtr sClient = NULL;
-        if (gRepeaterMode == 2) {
-            TVLog(@"VNC server running in repeater mode");
-            static NSString *sRepeaterId = [NSString stringWithFormat:@"%d", gRepeaterId];
-            const char *repeaterId = [sRepeaterId UTF8String];
-            sClient = rfbUltraVNCRepeaterMode2Connection(gScreen, gRepeaterHost, gRepeaterPort, repeaterId);
-        } else {
-            TVLog(@"VNC server running in viewer mode");
-            sClient = rfbReverseConnection(gScreen, gRepeaterHost, gRepeaterPort);
-        }
-
-        if (!sClient) {
-            TVPrintError("Failed to establish reverse connection to %s", gRepeaterHost);
-            if (sRetryInterval > 0)
-                CFRunLoopRunInMode(kCFRunLoopDefaultMode, sRetryInterval, false);
-            exit(EXIT_FAILURE);
-        }
-
-        TVClientState *st = tvGetClientState(sClient);
-        if (st) {
-            st->isRepeaterClient = YES;
-        }
-
-        TVLog(@"Reverse connection established to %s", gRepeaterHost);
-
-        // Start background event thread to pump events while in reverse mode
-        tvStartRfbEventThread();
-    } else {
-        // Run VNC in background thread
-        rfbRunEventLoop(gScreen, cSelectTimeout, TRUE);
-    }
+    // Local listeners are available before any optional outbound connection.
+    rfbRunEventLoop(gScreen, cSelectTimeout, TRUE);
 
     // Start Bonjour advertisement after server is ready
     startBonjour();
 }
 
 static void startZXTouchService(void) {
-    if (!gZXTouchEnabled) return;
-    if ((gEnabled && (gZXTouchPort == gPort || gZXTouchPort == gHttpPort)) ||
+    if ((gZXTouchPort == gPort || gZXTouchPort == gHttpPort) ||
         (gTvCtlPort > 0 && gZXTouchPort == gTvCtlPort) || gZXTouchPort == kTvAlivePort) {
         TVPrintError("ZXTouch port conflicts with another TrollVNC service");
         exit(EXIT_FAILURE);
     }
     gZXTouchService = [TVNCZXTouchService new];
     NSError *error = nil;
-    if (![gZXTouchService startOnHost:gZXTouchBindHost port:gZXTouchPort error:&error]) {
+    if (![gZXTouchService startOnHost:(gBindHost.length ? gBindHost : @"::") port:gZXTouchPort error:&error]) {
         TVPrintError("ZXTouch could not listen: %s", error.localizedDescription.UTF8String);
         exit(EXIT_FAILURE);
     }
-    TVLog(@"ZXTouch control listening on %@:%d", gZXTouchBindHost, gZXTouchPort);
+    TVLog(@"ZXTouch control listening on %@:%d", gBindHost ?: @"::", gZXTouchPort);
 }
 
 static void startWireGuardServices(void) {
 #if !TARGET_IPHONE_SIMULATOR
     if (!gWireGuardEnabled) return;
+    if (!tvLoopbackReachable(gBindHost)) {
+        gWireGuardError = @"Shared bind address must allow loopback access for WireGuard.";
+        TVLog(@"%@", gWireGuardError); return;
+    }
+    NSString *localHost = gScreen->listenSock >= 0 ? @"127.0.0.1" : @"::1";
     NSMutableArray *routes = [NSMutableArray array];
-    if (gEnabled && gPort > 0 && tvLoopbackReachable(gBindHost))
-        [routes addObject:@{@"Port": @(gPort), @"LocalPort": @(gPort)}];
-    else if (gEnabled) TVLog(@"WireGuard: VNC is not reachable through loopback; skipping VNC route");
-    if (gZXTouchService && tvLoopbackReachable(gZXTouchBindHost))
-        [routes addObject:@{@"Port": @(gZXTouchPort), @"LocalPort": @(gZXTouchPort)}];
+    if (gPort > 0 && tvLoopbackReachable(gBindHost))
+        [routes addObject:@{@"Port": @(gPort), @"LocalPort": @(gPort), @"LocalHost": localHost}];
+    else TVLog(@"WireGuard: VNC is not reachable through loopback; skipping VNC route");
+    if (gZXTouchService && tvLoopbackReachable(gBindHost))
+        [routes addObject:@{@"Port": @(gZXTouchPort), @"LocalPort": @(gZXTouchPort), @"LocalHost": localHost}];
     else if (gZXTouchService) TVLog(@"WireGuard: ZXTouch is not reachable through loopback; skipping ZXTouch route");
     if (!routes.count) { TVLog(@"WireGuard has no enabled local service routes"); return; }
     NSData *configuration = [NSJSONSerialization dataWithJSONObject:gWireGuardConfig options:0 error:nil];
     NSData *services = [NSJSONSerialization dataWithJSONObject:routes options:0 error:nil];
-    if (!configuration || !services) { TVLog(@"WireGuard settings could not be serialized"); return; }
+    if (!configuration || !services) { gWireGuardError = @"WireGuard settings could not be serialized"; TVLog(@"%@", gWireGuardError); return; }
     NSString *configurationText = [[NSString alloc] initWithData:configuration encoding:NSUTF8StringEncoding];
     NSString *servicesText = [[NSString alloc] initWithData:services encoding:NSUTF8StringEncoding];
     char *error = TVNCWGStartServices(configurationText.UTF8String, servicesText.UTF8String);
-    if (error) { TVLog(@"WireGuard access failed: %s", error); TVNCWGFree(error); return; }
+    if (error) { gWireGuardError = [NSString stringWithUTF8String:error] ?: @"WireGuard failed"; TVLog(@"WireGuard access failed: %@", gWireGuardError); TVNCWGFree(error); return; }
     gWireGuardStarted = YES;
     TVLog(@"WireGuard listening on %@ for %lu service(s)", TVNCWGPrimaryAddress(gWireGuardConfig), (unsigned long)routes.count);
 #endif
@@ -5106,8 +5033,16 @@ static void cleanupAndExit(int code) {
     // Stop control socket if any
     tvStopControlSocket();
 
-    // Stop event thread if running
-    tvStopRfbEventThread();
+    gReverseStopping.store(true);
+    if (gReverseRetryTimer) {
+        dispatch_group_t cancellation = dispatch_group_create();
+        dispatch_group_enter(cancellation);
+        dispatch_source_set_cancel_handler(gReverseRetryTimer, ^{ dispatch_group_leave(cancellation); });
+        dispatch_source_cancel(gReverseRetryTimer);
+        // An OS-level outbound connect may still be blocked. Exit without freeing
+        // the screen it owns; the process tears down sockets and memory atomically.
+        if (dispatch_group_wait(cancellation, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC))) exit(code);
+    }
 
     tvUnregisterAppManagement();
     if (gFileTransferRegistered) {
@@ -5254,10 +5189,10 @@ int main(int argc, const char *argv[]) {
     }
 
     @autoreleasepool {
+        gBindHost = [gBindHost stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         installSignalHandlers();
         installTerminationHandlers();
-        startZXTouchService();
-        if (gEnabled) {
+        {
             setupGeometry();
             setupOrientationObserver();
             setupRfbLogging();
@@ -5275,8 +5210,19 @@ int main(int argc, const char *argv[]) {
             initializeTilingOrReset();
             initializeAndRunRfbServer();
         }
+        startZXTouchService();
         startWireGuardServices();
+        NSDictionary *status = @{@"VNCPort": @(gPort), @"ZXTouchPort": @(gZXTouchPort),
+            @"BindHost": gBindHost ?: @"", @"VNCRunning": @YES, @"ZXTouchRunning": @YES,
+            @"VNCAcceptsIPv4": @(gScreen->listenSock >= 0), @"VNCAcceptsIPv6": @(gScreen->listen6Sock >= 0),
+            @"WireGuardConfigured": @(gWireGuardEnabled), @"WireGuardStarted": @(gWireGuardStarted),
+            @"WireGuardAddress": gWireGuardStarted ? (TVNCWGPrimaryAddress(gWireGuardConfig) ?: @"") : @"",
+            @"WireGuardError": gWireGuardError};
+        NSMutableData *json = [[NSJSONSerialization dataWithJSONObject:status options:0 error:nil] mutableCopy];
+        [json appendBytes:"\n" length:1];
+        gServiceStatusJSON = [json copy]; // Immutable, published before accepting control connections.
         tvStartControlSocketIfNeeded();
+        startReverseConnectionRetries();
     }
 
     CFRunLoopRun();

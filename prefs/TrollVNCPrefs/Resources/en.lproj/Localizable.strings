@@ -180,3 +180,43 @@
 
 /* No comment provided by engineer. */
 "You need to generate a self-signed CA certificate first before exporting it." = "You need to generate a self-signed CA certificate first before exporting it.";
+
+"Network settings" = "Network settings";
+"Service" = "Service";
+"Running" = "Running";
+"Service status unavailable" = "Service status unavailable";
+"Local network" = "Local network";
+"Wi-Fi + WireGuard" = "Wi-Fi + WireGuard";
+"VNC and ZXTouch always run together. The addresses below reflect the running service, not unapplied edits." = "VNC and ZXTouch always run together. The addresses below reflect the running service, not unapplied edits.";
+"Both protocols share the same network. Tap an address to copy it." = "Both protocols share the same network. Tap an address to copy it.";
+"One WireGuard configuration provides access to both ports. Saving a configuration restarts TrollVNC; removing it keeps local access available." = "One WireGuard configuration provides access to both ports. Saving a configuration restarts TrollVNC; removing it keeps local access available.";
+"Address unavailable" = "Address unavailable";
+"Interface running" = "Interface running";
+"Network failed to start" = "Network failed to start";
+"No configuration" = "No configuration";
+"WireGuard configuration…" = "WireGuard configuration…";
+"Copied" = "Copied";
+"Ports must be distinct and within 1024–65535. HTTP may be 0. Ports 46751 and 46752 are reserved." = "Ports must be distinct and within 1024–65535. HTTP may be 0. Ports 46751 and 46752 are reserved.";
+"Clear the shared listen address to use both Wi-Fi and WireGuard." = "Clear the shared listen address to use both Wi-Fi and WireGuard.";
+"Restart TrollVNC to apply changes to both VNC and ZXTouch?" = "Restart TrollVNC to apply changes to both VNC and ZXTouch?";
+"Shared network for VNC and ZXTouch" = "Shared network for VNC and ZXTouch";
+"Configured interface address" = "Configured interface address";
+"Save" = "Save";
+"Edit" = "Edit";
+"Edit configuration" = "Edit configuration";
+"WireGuard configuration" = "WireGuard configuration";
+"Remove configuration" = "Remove configuration";
+"Remove" = "Remove";
+"Remove WireGuard configuration and restart TrollVNC? Local access remains available." = "Remove WireGuard configuration and restart TrollVNC? Local access remains available.";
+"Could not save the WireGuard configuration." = "Could not save the WireGuard configuration.";
+"Saved. TrollVNC is restarting both services with the shared network configuration." = "Saved. TrollVNC is restarting both services with the shared network configuration.";
+"Address" = "Address";
+"Listen port" = "Listen port";
+"Automatic" = "Automatic";
+"Interface" = "Interface";
+"Endpoint" = "Endpoint";
+"Not set" = "Not set";
+"Allowed IPs" = "Allowed IPs";
+"Keepalive" = "Keepalive";
+"Off" = "Off";
+"Public key" = "Public key";

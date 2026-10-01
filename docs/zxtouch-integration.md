@@ -6,49 +6,44 @@ userspace WireGuard network as VNC. It does not include ZXTouch's Web dashboard,
 recording, recorded-event playback, recording editor or the ZXTouch management UI.
 Automation dialogs and toasts are supplied by a small jailbreak adapter.
 
-## Enable without UI
+## Unified service and native settings (Dopamine rootless)
 
-ZXTouch is off by default. CLI examples:
+VNC and ZXTouch always start together inside the launchd-managed server, even
+when no VNC viewer is connected. The native Settings pane has no protocol enable
+switches. Default TCP ports are VNC **5901** and ZXTouch **6000**. Both use the
+existing `BindHost` setting; leave it empty for local Wi-Fi and shared WG access.
 
-```sh
-trollvncserver -zxtouch on                 # VNC plus ZXTouch on TCP 6000
-trollvncserver -zxtouch-only               # ZXTouch without a VNC listener
-trollvncserver -zxtouch on -zxtouch-bind 127.0.0.1  # loopback / WG access
-```
+Network settings displays the running service's actual ports, local addresses,
+and WG interface startup status. Tap a socket address to copy it. Pending port
+edits do not appear as active addresses until Apply restarts the unified service.
+WG interface startup does not imply a successful peer handshake or remote reachability.
 
-`-zxtouch-port` accepts a port from 1 to 65535. The original Python client
-uses port 6000, so changing it requires a client that supports another port.
-`-zxtouch-bind` accepts a numeric IPv4 or IPv6 address. The default is `::`
-(dual stack, including IPv4 Wi-Fi and local loopback).
+Import or edit one WireGuard configuration in Network settings. Saving it
+restarts both services and automatically starts the shared userspace WG network;
+there is no separate WG enable switch. Removing the configuration restarts the
+service with local access. WG startup errors are shown while local listeners
+remain available. The bridge does not create an iOS system VPN or route unrelated
+script traffic through WG. On shutdown local sockets close immediately; WG has
+a bounded 250 ms window to transmit queued TCP close packets. An offline peer
+may still need its own TCP timeout.
 
-Daemon mode reads the existing `com.82flex.trollvnc` preferences domain:
-
-| Key | Default | Meaning |
+| Preference | Default | Meaning |
 | --- | --- | --- |
-| `ZXTouchEnabled` | false | Enable the integrated TCP service |
-| `ZXTouchPort` | 6000 | Independent ZXTouch TCP port |
-| `ZXTouchBindAddress` | `::` | Numeric listener address |
-| `Enabled` | existing VNC setting | Enable VNC independently |
-| `WireGuardEnabled` / `WireGuardConfig` | existing settings | Shared WG tunnel |
+| `Port` | 5901 | VNC TCP port |
+| `ZXTouchPort` | 6000 | ZXTouch TCP port |
+| `BindHost` | empty | Shared numeric listener address |
+| `WireGuardConfig` | absent | Shared WG configuration; starts automatically when present |
 
-Persist these keys using the same preferences file/domain used by the existing
-deployment, then restart the server (or use the existing Apply action). Setting
-`Enabled=false` and `ZXTouchEnabled=true` leaves ZXTouch available. Neither
-service needs an active VNC viewer to accept ZXTouch commands or capture images.
-In daemon mode CLI flags are ignored, consistent with existing daemon behavior.
-
-WG forwards only enabled service ports to local loopback. A listener bound to a
-specific Wi-Fi address remains available on Wi-Fi but is skipped for WG; use a
-wildcard or loopback listener to support WG. VNC reverse connection can coexist
-with a ZXTouch-only WG route. The bridge does not create an iOS system VPN or
-route unrelated script traffic through WG. On shutdown local sockets close
-immediately; WG stays alive for a bounded 250 ms window to transmit queued TCP
-close packets. An offline peer may still need its own TCP timeout.
-
-The integrated service must own its port; stop a standalone ZXTouch listener
-on 6000 before enabling this one. Port conflicts with VNC, HTTP and control
-listeners fail startup. ZXTouch preserves the original protocol without an
-authentication handshake; VNC passwords do not authenticate ZXTouch commands.
+Obsolete `Enabled`, `ZXTouchEnabled`, `ZXTouchBindAddress` and
+`WireGuardEnabled` settings are ignored. Legacy independent-mode CLI flags are
+rejected; `-zxtouch-port` selects the ZXTouch port, and the existing VNC bind
+option applies to both protocols. Daemon mode uses persisted preferences.
+Ports must be distinct, within 1024–65535, and not conflict with HTTP or reserved
+control ports 46751/46752. A configured reverse VNC connection keeps the local
+listeners running and retries the outbound peer without restarting local services.
+The Control Center tile is a restart action, not an enable switch. Stop any standalone ZXTouch listener on 6000 before using
+this package. ZXTouch preserves the original protocol without an authentication
+handshake; VNC passwords do not authenticate ZXTouch commands.
 
 ## Client and supported commands
 
@@ -154,7 +149,7 @@ disconnect and service stop dismiss pending prompts. In a TrollStore standalone
 deployment without app injection, alerts/toasts/prompts/indicators and exact
 keyboard visibility return an adapter error. HID input, capture, clipboard and
 the server-side commands remain available subject to their runtime dependencies.
-No settings screen has been added.
+The native network settings page manages the unified service; no ZXTouch recording or Web management UI is included.
 
 ## Structure and verification
 
@@ -166,9 +161,8 @@ README for provenance and licensing.
 
 Run `bash tests/run_zxtouch_tests.sh` for sanitized core tests and native macOS
 TCP transport tests, process/IPC lifecycle tests and real-socket Python client
-method/return-shape tests. Run `go test -race ./...` in `wgbridge` for real userspace
-WG tests, including independent VNC/ZXTouch routes, connection cleanup and a
-ZXTouch-only tunnel. The iOS server is compiled with the normal Theos build.
+method/return-shape tests, plus unified-port validation and fragmented/timeout status-query tests. Run `go test -race ./...` in `wgbridge` for real userspace
+WG tests, including simultaneous VNC/ZXTouch routes, explicit IPv6 loopback destinations, connection cleanup and route shutdown. The iOS server is compiled with the normal Theos build.
 Device input injection, screen orientation, Unicode paste and OCR still require
 physical-device acceptance testing, including SpringBoard scenes, dialogs,
 keyboard selectors and global touch monitoring; host transport tests use a mock command

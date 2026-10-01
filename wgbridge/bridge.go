@@ -45,8 +45,9 @@ type bridgeConfig struct {
 
 // Service ports are independent inside one userspace WireGuard network.
 type serviceRoute struct {
-	Port      int `json:"Port"`
-	LocalPort int `json:"LocalPort"`
+	Port      int    `json:"Port"`
+	LocalPort int    `json:"LocalPort"`
+	LocalHost string `json:"LocalHost,omitempty"`
 }
 
 // Bounded best-effort drain for TCP close packets queued by netstack.
@@ -159,6 +160,9 @@ func validateRoutes(routes []serviceRoute) error {
 		if route.Port < 1 || route.Port > 65535 || route.LocalPort < 1 || route.LocalPort > 65535 {
 			return errors.New("invalid service port")
 		}
+		if route.LocalHost != "" && route.LocalHost != "127.0.0.1" && route.LocalHost != "::1" {
+			return errors.New("service destination must be loopback")
+		}
 		if seen[route.Port] {
 			return errors.New("duplicate WireGuard service port")
 		}
@@ -203,7 +207,7 @@ func startServices(raw []byte, routes []serviceRoute) error {
 	}
 	state.active = b
 	for i, route := range routes {
-		go b.serve(b.listeners[i], route.LocalPort)
+		go b.serve(b.listeners[i], route)
 	}
 	return nil
 }
@@ -226,7 +230,7 @@ func (b *bridge) forget(c net.Conn) {
 	b.mu.Unlock()
 }
 
-func (b *bridge) serve(listener net.Listener, port int) {
+func (b *bridge) serve(listener net.Listener, route serviceRoute) {
 	for {
 		incoming, err := listener.Accept()
 		if err != nil {
@@ -237,9 +241,13 @@ func (b *bridge) serve(listener net.Listener, port int) {
 		}
 		go func() {
 			defer b.forget(incoming)
-			target := strconv.Itoa(port)
-			local, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", target), 3*time.Second)
-			if err != nil {
+			target := strconv.Itoa(route.LocalPort)
+			host := route.LocalHost
+			if host == "" {
+				host = "127.0.0.1"
+			}
+			local, err := net.DialTimeout("tcp", net.JoinHostPort(host, target), 3*time.Second)
+			if err != nil && route.LocalHost == "" {
 				local, err = net.DialTimeout("tcp", net.JoinHostPort("::1", target), 3*time.Second)
 			}
 			if err != nil || !b.track(local) {

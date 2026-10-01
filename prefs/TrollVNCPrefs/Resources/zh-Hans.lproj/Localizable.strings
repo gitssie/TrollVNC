@@ -180,3 +180,43 @@
 
 /* No comment provided by engineer. */
 "You need to generate a self-signed CA certificate first before exporting it." = "你需要先生成自签名 CA 证书，然后才能导出它。";
+
+"Network settings" = "网络设置";
+"Service" = "服务";
+"Running" = "运行中";
+"Service status unavailable" = "暂时无法读取服务状态";
+"Local network" = "本地网络";
+"Wi-Fi + WireGuard" = "Wi-Fi + WireGuard";
+"VNC and ZXTouch always run together. The addresses below reflect the running service, not unapplied edits." = "VNC 与 ZXTouch 常驻运行。下方显示当前运行服务的地址，未应用的修改不会显示为已生效。";
+"Both protocols share the same network. Tap an address to copy it." = "两种协议共用同一网络。点击地址即可复制。";
+"One WireGuard configuration provides access to both ports. Saving a configuration restarts TrollVNC; removing it keeps local access available." = "一份 WireGuard 配置同时提供两个端口的访问。保存配置会重启 TrollVNC；移除配置后仍可从本地网络连接。";
+"Address unavailable" = "暂无可用地址";
+"Interface running" = "接口已启动";
+"Network failed to start" = "网络启动失败";
+"No configuration" = "未配置";
+"WireGuard configuration…" = "WireGuard 配置…";
+"Copied" = "已复制";
+"Ports must be distinct and within 1024–65535. HTTP may be 0. Ports 46751 and 46752 are reserved." = "端口必须互不相同，范围为 1024–65535。HTTP 可设为 0。46751、46752 为保留端口。";
+"Clear the shared listen address to use both Wi-Fi and WireGuard." = "请清空共用监听地址，以同时使用 Wi-Fi 和 WireGuard。";
+"Restart TrollVNC to apply changes to both VNC and ZXTouch?" = "重启 TrollVNC，将修改应用到 VNC 与 ZXTouch？";
+"Shared network for VNC and ZXTouch" = "VNC 与 ZXTouch 共用的网络";
+"Configured interface address" = "已配置的接口地址";
+"Save" = "保存";
+"Edit" = "编辑";
+"Edit configuration" = "编辑配置";
+"WireGuard configuration" = "WireGuard 配置";
+"Remove configuration" = "移除配置";
+"Remove" = "移除";
+"Remove WireGuard configuration and restart TrollVNC? Local access remains available." = "移除 WireGuard 配置并重启 TrollVNC？本地网络访问仍可使用。";
+"Could not save the WireGuard configuration." = "无法保存 WireGuard 配置。";
+"Saved. TrollVNC is restarting both services with the shared network configuration." = "已保存。TrollVNC 正在使用共用网络配置重启两个服务。";
+"Address" = "地址";
+"Listen port" = "监听端口";
+"Automatic" = "自动";
+"Interface" = "接口";
+"Endpoint" = "端点";
+"Not set" = "未设置";
+"Allowed IPs" = "允许的 IP";
+"Keepalive" = "保持连接";
+"Off" = "关闭";
+"Public key" = "公钥";

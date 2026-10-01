@@ -373,46 +373,36 @@ Connect from your browser. Open the bundled web page at `http://<host>:5801/`. T
 - Enabled by default. Toggle with `-B on|off` or in Settings → TrollVNC → “Enable Auto-Discovery”.
 - Viewers on the same LAN that support Bonjour can find it automatically; otherwise connect by `ip:port` shown in the app/logs.
 
-## Optional WireGuard VPN Access
+## Shared Wi-Fi and WireGuard access
 
-An optional integrated ZXTouch TCP control service can share this tunnel on its
-own port (default 6000), or accept direct Wi-Fi connections. Its UI is deferred;
-see [ZXTouch integration](docs/zxtouch-integration.md) for CLI/preferences,
-supported commands, and validation limits.
+On Dopamine rootless, VNC and integrated ZXTouch always run together on distinct
+TCP ports (5901 and 6000 by default). They share one listen address and one
+userspace WireGuard network. See [ZXTouch integration](docs/zxtouch-integration.md)
+for supported Python commands and validation limits.
 
-TrollVNC does not require a VPN. It can serve VNC on the local network as usual.
-WireGuard is an optional way to reach VNC through an encrypted tunnel. Its
-built-in userspace client connects to a standard WireGuard peer; it does not
-require Karing or another VPN app. Open **WireGuard Access** in TrollVNC
-settings, paste a standard `[Interface]`/`[Peer]` configuration, then tap
-**Save** in the navigation bar. Saving a profile leaves access off. Turn on
-**WireGuard access** when ready; the switch requests a VNC restart. Saving an
-edited profile never restarts VNC. If access is already enabled, use the main
-settings page's **Apply** button to restart VNC and load the edited profile.
-The saved screen lists Interface addresses, port, MTU, DNS, and each Peer's
-public key, endpoint, allowed IPs, and keepalive. Private and preshared keys
-stay hidden until you choose Edit. The WireGuard address shown on that page is
-the address to use in the desktop VNC viewer. The configuration is
-parsed into the existing `com.82flex.trollvnc` preferences domain; no separate
-WireGuard configuration file is created. The private key is hidden until the
-configuration is edited and is never printed in the server log.
+Open **Network settings** in the native TrollVNC Settings pane to see active
+ports and copy local or WG socket addresses. Open **WireGuard configuration**,
+paste a standard `[Interface]`/`[Peer]` configuration and tap **Save**. Saving
+restarts TrollVNC and automatically loads the shared network for both ports;
+there are no protocol or WG enable switches. Removing the configuration keeps
+local access available. The status describes interface startup, not peer handshake
+or remote reachability. Startup errors appear on the network page.
+
+The saved screen lists interface addresses, listen port, MTU, DNS, and peer
+public keys, endpoints, allowed IPs and keepalive. Private and preshared keys
+appear only in the configuration editor. Configuration remains in the existing
+`com.82flex.trollvnc` local preferences domain. No keychain or separate WG file
+is used, and private keys are never printed in the server log.
 
 The phone must be a peer in your existing WireGuard network, with its own
-`Address` and key. The network's other peers must route the phone's address
-to it. If the phone is behind NAT, `PersistentKeepalive = 25` is often useful.
-TCP connections arriving at the phone's WireGuard address on enabled VNC and
-ZXTouch ports are forwarded to their corresponding local listeners. The bridge does not create an
-iOS VPN interface or change system routes.
-
-WireGuard access requires at least one local listener reachable through loopback.
-For VNC, disable Reverse Connection and leave Bind Address empty (or bind to
-loopback). ZXTouch can also use the tunnel independently of VNC; the existing
-WireGuard settings UI still applies its VNC-only checks. Supported
-configuration keys are `PrivateKey`, `Address`, `ListenPort`, `MTU`, `DNS`,
-`PublicKey`, `PresharedKey`, `Endpoint`, `AllowedIPs`, and
-`PersistentKeepalive`. Unsupported keys are rejected on save rather than
-silently discarded. `DNS` is retained for editing but does not alter system
-DNS because this bridge only serves VNC.
+address and key. Other peers must route the phone's address to it. Leave the
+shared listen address empty to support Wi-Fi and WG together. Reverse VNC
+connections keep the local service ports available. The bridge forwards only
+the two service ports; it does not create an iOS VPN interface or change system
+routes. Supported keys are `PrivateKey`, `Address`, `ListenPort`, `MTU`, `DNS`,
+`PublicKey`, `PresharedKey`, `Endpoint`, `AllowedIPs`, `PersistentKeepalive`.
+Unsupported keys are rejected on save. `DNS` is retained for editing without
+changing system DNS.
 
 ### If another VPN is enabled
 
@@ -566,14 +556,14 @@ TrollVNC can be preconfigured via a bundled `Managed.plist` for supervised or fl
   - `ReverseRepeaterID` (numeric ID for UltraVNC Repeater Mode II)
 
 - Booleans:
-  - `Enabled`, `ClipboardEnabled`, `ViewOnly`, `OrientationSync`, `OrientationPadFix`, `NaturalScroll`, `ServerCursor`, `AsyncSwap`, `KeyLogging`, `AutoAssistEnabled`, `BonjourEnabled`, `FileTransferEnabled`, `SingleNotifEnabled`, `ClientNotifsEnabled`
+  - `ClipboardEnabled`, `ViewOnly`, `OrientationSync`, `OrientationPadFix`, `NaturalScroll`, `ServerCursor`, `AsyncSwap`, `KeyLogging`, `AutoAssistEnabled`, `BonjourEnabled`, `FileTransferEnabled`, `SingleNotifEnabled`, `ClientNotifsEnabled`
 
 - `LaunchAtLogin`: `true` | `false` | custom app ID (e.g., `com.zqbb.Dopamine-roothide`)
   - Whether to start TrollVNC at login; if set to a custom app ID, it launches that app instead.
 
 **Notes**:
 
-- When reverse connection is enabled via Managed.plist, behavior matches CLI reverse: local VNC port disabled, HTTP/WebSockets disabled, Bonjour disabled.
+- Reverse connections retain both local listeners and retry without restarting the unified service. Legacy `Enabled` protocol switches are ignored.
 - `HttpDir`, `SslCertFile`, and `SslKeyFile` must be absolute paths.
 
 ### Example Configurations
@@ -585,8 +575,6 @@ TrollVNC can be preconfigured via a bundled `Managed.plist` for supervised or fl
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Enabled</key>
-  <true/>
   <key>DesktopName</key>
   <string>My iPhone</string>
   <key>ReverseMode</key>
@@ -608,8 +596,6 @@ TrollVNC can be preconfigured via a bundled `Managed.plist` for supervised or fl
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Enabled</key>
-  <true/>
   <key>DesktopName</key>
   <string>TrollVNC</string>
   <key>Port</key>
@@ -736,7 +722,7 @@ Add them under: “Settings” → “Secrets and variables” → “Actions”
 
 In the workflow-managed build, the following keys are fixed to safe defaults:
 
-- `Enabled=true`
+- VNC and ZXTouch always run together (`Enabled` is ignored)
 - `ClipboardEnabled=true`
 - `SingleNotifEnabled=true`
 - `ClientNotifsEnabled=true`

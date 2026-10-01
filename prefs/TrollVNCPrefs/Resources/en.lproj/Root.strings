@@ -239,3 +239,10 @@
 "When dirty rectangles exceed this count, collapse to a bounding box. Too high increases protocol overhead." = "When dirty rectangles exceed this count, collapse to a bounding box. Too high increases protocol overhead.";
 
 "To unblock previously blocked clients, restart the VNC service. The temporary block list is cleared on service restart." = "";
+
+"Network settings…" = "Network settings…";
+"VNC Port" = "VNC Port";
+"ZXTouch Port" = "ZXTouch Port";
+"VNC and ZXTouch always run together on the same network. Ports must differ. Tap Apply to restart both services." = "VNC and ZXTouch always run together on the same network. Ports must differ. Tap Apply to restart both services.";
+"Shared listen address for VNC and ZXTouch. Leave empty for Wi-Fi and WireGuard access." = "Shared listen address for VNC and ZXTouch. Leave empty for Wi-Fi and WireGuard access.";
+"Connect to a listening VNC viewer or repeater while keeping both local service ports available." = "Connect to a listening VNC viewer or repeater while keeping both local service ports available.";

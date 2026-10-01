@@ -28,3 +28,8 @@ subprocess.run(['spoofed-server-name', sys.argv[2]], executable=sys.argv[1], che
 PY_RUNTIME
 
 python3 "$PROJECT_ROOT/tests/ZXTouchClientTests.py"
+
+xcrun clang++ -std=c++20 -fobjc-arc -framework Foundation \
+    -I "$PROJECT_ROOT/app/TrollVNC/TrollVNC" \
+    "$PROJECT_ROOT/tests/TVNCServiceStatusTests.mm" -o "$TEST_DIR/status-tests"
+"$TEST_DIR/status-tests"

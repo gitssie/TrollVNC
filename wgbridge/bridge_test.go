@@ -20,7 +20,7 @@ import (
 )
 
 func TestUserspaceBridgeForwardsIndependentServicesOverWireGuard(t *testing.T) {
-	local, err := net.Listen("tcp", "127.0.0.1:0")
+	local, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestUserspaceBridgeForwardsIndependentServicesOverWireGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes := []serviceRoute{{Port: port, LocalPort: port}, {Port: 6000, LocalPort: zxPort}}
+	routes := []serviceRoute{{Port: port, LocalPort: port, LocalHost: "::1"}, {Port: 6000, LocalPort: zxPort}}
 	if port == 6000 {
 		routes[1].Port = 6001
 	}
@@ -195,7 +195,7 @@ func TestUserspaceBridgeForwardsIndependentServicesOverWireGuard(t *testing.T) {
 
 func TestServiceRoutesRejectInvalidPorts(t *testing.T) {
 	for _, routes := range [][]serviceRoute{
-		nil, {{Port: 0, LocalPort: 1}}, {{Port: 6000, LocalPort: 65536}},
+		nil, {{Port: 6000, LocalPort: 6000, LocalHost: "192.168.1.2"}}, {{Port: 0, LocalPort: 1}}, {{Port: 6000, LocalPort: 65536}},
 		{{Port: 6000, LocalPort: 6000}, {Port: 6000, LocalPort: 5901}},
 	} {
 		if err := startServices(nil, routes); err == nil {

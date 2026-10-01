@@ -33,94 +33,12 @@
 #import "TVNCClientListController.h"
 #import "TVNCRootListController.h"
 #import "TVNCUtil.h"
+#import "TVNCServiceStatus.h"
 #import "ZTSelfSignedCertificate.h"
 
 #ifdef THEBOOTSTRAP
 #import "GitHubReleaseUpdater.h"
 #endif
-
-NS_INLINE NSString *GetDefaultRouteInterface(void) {
-    static SCDynamicStoreRef (*_SCDynamicStoreCreate)(CFAllocatorRef, CFStringRef, SCDynamicStoreCallBack,
-                                                      SCDynamicStoreContext *) = NULL;
-    static CFPropertyListRef (*_SCDynamicStoreCopyValue)(SCDynamicStoreRef, CFStringRef) = NULL;
-
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        void *handle =
-            dlopen("/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration", RTLD_LAZY);
-        if (handle) {
-            _SCDynamicStoreCreate =
-                (SCDynamicStoreRef (*)(CFAllocatorRef, CFStringRef, SCDynamicStoreCallBack,
-                                       SCDynamicStoreContext *))dlsym(handle, "SCDynamicStoreCreate");
-            _SCDynamicStoreCopyValue =
-                (CFPropertyListRef (*)(SCDynamicStoreRef, CFStringRef))dlsym(handle, "SCDynamicStoreCopyValue");
-        }
-    });
-
-    if (!_SCDynamicStoreCreate || !_SCDynamicStoreCopyValue) {
-        return nil;
-    }
-
-    SCDynamicStoreRef store = _SCDynamicStoreCreate(NULL, CFSTR("RouteInfo"), NULL, NULL);
-    if (!store)
-        return nil;
-
-    NSDictionary *dict =
-        (NSDictionary *)CFBridgingRelease(_SCDynamicStoreCopyValue(store, CFSTR("State:/Network/Global/IPv4")));
-    if (!dict[@"PrimaryInterface"])
-        dict = (NSDictionary *)CFBridgingRelease(_SCDynamicStoreCopyValue(store, CFSTR("State:/Network/Global/IPv6")));
-    CFRelease(store);
-
-    return dict[@"PrimaryInterface"];
-}
-
-// Resolve current IPv4/IPv6 address of interface en0 (Wi‑Fi). Prefer IPv4 if available.
-NS_INLINE NSString *TVNCGetEn0IPAddress(void) {
-    struct ifaddrs *ifaList = NULL;
-    if (getifaddrs(&ifaList) != 0 || !ifaList)
-        return nil;
-
-    NSString *defaultRouteInterface = GetDefaultRouteInterface();
-    const char *defaultRouteIfName = defaultRouteInterface ? [defaultRouteInterface UTF8String] : "en0";
-
-    NSString *ipv4 = nil;
-    NSString *ipv6 = nil;
-    for (struct ifaddrs *ifa = ifaList; ifa; ifa = ifa->ifa_next) {
-        if (!ifa->ifa_addr || !ifa->ifa_name)
-            continue;
-        if (strcmp(ifa->ifa_name, defaultRouteIfName) != 0)
-            continue;
-        if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK))
-            continue;
-
-        sa_family_t fam = ifa->ifa_addr->sa_family;
-        char buf[INET6_ADDRSTRLEN] = {0};
-        if (fam == AF_INET) {
-            const struct sockaddr_in *sin = (const struct sockaddr_in *)ifa->ifa_addr;
-            if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf))) {
-                ipv4 = [NSString stringWithUTF8String:buf];
-            }
-        } else if (fam == AF_INET6) {
-            const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)ifa->ifa_addr;
-            // Skip link-local addresses (fe80::) if possible
-            if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) {
-                char tmp[INET6_ADDRSTRLEN] = {0};
-                if (inet_ntop(AF_INET6, &sin6->sin6_addr, tmp, sizeof(tmp))) {
-                    // Keep as fallback only if no other IPv6 found later
-                    if (!ipv6)
-                        ipv6 = [NSString stringWithUTF8String:tmp];
-                }
-            } else {
-                char tmp[INET6_ADDRSTRLEN] = {0};
-                if (inet_ntop(AF_INET6, &sin6->sin6_addr, tmp, sizeof(tmp))) {
-                    ipv6 = [NSString stringWithUTF8String:tmp];
-                }
-            }
-        }
-    }
-    freeifaddrs(ifaList);
-    return ipv4 ?: ipv6; // prefer IPv4
-}
 
 NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     if (!host)
@@ -160,7 +78,9 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 @property(nonatomic, copy) NSString *jbrootPath;
 
 @property(nonatomic, strong) PSSpecifier *firstGroupSpecifier;
-@property(nonatomic, strong) PSSpecifier *enabledSpecifier;
+@property(nonatomic, strong) NSTimer *statusTimer;
+@property(nonatomic, strong) NSDictionary *serviceStatus;
+@property(nonatomic, assign) BOOL fetchingStatus;
 @property(nonatomic, strong) PSSpecifier *certSpecifier;
 @property(nonatomic, strong) PSSpecifier *keysSpecifier;
 @property(nonatomic, strong) PSSpecifier *exportCertSpecifier;
@@ -241,8 +161,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                 _certSpecifier = specifier;
             } else if ([keyName isEqualToString:@"SslKeyFile"]) {
                 _keysSpecifier = specifier;
-            } else if ([keyName isEqualToString:@"Enabled"]) {
-                _enabledSpecifier = specifier;
+
             }
         }
 
@@ -254,6 +173,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 }
 
 - (void)dealloc {
+    [_statusTimer invalidate];
     if (_monitor) {
         nw_path_monitor_cancel(_monitor);
     }
@@ -327,14 +247,40 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     nw_path_monitor_start(self.monitor);
 
     notify_register_dispatch(TVNC_NOTIFY_PREFS_CHANGED, &_notifyToken, dispatch_get_main_queue(), ^(int token) {
-        [weakSelf reloadEnabledSpecifier];
+        [weakSelf refreshServiceStatus];
     });
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
 
-    [self updateFirstGroupAndReload:YES];
+    [self refreshServiceStatus];
+    [_statusTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    _statusTimer = [NSTimer scheduledTimerWithTimeInterval:3 repeats:YES block:^(NSTimer *timer) {
+        [weakSelf refreshServiceStatus];
+    }];
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    [_statusTimer invalidate]; _statusTimer = nil;
+}
+
+- (void)refreshServiceStatus {
+    if (_fetchingStatus) return;
+    _fetchingStatus = YES;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSDictionary *status = TVNCFetchServiceStatus(kTvDefaultCtlPort);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            typeof(self) strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf.fetchingStatus = NO;
+            strongSelf.serviceStatus = status;
+            [strongSelf updateFirstGroupAndReload:YES];
+        });
+    });
 }
 
 - (void)showClients {
@@ -369,44 +315,10 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 }
 
 - (NSString *)currentStatusText {
-    PSSpecifier *revModeSpec = nil;
-    for (PSSpecifier *sp in _specifiers) {
-        NSString *key = [sp propertyForKey:@"key"];
-        if (!key)
-            continue;
-        if (!revModeSpec && [key isEqualToString:@"ReverseMode"]) {
-            revModeSpec = sp;
-            break;
-        }
-    }
-
-    NSString *revMode = @"none";
-    id revModeVal = revModeSpec ? [self readPreferenceValue:revModeSpec] : nil;
-    if ([revModeVal isKindOfClass:[NSString class]]) {
-        revMode = (NSString *)revModeVal;
-    }
-
-    NSString *text;
-    BOOL isRevModeOn = [revMode caseInsensitiveCompare:@"none"] != NSOrderedSame;
-    if (isRevModeOn) {
-        NSString *modeFormat =
-            NSLocalizedStringFromTableInBundle(@"Reverse Connection: %@", @"Localizable", self.bundle, nil);
-        if ([revMode caseInsensitiveCompare:@"repeater"] == NSOrderedSame) {
-            revMode = NSLocalizedStringFromTableInBundle(@"Repeater", @"Localizable", self.bundle, nil);
-        } else {
-            revMode = NSLocalizedStringFromTableInBundle(@"Viewer", @"Localizable", self.bundle, nil);
-        }
-        text = [NSString stringWithFormat:modeFormat, revMode];
-    } else {
-        // Append current en0 IP on a second line, if available
-        NSString *ip = TVNCGetEn0IPAddress();
-        NSString *ipUnavailable = NSLocalizedStringFromTableInBundle(@"unavailable", @"Localizable", self.bundle, nil);
-        NSString *ipFormat =
-            NSLocalizedStringFromTableInBundle(@"Current IP Address: %@", @"Localizable", self.bundle, nil);
-        text = [NSString stringWithFormat:ipFormat, (ip.length ? ip : ipUnavailable)];
-    }
-
-    return text;
+    if (!_serviceStatus) return NSLocalizedStringFromTableInBundle(@"Service status unavailable", @"Localizable", self.bundle, nil);
+    return [NSString stringWithFormat:@"VNC :%@ · ZXTouch :%@\n%@", _serviceStatus[@"VNCPort"],
+        _serviceStatus[@"ZXTouchPort"], NSLocalizedStringFromTableInBundle(
+            [_serviceStatus[@"WireGuardStarted"] boolValue] ? @"Wi-Fi + WireGuard" : @"Local network", @"Localizable", self.bundle, nil)];
 }
 
 - (void)updateFirstGroupAndReload:(BOOL)reload {
@@ -422,21 +334,14 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     }
 }
 
-- (void)reloadEnabledSpecifier {
-    if (!_enabledSpecifier) {
-        return;
-    }
-
-    [self reloadSpecifier:_enabledSpecifier animated:NO];
-}
-
 #pragma mark - Actions
 
-- (void)openWireGuardSettings {
+- (void)openNetworkSettings {
     [self.bundle load];
-    Class controllerClass = NSClassFromString(@"TVNCWireGuardController");
+    Class controllerClass = NSClassFromString(@"TVNCNetworkController");
     if (!controllerClass) return;
     UIViewController *controller = [[controllerClass alloc] init];
+    [controller setValue:self.bundle forKey:@"localizationBundle"];
     [self.navigationController pushViewController:controller animated:YES];
 }
 
@@ -444,63 +349,30 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     // Resign first responder status
     [self.view endEditing:YES];
 
-    // Validate ports before restarting service, using -readPreferenceValue: to get live edits
-    int port = 5901;
-    int httpPort = 0;
+    int port = 5901, zxPort = 6000, httpPort = 0;
     NSString *bindHost = @"";
-
-    PSSpecifier *portSpec = nil;
-    PSSpecifier *httpPortSpec = nil;
-    PSSpecifier *bindHostSpec = nil;
     for (PSSpecifier *sp in _specifiers) {
         NSString *key = [sp propertyForKey:@"key"];
-        if (!key)
-            continue;
-        if (!portSpec && [key isEqualToString:@"Port"])
-            portSpec = sp;
-        else if (!httpPortSpec && [key isEqualToString:@"HttpPort"])
-            httpPortSpec = sp;
-        else if (!bindHostSpec && [key isEqualToString:@"BindHost"])
-            bindHostSpec = sp;
-        if (portSpec && httpPortSpec && bindHostSpec)
-            break;
+        if ([key isEqualToString:@"BindHost"]) bindHost = [self readPreferenceValue:sp] ?: @"";
+        if ([key isEqualToString:@"Port"]) port = TVNCParseServicePort([self readPreferenceValue:sp], NO);
+        if ([key isEqualToString:@"ZXTouchPort"]) zxPort = TVNCParseServicePort([self readPreferenceValue:sp], NO);
+        if ([key isEqualToString:@"HttpPort"]) httpPort = TVNCParseServicePort([self readPreferenceValue:sp], YES);
     }
-
-    id portVal = portSpec ? [self readPreferenceValue:portSpec] : nil;
-    if ([portVal isKindOfClass:[NSNumber class]]) {
-        port = [portVal intValue];
-    } else if ([portVal isKindOfClass:[NSString class]]) {
-        port = [(NSString *)portVal intValue];
+    if (!TVNCServicePortsValid(port, zxPort, httpPort)) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:
+            NSLocalizedStringFromTableInBundle(@"Invalid Port", @"Localizable", self.bundle, nil)
+            message:NSLocalizedStringFromTableInBundle(@"Ports must be distinct and within 1024–65535. HTTP may be 0. Ports 46751 and 46752 are reserved.", @"Localizable", self.bundle, nil)
+            preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil]; return;
     }
-
-    id httpPortVal = httpPortSpec ? [self readPreferenceValue:httpPortSpec] : nil;
-    if ([httpPortVal isKindOfClass:[NSNumber class]]) {
-        httpPort = [httpPortVal intValue];
-    } else if ([httpPortVal isKindOfClass:[NSString class]]) {
-        httpPort = [(NSString *)httpPortVal intValue];
-    }
-
-    id bindHostVal = bindHostSpec ? [self readPreferenceValue:bindHostSpec] : nil;
-    if ([bindHostVal isKindOfClass:[NSString class]]) {
-        bindHost = (NSString *)bindHostVal;
-    }
-
-    BOOL portInvalid = (port < 1024 || port > 65535);
-    BOOL httpInvalid = (httpPort != 0 && (httpPort < 1024 || httpPort > 65535));
-    if (portInvalid || httpInvalid) {
-        NSString *t = NSLocalizedStringFromTableInBundle(@"Invalid Port", @"Localizable", self.bundle, nil);
-        NSString *msg = NSLocalizedStringFromTableInBundle(
-            @"TCP/HTTP ports must be 1024..65535 (HTTP can be 0 to disable). The server will fallback to defaults.",
-            @"Localizable", self.bundle, nil);
-        NSString *ok = NSLocalizedStringFromTableInBundle(@"OK", @"Localizable", self.bundle, nil);
-
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:t
-                                                                       message:msg
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:ok style:UIAlertActionStyleCancel handler:nil]];
-
-        [self presentViewController:alert animated:YES completion:nil];
-        return; // do not restart now
+    NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:@"com.82flex.trollvnc"];
+    if ([preferences dictionaryForKey:@"WireGuardConfig"] && !TVNCSharedBindAllowsWireGuard(bindHost)) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WireGuard"
+            message:NSLocalizedStringFromTableInBundle(@"Clear the shared listen address to use both Wi-Fi and WireGuard.", @"Localizable", self.bundle, nil)
+            preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil]; return;
     }
 
     if (!TVNCIsValidBindHostLiteral(bindHost)) {
@@ -520,7 +392,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     }
 
     NSString *title = NSLocalizedStringFromTableInBundle(@"Apply Changes", @"Localizable", self.bundle, nil);
-    NSString *message = NSLocalizedStringFromTableInBundle(@"Are you sure you want to restart the VNC service?",
+    NSString *message = NSLocalizedStringFromTableInBundle(@"Restart TrollVNC to apply changes to both VNC and ZXTouch?",
                                                            @"Localizable", self.bundle, nil);
 
     NSString *fullMessage = [NSString stringWithFormat:@"%@\n%@", message, [self currentStatusText]];
