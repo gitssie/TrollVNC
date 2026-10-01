@@ -2,20 +2,20 @@ Origin: XenSpace
 Label: TrollVNC
 Suite: stable
 Codename: trollvnc
-Architectures: iphoneos-arm64
+Architectures: iphoneos-arm64e
 Components: main
-Description: TrollVNC for Dopamine rootless
-Date: Thu, 01 Oct 2026 13:12:41 GMT
+Description: TrollVNC for Dopamine RootHide
+Date: Thu, 01 Oct 2026 13:22:36 GMT
 Acquire-By-Hash: no
 MD5Sum:
- 98afb63807c0e5d35467f7f27f3a2194              742 Packages
- 1c7e818d130b03ac9b04074f1297a742              477 Packages.gz
- 1f892d597d5a31e28faf574a5bddbed3              540 Packages.xz
+ 28c0fdc42b4b96862ca17b143adedea2              744 Packages
+ 8b6e8f87c655bac2dc08808f9233e7b9              477 Packages.gz
+ 1c4cc2b2f4a5a89880d3d84729710809              540 Packages.xz
 SHA1:
- bc4e8c40653ed7537ef700f1eaffdd72ff92c788              742 Packages
- 5d454db8158f7e53eb3539187b5c4d4a474c1827              477 Packages.gz
- 16c31ef3850d6cf59685062897db74adec5d48b3              540 Packages.xz
+ 7472653bded39e61f261f33332719142ebc27523              744 Packages
+ 2e53eab9ec7b077a434359231d73a89974f2ae37              477 Packages.gz
+ 0730d70b5a5c60b3a388a6a1e3a2f5e666a29979              540 Packages.xz
 SHA256:
- 5b1620f376a437eb065e331efac798ccbc73500fef22064e12877a688efc0101              742 Packages
- 7fe67f723e197c048559cecb05e799ae3d28c7714321107df58b77c26306dda9              477 Packages.gz
- d432ff5bec41b29bd5ad1f2a754f4134dbf78120966d97f32adfa6f0ec6a4b5b              540 Packages.xz
+ edd27dcd76b7c54a2faa07c4df3530b4ef821809a98b1caa3355b060201efc69              744 Packages
+ 42517180b9d88ca723a92b6c4be5dd3aac4fd05e542cb6f67ea99008c7ec0973              477 Packages.gz
+ fd1d6a669b63248946d60ad9704dc4798f0bd8a1e5cdf87be470bbba15194cc0              540 Packages.xz
