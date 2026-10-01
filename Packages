@@ -6,14 +6,14 @@ Author: XenSpace
 Maintainer: XenSpace
 Description: TrollVNC is a VNC server for iOS devices, allowing remote access and control of the device’s screen.
 Architecture: iphoneos-arm64e
-Version: 3.2-304
-Installed-Size: 14512
+Version: 3.2-305
+Installed-Size: 14528
 Homepage: https://gitssie.github.io/TrollVNC/
 Depiction: https://gitssie.github.io/TrollVNC/
 SileoDepiction: https://gitssie.github.io/TrollVNC/depiction.json
-Filename: pool/com.82flex.trollvnc_3.2-304_iphoneos-arm64e.deb
-Size: 4105894
-MD5sum: 8648f260bd7a812176ed1668cc715c1e
-SHA1: 2593085f2dea362ae9b06a485c1d2ffda4ed63fa
-SHA256: 3bb78159c10af836e76a47839bb1d7c9c405efd047c3299db22a5435a84b7703
+Filename: pool/com.82flex.trollvnc_3.2-305_iphoneos-arm64e.deb
+Size: 4106110
+MD5sum: abf975b682414cf706c89c6e1263232c
+SHA1: 7f6688959e8b732805979d22d77a7ec508458f17
+SHA256: 9447a3689b21a27e4bd9ecbb309cd5b905a37d5eab1d811dc97a097bccbcfc6b
 
