@@ -9,7 +9,7 @@
       "views": [
         {
           "class": "DepictionMarkdownView",
-          "markdown": "# TrollVNC 3.2-305\n\nControl and view your iPhone over VNC. This **XenSpace** build is packaged for **Dopamine RootHide** on iOS 15 or later.\n\n- VNC and ZXTouch access over local Wi-Fi or WireGuard\n- Unified native settings for both services\n- Reverse connections to a listening viewer or UltraVNC repeater\n- Browser viewer and file transfer support\n\n**Package:** iphoneos-arm64e · 3.92 MB\n\n**SHA-256:** `9447a3689b21a27e4bd9ecbb309cd5b905a37d5eab1d811dc97a097bccbcfc6b`\n\nBased on the open-source TrollVNC project by 82Flex."
+          "markdown": "# TrollVNC 3.2-306\n\nControl and view your iPhone over VNC. This **XenSpace** build is packaged for **Dopamine RootHide** on iOS 15 or later.\n\n- VNC and ZXTouch access over local Wi-Fi or WireGuard\n- Unified native settings for both services\n- Reverse connections to a listening viewer or UltraVNC repeater\n- Browser viewer and file transfer support\n\n**Package:** iphoneos-arm64e · 3.92 MB\n\n**SHA-256:** `951248eb75c10cf2f5e33128532e93a50b06699583f204fee14b68a97d430b01`\n\nBased on the open-source TrollVNC project by 82Flex."
         },
         {
           "class": "DepictionSeparatorView"
