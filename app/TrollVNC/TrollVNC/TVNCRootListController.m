@@ -33,6 +33,7 @@
 #import "TVNCRootListController.h"
 #import "TVNCUtil.h"
 #import "TVNCServiceStatus.h"
+#import "TVNCServiceState.h"
 #import "TVNCSettingsModel.h"
 #import "TVNCSettingsAppearance.h"
 #import "TVNCSettingsPageController.h"
@@ -83,11 +84,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 @property(nonatomic, copy) NSString *jbrootPath;
 
 @property(nonatomic, strong) PSSpecifier *firstGroupSpecifier;
-@property(nonatomic, strong) NSTimer *statusTimer;
-@property(nonatomic, strong) NSDictionary *serviceStatus;
-@property(nonatomic, assign) BOOL fetchingStatus;
-@property(nonatomic, assign) BOOL statusReadCompleted;
-@property(nonatomic, assign) NSUInteger statusPollFailures;
+@property(nonatomic, strong) UIImageView *serviceStatusIcon;
 @property(nonatomic, strong) PSSpecifier *certSpecifier;
 @property(nonatomic, strong) PSSpecifier *keysSpecifier;
 @property(nonatomic, strong) PSSpecifier *exportCertSpecifier;
@@ -184,9 +181,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     return _specifiers;
 }
 
-- (void)dealloc {
-    [_statusTimer invalidate];
-}
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 
 // Add Apply button in nav bar
 - (void)viewDidLoad {
@@ -207,6 +202,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                                             target:nil
                                                                             action:nil];
     self.navigationItem.backBarButtonItem.tintColor = _primaryColor;
+    [self installServiceStatusTitle];
 
     if ([self hasManagedConfiguration]) {
         return;
@@ -222,46 +218,55 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     self.navigationItem.rightBarButtonItem = applyItem;
     UITableView *settingsTable = [self settingsTableView];
     TVNCStyleSettingsTable(settingsTable);
-    self.title = @"TrollVNC";
+}
 
+- (void)installServiceStatusTitle {
+    self.title = @"TrollVNC";
+    UILabel *titleLabel = [[UILabel alloc] init];
+    titleLabel.text = @"TrollVNC";
+    titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    self.serviceStatusIcon = [[UIImageView alloc] init];
+    self.serviceStatusIcon.contentMode = UIViewContentModeScaleAspectFit;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.serviceStatusIcon.widthAnchor constraintEqualToConstant:16],
+        [self.serviceStatusIcon.heightAnchor constraintEqualToConstant:16]
+    ]];
+    UIStackView *titleView = [[UIStackView alloc] initWithArrangedSubviews:@[titleLabel, self.serviceStatusIcon]];
+    titleView.axis = UILayoutConstraintAxisHorizontal;
+    titleView.alignment = UIStackViewAlignmentCenter;
+    titleView.spacing = 6;
+    self.navigationItem.titleView = titleView;
+    [self updateServiceStatusIcon];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    if (![self hasManagedConfiguration]) return;
-
-    [self refreshServiceStatus];
-    [_statusTimer invalidate];
-    __weak typeof(self) weakSelf = self;
-    _statusTimer = [NSTimer scheduledTimerWithTimeInterval:3 repeats:YES block:^(NSTimer *timer) {
-        [weakSelf refreshServiceStatus];
-    }];
+    if ([self hasManagedConfiguration]) [self updateFirstGroupAndReload:YES];
+    [self updateServiceStatusIcon];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(serviceStateChanged:)
+        name:TVNCServiceStateDidChangeNotification object:[TVNCServiceState sharedState]];
+    [[TVNCServiceState sharedState] startObserving];
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated];
-    [_statusTimer invalidate]; _statusTimer = nil;
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TVNCServiceStateDidChangeNotification
+        object:[TVNCServiceState sharedState]];
+    [[TVNCServiceState sharedState] stopObserving];
 }
 
-- (void)refreshServiceStatus {
-    if (_fetchingStatus) return;
-    _fetchingStatus = YES;
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        NSDictionary *status = TVNCFetchServiceStatus(kTvDefaultCtlPort);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            typeof(self) strongSelf = weakSelf;
-            if (!strongSelf) return;
-            strongSelf.fetchingStatus = NO;
-            BOOL wasCompleted = strongSelf.statusReadCompleted;
-            NSDictionary *next = TVNCStatusAfterPoll(strongSelf.serviceStatus, status, &strongSelf->_statusPollFailures);
-            strongSelf.statusReadCompleted = wasCompleted || next != nil || strongSelf.statusPollFailures >= 3;
-            BOOL changed = !(strongSelf.serviceStatus == next || [strongSelf.serviceStatus isEqual:next]) ||
-                wasCompleted != strongSelf.statusReadCompleted;
-            strongSelf.serviceStatus = next;
-            if (changed) [strongSelf updateFirstGroupAndReload:YES];
-        });
-    });
+- (void)serviceStateChanged:(NSNotification *)notification {
+    [self updateServiceStatusIcon];
+}
+
+- (void)updateServiceStatusIcon {
+    TVNCServiceState *state = [TVNCServiceState sharedState];
+    BOOL running = state.isRunning;
+    NSString *symbol = running ? @"checkmark.circle.fill" : state.status ? @"xmark.circle.fill" : @"questionmark.circle";
+    self.serviceStatusIcon.image = [UIImage systemImageNamed:symbol];
+    self.serviceStatusIcon.tintColor = running ? TVNCAccentColor() : state.status ? UIColor.systemRedColor : UIColor.secondaryLabelColor;
+    self.navigationItem.titleView.accessibilityLabel = [NSString stringWithFormat:@"TrollVNC, %@",
+        [self uiText:running ? @"Service running" : state.status ? @"Service stopped" : @"Service status unknown"]];
 }
 
 - (void)showClients {
@@ -295,11 +300,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     return _defaultFooterText;
 }
 
-- (NSString *)currentStatusText {
-    if (!_serviceStatus) return NSLocalizedStringFromTableInBundle(_statusReadCompleted ? @"Service status unavailable" : @"Loading service status…", @"Localizable", self.bundle, nil);
-    return [NSString stringWithFormat:@"VNC %@ · ZXTouch %@", _serviceStatus[@"VNCPort"], _serviceStatus[@"ZXTouchPort"]];
-}
-
 - (void)updateFirstGroupAndReload:(BOOL)reload {
     if (!_firstGroupSpecifier) {
         return;
@@ -308,8 +308,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     if (![self hasManagedConfiguration]) {
         return;
     }
-    NSString *footerText = [NSString stringWithFormat:@"%@\n%@", [self defaultFooterText], [self currentStatusText]];
-    [_firstGroupSpecifier setProperty:footerText forKey:@"footerText"];
+    [_firstGroupSpecifier setProperty:[self defaultFooterText] forKey:@"footerText"];
 
     if (reload) {
         [self reloadSpecifier:_firstGroupSpecifier animated:NO];
@@ -373,13 +372,11 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     NSString *message = NSLocalizedStringFromTableInBundle(@"Restart TrollVNC to apply changes to both VNC and ZXTouch?",
                                                            @"Localizable", self.bundle, nil);
 
-    NSString *fullMessage = [self hasManagedConfiguration] ?
-        [NSString stringWithFormat:@"%@\n%@", message, [self currentStatusText]] : message;
     NSString *cancel = NSLocalizedStringFromTableInBundle(@"Cancel", @"Localizable", self.bundle, nil);
     NSString *restart = NSLocalizedStringFromTableInBundle(@"Restart", @"Localizable", self.bundle, nil);
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
-                                                                   message:fullMessage
+                                                                   message:message
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:cancel style:UIAlertActionStyleCancel handler:nil]];
     __weak typeof(self) weakSelf = self;

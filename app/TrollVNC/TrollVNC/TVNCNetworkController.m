@@ -1,89 +1,64 @@
 // GPL-2.0-only.
 #import "TVNCNetworkController.h"
 #import "TVNCServiceStatus.h"
+#import "TVNCServiceState.h"
 #import "TVNCWireGuardController.h"
 #import "TVNCSettingsAppearance.h"
 #import "TVNCSettingsModel.h"
 #import "TVNCUtil.h"
 #import "TVNCWireGuardConfig.h"
 
-// Keep the last successful snapshot while Settings recreates this page or a poll fails.
-static NSDictionary *sLastNetworkStatus;
-static NSArray<NSString *> *sLastLocalAddresses;
-
 @interface TVNCNetworkController ()
-@property(nonatomic, strong) NSDictionary *status;
-@property(nonatomic, strong) NSArray<NSString *> *localAddresses;
-@property(nonatomic, strong) NSTimer *timer;
-@property(nonatomic, assign) BOOL fetching;
-@property(nonatomic, assign) BOOL statusReadCompleted;
+@property(nonatomic, strong) NSDictionary *displayedStatus;
 @end
-@implementation TVNCNetworkController
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        self.categoryIdentifier = @"network";
-        self.status = sLastNetworkStatus;
-        self.localAddresses = sLastLocalAddresses ?: @[];
-        self.statusReadCompleted = self.status != nil;
-    }
-    return self;
+static BOOL TVNCStatusFieldEqual(NSDictionary *left, NSDictionary *right, NSString *key) {
+    return left[key] == right[key] || [left[key] isEqual:right[key]];
 }
+@implementation TVNCNetworkController
+- (instancetype)init { self = [super init]; if (self) self.categoryIdentifier = @"network"; return self; }
+- (NSDictionary *)status { return [TVNCServiceState sharedState].status; }
+- (NSArray<NSString *> *)localAddresses { return self.status[@"LocalAddresses"] ?: @[]; }
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = [self text:@"Network settings"];
     TVNCStyleSettingsTable(self.tableView);
     self.refreshControl = [UIRefreshControl new];
     [self.refreshControl addTarget:self action:@selector(refreshStatus) forControlEvents:UIControlEventValueChanged];
+    self.displayedStatus = self.status;
 }
 - (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated]; [self refreshStatus];
-    [self.timer invalidate]; __weak typeof(self) weakSelf = self;
-    self.timer = [NSTimer scheduledTimerWithTimeInterval:10 repeats:YES block:^(NSTimer *timer) { [weakSelf refreshStatus]; }];
+    [super viewWillAppear:animated];
+    self.displayedStatus = self.status;
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(serviceStateChanged:)
+        name:TVNCServiceStateDidChangeNotification object:[TVNCServiceState sharedState]];
+    [[TVNCServiceState sharedState] startObserving];
 }
 - (void)viewDidDisappear:(BOOL)animated {
-    [super viewDidDisappear:animated]; [self.timer invalidate]; self.timer = nil;
+    [super viewDidDisappear:animated];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TVNCServiceStateDidChangeNotification
+        object:[TVNCServiceState sharedState]];
+    [[TVNCServiceState sharedState] stopObserving];
 }
-- (void)dealloc { [_timer invalidate]; }
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 - (void)refreshStatus {
-    if (self.fetching) return; self.fetching = YES;
     __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        NSDictionary *status = TVNCFetchServiceStatus(kTvDefaultCtlPort);
-        NSArray *addresses = status ? TVNCWiFiAddresses(status[@"BindHost"], [status[@"VNCAcceptsIPv4"] boolValue], NO) : @[];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            typeof(self) strongSelf = weakSelf; if (!strongSelf) return;
-            strongSelf.fetching = NO;
-            BOOL wasCompleted = strongSelf.statusReadCompleted;
-            [strongSelf.refreshControl endRefreshing];
-            if (!status) {
-                // A failed control request must not erase working connection addresses.
-                if (!wasCompleted) {
-                    strongSelf.statusReadCompleted = YES;
-                    [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(1, 2)]
-                        withRowAnimation:UITableViewRowAnimationNone];
-                }
-                return;
-            }
-            NSDictionary *previous = strongSelf.status;
-            BOOL localChanged = ![strongSelf.localAddresses isEqualToArray:addresses] ||
-                !(previous[@"VNCPort"] == status[@"VNCPort"] || [previous[@"VNCPort"] isEqual:status[@"VNCPort"]]) ||
-                !(previous[@"ZXTouchPort"] == status[@"ZXTouchPort"] || [previous[@"ZXTouchPort"] isEqual:status[@"ZXTouchPort"]]);
-            BOOL wireGuardChanged = !wasCompleted;
-            for (NSString *key in @[@"WireGuardStarted", @"WireGuardEnabled", @"WireGuardConfigured",
-                                    @"WireGuardAddress", @"WireGuardError", @"VNCPort", @"ZXTouchPort"]) {
-                if (!(previous[key] == status[key] || [previous[key] isEqual:status[key]])) wireGuardChanged = YES;
-            }
-            strongSelf.status = status;
-            strongSelf.localAddresses = addresses;
-            strongSelf.statusReadCompleted = YES;
-            sLastNetworkStatus = status;
-            sLastLocalAddresses = addresses;
-            NSMutableIndexSet *sections = [NSMutableIndexSet indexSet];
-            if (localChanged) [sections addIndex:1];
-            if (wireGuardChanged) [sections addIndex:2];
-            if (sections.count) [strongSelf.tableView reloadSections:sections withRowAnimation:UITableViewRowAnimationNone];
-        });
-    });
+    [[TVNCServiceState sharedState] refreshWithCompletion:^{ [weakSelf.refreshControl endRefreshing]; }];
+}
+- (void)serviceStateChanged:(NSNotification *)notification {
+    NSDictionary *previous = self.displayedStatus;
+    NSDictionary *status = self.status;
+    BOOL localChanged = !TVNCStatusFieldEqual(previous, status, @"LocalAddresses") ||
+        !TVNCStatusFieldEqual(previous, status, @"VNCPort") ||
+        !TVNCStatusFieldEqual(previous, status, @"ZXTouchPort");
+    BOOL wireGuardChanged = NO;
+    for (NSString *key in @[@"WireGuardStarted", @"WireGuardEnabled", @"WireGuardConfigured",
+                            @"WireGuardAddress", @"WireGuardError", @"VNCPort", @"ZXTouchPort"]) {
+        if (!TVNCStatusFieldEqual(previous, status, key)) wireGuardChanged = YES;
+    }
+    self.displayedStatus = status;
+    NSMutableIndexSet *sections = [NSMutableIndexSet indexSet];
+    if (localChanged) [sections addIndex:1];
+    if (wireGuardChanged) [sections addIndex:2];
+    if (sections.count) [self.tableView reloadSections:sections withRowAnimation:UITableViewRowAnimationNone];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 3; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -125,7 +100,7 @@ static NSArray<NSString *> *sLastLocalAddresses;
             cell.accessoryView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"doc.on.doc"]];
             cell.accessoryView.tintColor = TVNCAccentColor();
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-        } else cell.valueLabel.text = [self text:!self.status && !self.statusReadCompleted ? @"Loading service status…" : @"Address unavailable"];
+        } else cell.valueLabel.text = @"—";
     } else if (row == 0) {
         cell.nameLabel.text = [self text:@"Enable WireGuard"];
         UISwitch *toggle = [UISwitch new];
@@ -141,7 +116,7 @@ static NSArray<NSString *> *sLastLocalAddresses;
         cell.nameLabel.textColor = UIColor.systemRedColor;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     } else if (row == 1) {
-        NSString *state = !self.status ? (self.statusReadCompleted ? @"Service status unavailable" : @"Loading service status…") :
+        NSString *state = !self.status ? @"Checking service" :
             [self.status[@"WireGuardStarted"] boolValue] ? @"Interface running" :
             ![self wireGuardEnabledInStatus] && [self.status[@"WireGuardConfigured"] boolValue] ? @"Interface disabled" :
             [self.status[@"WireGuardConfigured"] boolValue] ? @"Network failed to start" : @"No configuration";

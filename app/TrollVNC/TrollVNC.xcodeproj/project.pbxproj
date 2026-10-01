@@ -61,6 +61,8 @@
 		FB000000000000000000031 /* TVNCSettingsPageController.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000003 /* TVNCSettingsPageController.m */; };
 		FB000000000000000000040 /* TVNCSettingsModel.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000004 /* TVNCSettingsModel.m */; };
 		FB000000000000000000041 /* TVNCSettingsModel.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000004 /* TVNCSettingsModel.m */; };
+		FB000000000000000000050 /* TVNCServiceState.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000005 /* TVNCServiceState.m */; };
+		FB000000000000000000051 /* TVNCServiceState.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000005 /* TVNCServiceState.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -116,6 +118,7 @@
 		FA0000000000000000000002 /* TVNCWireGuardConfig.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "../../../src/TVNCWireGuardConfig.m"; sourceTree = "<group>"; };
 		FA0000000000000000000003 /* TVNCSettingsPageController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "TVNCSettingsPageController.m"; sourceTree = "<group>"; };
 		FA0000000000000000000004 /* TVNCSettingsModel.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "TVNCSettingsModel.m"; sourceTree = "<group>"; };
+		FA0000000000000000000005 /* TVNCServiceState.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "TVNCServiceState.m"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -224,6 +227,7 @@
 				FA0000000000000000000002 /* TVNCWireGuardConfig.m */,
 				FA0000000000000000000001 /* TVNCWireGuardController.m */,
 				FA0000000000000000000000 /* TVNCNetworkController.m */,
+				FA0000000000000000000005 /* TVNCServiceState.m */,
 				61C756B32E65BDAC00B2B371 /* TVNCServiceCoordinator.h */,
 				61C756B42E65BDAC00B2B371 /* TVNCServiceCoordinator.m */,
 				61B0DD062EB13BEF004CC42B /* TVNCSliderCell.h */,
@@ -399,6 +403,7 @@
 				FB000000000000000000020 /* TVNCWireGuardConfig.m in Sources */,
 				FB000000000000000000010 /* TVNCWireGuardController.m in Sources */,
 				FB000000000000000000000 /* TVNCNetworkController.m in Sources */,
+				FB000000000000000000050 /* TVNCServiceState.m in Sources */,
 				CC91EF902E6C2208002F5B2A /* TVNCClientListController.m in Sources */,
 				61B0DD092EB13BEF004CC42B /* TVNCSliderCell.m in Sources */,
 				CC91EF972E6EF165002F5B2A /* TVNCListItemsController.m in Sources */,
@@ -427,6 +432,7 @@
 				FB000000000000000000021 /* TVNCWireGuardConfig.m in Sources */,
 				FB000000000000000000011 /* TVNCWireGuardController.m in Sources */,
 				FB000000000000000000001 /* TVNCNetworkController.m in Sources */,
+				FB000000000000000000051 /* TVNCServiceState.m in Sources */,
 				615401BA2EB1180C009FDD6F /* TVNCClientListController.m in Sources */,
 				61B0DD082EB13BEF004CC42B /* TVNCSliderCell.m in Sources */,
 				615401BB2EB1180C009FDD6F /* TVNCListItemsController.m in Sources */,

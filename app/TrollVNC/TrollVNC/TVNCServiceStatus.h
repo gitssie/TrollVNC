@@ -1,4 +1,5 @@
 #import "TVNCBindAddress.h"
+#import "TVNCServiceSnapshot.h"
 // Shared native UI helpers. GPL-2.0-only.
 #pragma once
 #import <Foundation/Foundation.h>
@@ -29,13 +30,6 @@ NS_INLINE BOOL TVNCServicePortsValid(int vnc, int zx, int http) {
 NS_INLINE BOOL TVNCSharedBindAllowsWireGuard(NSString *host) {
     NSString *bind = [host stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     return TVNCIPv4BindAllowsWireGuard(bind);
-}
-// A single missed control response is not evidence that the service stopped.
-// Drop the last snapshot after three consecutive failed polls.
-NS_INLINE NSDictionary *TVNCStatusAfterPoll(NSDictionary *previous, NSDictionary *fetched, NSUInteger *failures) {
-    if (fetched) { *failures = 0; return fetched; }
-    ++*failures;
-    return previous && *failures < 3 ? previous : nil;
 }
 // Call on a worker queue. One absolute deadline bounds connect and fragmented reads.
 NS_INLINE NSDictionary *TVNCFetchServiceStatus(int port) {
@@ -87,32 +81,7 @@ NS_INLINE NSDictionary *TVNCFetchServiceStatus(int port) {
     if (!complete) return nil;
     id status = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     if (![status isKindOfClass:NSDictionary.class]) return nil;
-    for (NSString *key in @[@"VNCPort", @"ZXTouchPort", @"VNCRunning", @"ZXTouchRunning", @"WireGuardConfigured", @"WireGuardStarted", @"VNCAcceptsIPv4", @"VNCAcceptsIPv6"])
-        if (![status[key] isKindOfClass:NSNumber.class]) return nil;
-    for (NSString *key in @[@"BindHost", @"WireGuardAddress", @"WireGuardError"])
-        if (![status[key] isKindOfClass:NSString.class]) return nil;
-    return status;
-}
-NS_INLINE NSArray<NSString *> *TVNCWiFiAddresses(NSString *bindHost, BOOL ipv4, BOOL ipv6) {
-    if (bindHost.length && ![@[@"0.0.0.0", @"::"] containsObject:bindHost])
-        return ([bindHost containsString:@":"] ? ipv6 : ipv4) ? @[bindHost] : @[];
-    NSMutableArray *addresses = [NSMutableArray array];
-    struct ifaddrs *interfaces = NULL;
-    if (getifaddrs(&interfaces) != 0) return addresses;
-    for (struct ifaddrs *p = interfaces; p; p = p->ifa_next) {
-        if (!p->ifa_addr || !(p->ifa_flags & IFF_UP) || strcmp(p->ifa_name, "en0")) continue;
-        int family = p->ifa_addr->sa_family;
-        if (family != AF_INET && family != AF_INET6) continue;
-        if ((family == AF_INET && !ipv4) || (family == AF_INET6 && !ipv6)) continue;
-        if ([bindHost isEqualToString:@"0.0.0.0"] && family != AF_INET) continue;
-        char text[INET6_ADDRSTRLEN];
-        const void *address = family == AF_INET ? (void *)&((struct sockaddr_in *)p->ifa_addr)->sin_addr : (void *)&((struct sockaddr_in6 *)p->ifa_addr)->sin6_addr;
-        if (!inet_ntop(family, address, text, sizeof(text))) continue;
-        NSString *ip = @(text);
-        if (family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(&((struct sockaddr_in6 *)p->ifa_addr)->sin6_addr)) ip = [ip stringByAppendingString:@"%en0"];
-        if (![addresses containsObject:ip]) [addresses addObject:ip];
-    }
-    freeifaddrs(interfaces); return addresses;
+    return TVNCServiceSnapshotValid(status) ? status : nil;
 }
 NS_INLINE NSString *TVNCServiceSocket(NSString *address, NSNumber *port) {
     return [address containsString:@":"] ? [NSString stringWithFormat:@"[%@]:%@", address, port] : [NSString stringWithFormat:@"%@:%@", address, port];

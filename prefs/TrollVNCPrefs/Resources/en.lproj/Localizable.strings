@@ -251,6 +251,8 @@
 "Updates, tiles & encoding" = "Updates, tiles & encoding";
 "HTTP, certificates & private keys" = "HTTP, certificates & private keys";
 "Service running" = "Service running";
+"Service stopped" = "Service stopped";
+"Service status unknown" = "Service status unknown";
 "Connected clients" = "Connected clients";
 "Reset settings" = "Reset settings";
 "About" = "About";

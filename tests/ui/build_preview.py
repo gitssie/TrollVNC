@@ -17,7 +17,7 @@ sdk = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-
 source = root / 'app/TrollVNC/TrollVNC'
 theos = pathlib.Path(os.environ['THEOS'])
 files = ['TVNCRootListController.m', 'TVNCSettingsPageController.m', 'TVNCSettingsModel.m',
-         'TVNCNetworkController.m', 'TVNCWireGuardController.m', 'TVNCClientListController.m',
+         'TVNCNetworkController.m', 'TVNCServiceState.m', 'TVNCWireGuardController.m', 'TVNCClientListController.m',
          'TVNCClientCell.m', 'TVNCListItemsController.m', 'TVNCSliderCell.m',
          'StripedTextTableViewController.m', 'ZTSelfSignedCertificate.m']
 # Minimal SDK stub for the installed simulator's genuine Preferences framework.

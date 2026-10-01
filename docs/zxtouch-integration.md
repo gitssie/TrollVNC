@@ -13,9 +13,15 @@ when no VNC viewer is connected. The native Settings pane has no protocol enable
 switches. Default TCP ports are VNC **5901** and ZXTouch **6000**. Both use the
 existing `BindHost` setting; its default is `0.0.0.0` for local Wi-Fi and shared WG access.
 
-Network settings displays the running service's actual ports, local addresses,
-and WG interface startup status. Tap a socket address to copy it. Pending port
-edits do not appear as active addresses until Apply restarts the unified service.
+After both listeners start, the daemon publishes one runtime snapshot containing
+the active ports, bind address, local addresses and WireGuard state. The Settings
+dashboard icon and Network settings consume that same snapshot immediately, then
+refresh it through the control socket. A missed control reply keeps the last
+valid snapshot; only changed fields redraw. Local IPv4 addresses are resolved
+again from the active bind address when a cached snapshot is read, so a new Wi-Fi
+address does not require changing the service configuration. Tap a socket address
+to copy it. Pending port edits do not appear as active addresses until Apply
+restarts the unified service.
 WG interface startup does not imply a successful peer handshake or remote reachability.
 
 Import or edit one WireGuard configuration in Network settings. Saving a new

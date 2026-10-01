@@ -18,6 +18,7 @@ TrollVNCPrefs_FILES += StripedTextTableViewController.m
 TrollVNCPrefs_FILES += ZTSelfSignedCertificate.m
 TrollVNCPrefs_FILES += ../../app/TrollVNC/TrollVNC/TVNCWireGuardController.m
 TrollVNCPrefs_FILES += ../../app/TrollVNC/TrollVNC/TVNCNetworkController.m
+TrollVNCPrefs_FILES += ../../app/TrollVNC/TrollVNC/TVNCServiceState.m
 TrollVNCPrefs_FILES += ../../app/TrollVNC/TrollVNC/TVNCSettingsPageController.m
 TrollVNCPrefs_FILES += ../../app/TrollVNC/TrollVNC/TVNCSettingsModel.m
 TrollVNCPrefs_FILES += ../../src/TVNCWireGuardConfig.m

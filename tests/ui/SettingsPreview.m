@@ -2,27 +2,17 @@
 #import <UIKit/UIKit.h>
 #import "TVNCRootListController.h"
 #import "TVNCNetworkController.h"
+#import "TVNCServiceSnapshot.h"
 #import "TVNCSettingsPageController.h"
 
-static NSDictionary *FixtureStatus(void) {
+static NSDictionary *FixtureStatus(NSString *bindHost) {
     return @{@"VNCPort": @5901, @"ZXTouchPort": @6000, @"VNCRunning": @YES, @"ZXTouchRunning": @YES,
         @"VNCAcceptsIPv4": @YES, @"VNCAcceptsIPv6": @NO, @"WireGuardConfigured": @YES, @"WireGuardEnabled": @YES,
-        @"WireGuardStarted": @YES, @"WireGuardAddress": @"10.99.0.2", @"WireGuardError": @"", @"BindHost": @"", @"ClientCount": @2};
+        @"WireGuardStarted": @YES, @"WireGuardAddress": @"10.99.0.2", @"WireGuardError": @"",
+        @"BindHost": bindHost, @"ServerPID": @(getpid()), @"ClientCount": @2};
 }
 @interface TVNCRootListController (PreviewHooks)
 - (void)openNetworkSettings;
-@end
-@interface TVNCNetworkController (PreviewHooks)
-- (void)refreshStatus;
-@end
-@interface TVNCPreviewNetwork : TVNCNetworkController
-@end
-@implementation TVNCPreviewNetwork
-- (void)refreshStatus {
-    [self setValue:FixtureStatus() forKey:@"status"];
-    [self setValue:@[@"192.168.1.23"] forKey:@"localAddresses"];
-    [self.tableView reloadData];
-}
 @end
 @interface TVNCPreviewRoot : TVNCRootListController
 @property(nonatomic, strong) NSBundle *previewBundle;
@@ -31,7 +21,7 @@ static NSDictionary *FixtureStatus(void) {
 - (NSBundle *)bundle { return self.previewBundle; }
 - (void)setBundle:(NSBundle *)bundle { self.previewBundle = bundle; }
 - (void)openNetworkSettings {
-    TVNCPreviewNetwork *page = [TVNCPreviewNetwork new]; page.localizationBundle = self.bundle;
+    TVNCNetworkController *page = [TVNCNetworkController new]; page.localizationBundle = self.bundle;
     [self.navigationController pushViewController:page animated:NO];
 }
 @end
@@ -49,7 +39,15 @@ static NSDictionary *FixtureStatus(void) {
             @"PersistentKeepalive": @25, @"PublicKey": @"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG="}]}
         forKey:@"WireGuardConfig"];
     [preferences setBool:YES forKey:@"WireGuardEnabled"];
+    NSString *bindHost = [NSProcessInfo.processInfo.environment[@"TVNC_UI_NO_STATUS"] boolValue] ?
+        @"127.0.0.1" : @"192.168.1.23";
+    [preferences setObject:bindHost forKey:@"BindHost"];
     [preferences synchronize];
+    NSUserDefaults *runtime = [[NSUserDefaults alloc] initWithSuiteName:TVNCServiceRuntimeDomain];
+    if ([NSProcessInfo.processInfo.environment[@"TVNC_UI_EMPTY_STATUS"] boolValue]) {
+        [runtime removeObjectForKey:TVNCServiceSnapshotKey];
+        [runtime synchronize];
+    } else TVNCWriteServiceSnapshot(runtime, TVNCServiceSnapshotWithCurrentAddresses(FixtureStatus(bindHost)));
     TVNCPreviewRoot *root = [TVNCPreviewRoot new]; root.bundle = bundle;
     UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:root];
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds]; self.window.rootViewController = navigation;

@@ -51,6 +51,7 @@
 #import "FileManagement.h"
 #import "AppManagement.h"
 #import "ScreenUnlock.h"
+#import "TVNCServiceSnapshot.h"
 #import "TVNCWireGuardConfig.h"
 #import "TVNCZXTouchService.h"
 #include "ZXTouchProtocol.hpp"
@@ -80,7 +81,7 @@ static BOOL gWireGuardEnabled = NO;
 static BOOL gWireGuardStarted = NO;
 static int gZXTouchPort = 6000;
 static NSString *gWireGuardError = @"";
-static NSData *gServiceStatusJSON = nil;
+static NSDictionary *gServiceStatus = nil;
 static std::atomic<bool> gReverseConnected(false);
 static std::atomic<bool> gReverseStopping(false);
 static thread_local bool gCreatingReverseClient = false;
@@ -3885,7 +3886,13 @@ void tvCtlHandleConnection(int cfd, struct sockaddr_in caddr) {
     if (cmd.length == 0) {
         resp = [@"ERR Empty\n" dataUsingEncoding:NSUTF8StringEncoding];
     } else if ([cmd isEqualToString:@"status"]) {
-        NSMutableDictionary *status = [[NSJSONSerialization JSONObjectWithData:gServiceStatusJSON options:0 error:nil] mutableCopy];
+        NSDictionary *current = TVNCServiceSnapshotWithCurrentAddresses(gServiceStatus);
+        if (gIsDaemonMode && ![gServiceStatus[@"LocalAddresses"] isEqual:current[@"LocalAddresses"]]) {
+            NSUserDefaults *runtime = [[NSUserDefaults alloc] initWithSuiteName:TVNCServiceRuntimeDomain];
+            TVNCWriteServiceSnapshot(runtime, current);
+        }
+        gServiceStatus = current;
+        NSMutableDictionary *status = [current mutableCopy];
         status[@"ClientCount"] = @(gClientCount);
         NSMutableData *json = [[NSJSONSerialization dataWithJSONObject:status ?: @{} options:0 error:nil] mutableCopy];
         [json appendBytes:"\n" length:1]; resp = json;
@@ -5158,10 +5165,13 @@ int main(int argc, const char *argv[]) {
             @"WireGuardConfigured": @(gWireGuardConfig != nil), @"WireGuardEnabled": @(gWireGuardEnabled),
             @"WireGuardStarted": @(gWireGuardStarted),
             @"WireGuardAddress": gWireGuardStarted ? (TVNCWGPrimaryAddress(gWireGuardConfig) ?: @"") : @"",
-            @"WireGuardError": gWireGuardError};
-        NSMutableData *json = [[NSJSONSerialization dataWithJSONObject:status options:0 error:nil] mutableCopy];
-        [json appendBytes:"\n" length:1];
-        gServiceStatusJSON = [json copy]; // Immutable, published before accepting control connections.
+            @"WireGuardError": gWireGuardError, @"ServerPID": @(getpid())};
+        gServiceStatus = TVNCServiceSnapshotWithCurrentAddresses(status);
+        if (gIsDaemonMode) {
+            NSUserDefaults *runtime = [[NSUserDefaults alloc] initWithSuiteName:TVNCServiceRuntimeDomain];
+            if (!TVNCWriteServiceSnapshot(runtime, gServiceStatus))
+                TVLog(@"Service snapshot could not be persisted");
+        }
         tvStartControlSocketIfNeeded();
         startReverseConnectionRetries();
     }

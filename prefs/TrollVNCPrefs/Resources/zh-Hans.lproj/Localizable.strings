@@ -251,6 +251,8 @@
 "Updates, tiles & encoding" = "刷新、切片与编码";
 "HTTP, certificates & private keys" = "HTTP、证书与私钥";
 "Service running" = "服务运行中";
+"Service stopped" = "服务已停止";
+"Service status unknown" = "服务状态未知";
 "Connected clients" = "已连接客户端";
 "Reset settings" = "重置设置";
 "About" = "关于";

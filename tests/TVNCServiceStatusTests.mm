@@ -2,6 +2,7 @@
 #import "TVNCServiceStatus.h"
 #import "TVNCWireGuardConfig.h"
 #include <cassert>
+#include <climits>
 #include <thread>
 #include <chrono>
 
@@ -32,8 +33,14 @@ static NSDictionary *fetch(NSString *response, int delayMilliseconds = 0) {
     assert(CFAbsoluteTimeGetCurrent() - start < 2.5);
     server.join(); return result;
 }
-int main(void) {
+int main(int argc, char **argv) {
     @autoreleasepool {
+        if (argc == 3 && [@(argv[1]) isEqualToString:@"--read-cache"]) {
+            NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:@(argv[2])];
+            NSDictionary *cached = TVNCReadServiceSnapshot(defaults);
+            return [cached[@"LocalAddresses"] isEqual:@[@"127.0.0.1"]] &&
+                [cached[@"VNCPort"] isEqual:@5901] && [cached[@"ZXTouchPort"] isEqual:@6000] ? 0 : 1;
+        }
         assert(TVNCServicePortsValid(5901, 6000, 0));
         assert(!TVNCServicePortsValid(6000, 6000, 0));
         assert(!TVNCServicePortsValid(5901, 6000, 6000));
@@ -64,12 +71,28 @@ int main(void) {
             @"ZXTouchRunning": @YES, @"VNCAcceptsIPv4": @YES, @"VNCAcceptsIPv6": @NO, @"WireGuardConfigured": @YES,
             @"WireGuardEnabled": @YES, @"WireGuardStarted": @NO,
             @"BindHost": @"", @"WireGuardAddress": @"", @"WireGuardError": @"invalid configuration"};
-        NSUInteger failures = 0;
-        assert(TVNCStatusAfterPoll(nil, status, &failures) == status && failures == 0);
-        assert(TVNCStatusAfterPoll(status, nil, &failures) == status && failures == 1);
-        assert(TVNCStatusAfterPoll(status, nil, &failures) == status && failures == 2);
-        assert(TVNCStatusAfterPoll(status, nil, &failures) == nil && failures == 3);
-        assert(TVNCStatusAfterPoll(nil, status, &failures) == status && failures == 0);
+        NSString *runtimeDomain = [@"com.82flex.trollvnc.runtime-tests." stringByAppendingString:NSUUID.UUID.UUIDString];
+        NSUserDefaults *runtime = [[NSUserDefaults alloc] initWithSuiteName:runtimeDomain];
+        NSMutableDictionary *published = [status mutableCopy];
+        published[@"BindHost"] = @"127.0.0.1";
+        published[@"ServerPID"] = @(getpid());
+        published[@"LocalAddresses"] = @[];
+        assert(TVNCWriteServiceSnapshot(runtime, published));
+        NSUserDefaults *anotherProcessView = [[NSUserDefaults alloc] initWithSuiteName:runtimeDomain];
+        NSDictionary *initial = TVNCReadServiceSnapshot(anotherProcessView);
+        assert([initial[@"LocalAddresses"] isEqual:@[@"127.0.0.1"]]);
+        assert([initial[@"VNCPort"] isEqual:@5901] && [initial[@"ZXTouchPort"] isEqual:@6000]);
+        NSTask *reader = [NSTask new];
+        reader.executableURL = [NSURL fileURLWithPath:@(argv[0])];
+        reader.arguments = @[@"--read-cache", runtimeDomain];
+        assert([reader launchAndReturnError:nil]);
+        [reader waitUntilExit];
+        assert(reader.terminationStatus == 0);
+        published[@"ServerPID"] = @(INT_MAX);
+        assert(TVNCWriteServiceSnapshot(runtime, published));
+        assert(!TVNCReadServiceSnapshot(runtime));
+        [runtime removePersistentDomainForName:runtimeDomain];
+        [runtime synchronize];
         NSString *json = [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:status options:0 error:nil] encoding:NSUTF8StringEncoding];
         assert([fetch([json stringByAppendingString:@"\n"]) isEqualToDictionary:status]);
         assert(!fetch(@"{}\n")); assert(!fetch(@"invalid\n"));
