@@ -291,6 +291,7 @@ __used NS_INLINE void STAccurateSleep(NSTimeInterval seconds) {
 
 - (void)hardwareLock;
 - (void)hardwareUnlock;
+- (void)swipeUpToPasscode;
 
 @end
 

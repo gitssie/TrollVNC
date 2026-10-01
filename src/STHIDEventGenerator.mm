@@ -1652,6 +1652,16 @@ static inline uint32_t hidUsageCodeForCharacter(NSString *key) {
     [self sendMarkerHIDEvent];
 }
 
+- (void)swipeUpToPasscode {
+    // Capture can still be black while waking: use HID's physical geometry,
+    // rather than a VNC framebuffer whose first real frame has not arrived.
+    CGSize size = _physicalScreenSize;
+    if (size.width <= 0 || size.height <= 0) return;
+    CGPoint start = CGPointMake(size.width * 0.5, size.height - 36.0);
+    CGPoint end = CGPointMake(size.width * 0.5, size.height / 3.0);
+    [self dragLinearWithStartPoint:start endPoint:end duration:0.36];
+}
+
 #pragma mark - Marker Events
 
 + (CFIndex)nextEventCallbackID {

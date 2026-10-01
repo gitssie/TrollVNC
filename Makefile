@@ -1,4 +1,4 @@
-export PACKAGE_VERSION := 3.2-294
+export PACKAGE_VERSION := 3.2-300
 export THEOS_PACKAGE_SCHEME
 
 ifeq ($(THEOS_DEVICE_SIMULATOR),1)
@@ -25,6 +25,8 @@ trollvncserver_USE_MODULES := 0
 trollvncserver_FILES += src/trollvncserver.mm
 trollvncserver_FILES += src/TVNCWireGuardConfig.m
 trollvncserver_FILES += src/FileManagement.c
+trollvncserver_FILES += src/AppManagement.mm
+trollvncserver_FILES += src/ScreenUnlock.mm
 trollvncserver_FILES += src/PhotoLibrary.m
 trollvncserver_FILES += src/BulletinManager.mm
 trollvncserver_FILES += src/ClipboardManager.mm

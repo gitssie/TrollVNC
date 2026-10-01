@@ -48,6 +48,8 @@
 #import "Control.h"
 #import "FBSOrientationObserver.h"
 #import "FileManagement.h"
+#import "AppManagement.h"
+#import "ScreenUnlock.h"
 #import "TVNCWireGuardConfig.h"
 #import "IOKitSPI.h"
 #import "Logging.h"
@@ -2966,6 +2968,8 @@ static void kbdAddEvent(rfbBool down, rfbKeySym keySym, rfbClientPtr cl) {
     (void)cl;
     if (gViewOnly)
         return;
+    int unlockKey = tvScreenUnlockKey(cl, down, keySym);
+    if (unlockKey < 0) return;
 
     STHIDEventGenerator *gen = [STHIDEventGenerator sharedGenerator];
 
@@ -3027,7 +3031,7 @@ static void kbdAddEvent(rfbBool down, rfbKeySym keySym, rfbClientPtr cl) {
     }
 
     NSString *keyStr = keysymToString(keySym);
-    if (gKeyEventLogging && tvncLoggingEnabled) {
+    if (unlockKey == 0 && gKeyEventLogging && tvncLoggingEnabled) {
         const char *mapped = keyStr ? [keyStr UTF8String] : "(nil)";
         rfbLog("[key] %s keysym=0x%lx (%lu) mapped=%s\n", down ? "down" : " up ", (unsigned long)keySym,
                (unsigned long)keySym, mapped);
@@ -5044,6 +5048,7 @@ static void cleanupAndExit(int code) {
     // Stop event thread if running
     tvStopRfbEventThread();
 
+    tvUnregisterAppManagement();
     if (gFileTransferRegistered) {
         if (gFileManagementRegistered) {
             tvUnregisterFileManagement();
@@ -5204,6 +5209,7 @@ int main(int argc, const char *argv[]) {
         setupRfbCutTextHandlers();
         setupRfbServerSideCursor();
         setupRfbHttpServer();
+        tvRegisterAppManagement(gScreen);
         setupRfbFileTransferExtension();
 
         prepareBulletinManager();

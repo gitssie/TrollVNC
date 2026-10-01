@@ -17,6 +17,7 @@ TrollVNC is a VNC server for iOS devices, allowing remote access and control of 
 - Orientation sync and rotation-aware input mapping.
 - Optional server-side cursor overlay.
 - Classic VNC authentication with full-access and view-only passwords.
+- Negotiated App management for RV: installed App list/icons, foreground state, open, terminate and restart. Independent of File Transfer; see [protocol and usage](../rv/docs/app-control-protocol.md).
 - Built-in HTTP/WebSockets for browser access (HTTPS/WSS supported).
 - Enable secure WebSocket connections without pain.
 - Bonjour/mDNS auto-discovery on the local network.
