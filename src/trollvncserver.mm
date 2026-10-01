@@ -857,7 +857,7 @@ static void parseDaemonOptions(void) {
     id wireGuard = prefs[@"WireGuardConfig"];
     if ([wireGuard isKindOfClass:NSDictionary.class]) {
         gWireGuardConfig = wireGuard;
-        gWireGuardEnabled = YES;
+        gWireGuardEnabled = TVNCWGShouldStart(wireGuard, prefs[@"WireGuardEnabled"]);
         TVLog(@"Shared WireGuard network configured for %@", TVNCWGPrimaryAddress(wireGuard));
     }
 
@@ -5155,7 +5155,8 @@ int main(int argc, const char *argv[]) {
         NSDictionary *status = @{@"VNCPort": @(gPort), @"ZXTouchPort": @(gZXTouchPort),
             @"BindHost": gBindHost ?: @"", @"VNCRunning": @YES, @"ZXTouchRunning": @YES,
             @"VNCAcceptsIPv4": @(gScreen->listenSock >= 0), @"VNCAcceptsIPv6": @(gScreen->listen6Sock >= 0),
-            @"WireGuardConfigured": @(gWireGuardEnabled), @"WireGuardStarted": @(gWireGuardStarted),
+            @"WireGuardConfigured": @(gWireGuardConfig != nil), @"WireGuardEnabled": @(gWireGuardEnabled),
+            @"WireGuardStarted": @(gWireGuardStarted),
             @"WireGuardAddress": gWireGuardStarted ? (TVNCWGPrimaryAddress(gWireGuardConfig) ?: @"") : @"",
             @"WireGuardError": gWireGuardError};
         NSMutableData *json = [[NSJSONSerialization dataWithJSONObject:status options:0 error:nil] mutableCopy];

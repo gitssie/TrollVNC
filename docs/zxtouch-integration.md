@@ -11,16 +11,18 @@ Automation dialogs and toasts are supplied by a small jailbreak adapter.
 VNC and ZXTouch always start together inside the launchd-managed server, even
 when no VNC viewer is connected. The native Settings pane has no protocol enable
 switches. Default TCP ports are VNC **5901** and ZXTouch **6000**. Both use the
-existing `BindHost` setting; leave it empty for local Wi-Fi and shared WG access.
+existing `BindHost` setting; its default is `0.0.0.0` for local Wi-Fi and shared WG access.
 
 Network settings displays the running service's actual ports, local addresses,
 and WG interface startup status. Tap a socket address to copy it. Pending port
 edits do not appear as active addresses until Apply restarts the unified service.
 WG interface startup does not imply a successful peer handshake or remote reachability.
 
-Import or edit one WireGuard configuration in Network settings. Saving it
-restarts both services and automatically starts the shared userspace WG network;
-there is no separate WG enable switch. Removing the configuration restarts the
+Import or edit one WireGuard configuration in Network settings. Saving a new
+configuration enables the shared userspace WG network by default. The Network
+settings switch can disable or re-enable WG while retaining its configuration;
+changing it restarts TrollVNC. The details page shows the interface address,
+listen port, MTU, DNS and peers. Removing the configuration restarts the
 service with local access. WG startup errors are shown while local listeners
 remain available. The bridge does not create an iOS system VPN or route unrelated
 script traffic through WG. On shutdown local sockets close immediately; WG has
@@ -31,11 +33,12 @@ may still need its own TCP timeout.
 | --- | --- | --- |
 | `Port` | 5901 | VNC TCP port |
 | `ZXTouchPort` | 6000 | ZXTouch TCP port |
-| `BindHost` | empty | Shared numeric listener address |
-| `WireGuardConfig` | absent | Shared WG configuration; starts automatically when present |
+| `BindHost` | `0.0.0.0` | Shared IPv4 listener address |
+| `WireGuardConfig` | absent | Shared WG configuration |
+| `WireGuardEnabled` | enabled when configured | Enables or disables WG without deleting its configuration |
 
-Obsolete `Enabled`, `ZXTouchEnabled`, `ZXTouchBindAddress` and
-`WireGuardEnabled` settings are ignored. Legacy independent-mode CLI flags are
+Obsolete `Enabled`, `ZXTouchEnabled` and `ZXTouchBindAddress` settings are ignored.
+Legacy independent-mode CLI flags are
 rejected; `-zxtouch-port` selects the ZXTouch port, and the existing VNC bind
 option applies to both protocols. Daemon mode uses persisted preferences.
 Ports must be distinct, within 1024–65535, and not conflict with HTTP or reserved

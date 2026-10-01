@@ -30,6 +30,13 @@ NS_INLINE BOOL TVNCSharedBindAllowsWireGuard(NSString *host) {
     NSString *bind = [host stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     return TVNCIPv4BindAllowsWireGuard(bind);
 }
+// A single missed control response is not evidence that the service stopped.
+// Drop the last snapshot after three consecutive failed polls.
+NS_INLINE NSDictionary *TVNCStatusAfterPoll(NSDictionary *previous, NSDictionary *fetched, NSUInteger *failures) {
+    if (fetched) { *failures = 0; return fetched; }
+    ++*failures;
+    return previous && *failures < 3 ? previous : nil;
+}
 // Call on a worker queue. One absolute deadline bounds connect and fragmented reads.
 NS_INLINE NSDictionary *TVNCFetchServiceStatus(int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);

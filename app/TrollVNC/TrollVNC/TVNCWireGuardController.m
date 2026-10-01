@@ -10,7 +10,6 @@
 @property(nonatomic, strong) UIScrollView *scrollView;
 @property(nonatomic, strong) NSLayoutConstraint *editorBottomConstraint;
 @property(nonatomic, strong) UITextView *configurationEditor;
-@property(nonatomic, strong) UILabel *addressLabel;
 @property(nonatomic, strong) UIBarButtonItem *editButton;
 @property(nonatomic, strong) UIStackView *detailsStack;
 @property(nonatomic, strong) NSUserDefaults *preferences;
@@ -63,24 +62,6 @@
         [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-16],
         [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-32]
     ]];
-
-    UILabel *networkNote = [self label:@"Shared network for VNC and ZXTouch" style:UIFontTextStyleFootnote];
-    networkNote.numberOfLines = 0;
-    [stack addArrangedSubview:[self cardWithViews:@[networkNote]]];
-    UIStackView *addressCard = [self cardWithViews:@[]];
-    addressCard.spacing = 0;
-    self.addressLabel = [self label:@"" style:UIFontTextStyleTitle2];
-    self.addressLabel.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleTitle2]
-        scaledFontForFont:[UIFont systemFontOfSize:22 weight:UIFontWeightSemibold]];
-    self.addressLabel.adjustsFontSizeToFitWidth = YES;
-    self.addressLabel.minimumScaleFactor = 0.7;
-    UILabel *addressCaption = [self label:@"Configured interface address" style:UIFontTextStyleFootnote];
-    addressCaption.textColor = [UIColor secondaryLabelColor];
-    UIStackView *addressText = [[UIStackView alloc] initWithArrangedSubviews:@[self.addressLabel, addressCaption]];
-    addressText.axis = UILayoutConstraintAxisVertical;
-    addressText.spacing = 1;
-    [addressCard addArrangedSubview:addressText];
-    [stack addArrangedSubview:addressCard];
 
     self.detailsStack = [[UIStackView alloc] initWithFrame:CGRectZero];
     self.detailsStack.axis = UILayoutConstraintAxisVertical;
@@ -262,13 +243,11 @@
             @[@"Public key", [self compactPublicKey:publicKey], [publicKey isKindOfClass:[NSString class]] ? publicKey : @"—"]
         ]];
         [self.detailsStack addArrangedSubview:
-            [self detailSection:[NSString stringWithFormat:@"Peer %lu", (unsigned long)(index + 1)] rows:peerRows]];
+            [self detailSection:[NSString stringWithFormat:[self text:@"Peer %lu"], (unsigned long)(index + 1)] rows:peerRows]];
     }
 }
 
 - (void)updateSummary {
-    NSString *address = TVNCWGPrimaryAddress(self.savedConfiguration ?: @{});
-    self.addressLabel.text = address.length ? address : @"—";
     self.scrollView.hidden = self.editingConfiguration;
     self.configurationEditor.hidden = !self.editingConfiguration;
     self.title = self.editingConfiguration ? [self text:@"Edit configuration"] : @"WireGuard";
@@ -307,9 +286,12 @@
     [alert addAction:[UIAlertAction actionWithTitle:[self text:@"Cancel"] style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:[self text:@"Remove"] style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
         NSDictionary *previous = self.savedConfiguration;
+        NSNumber *previousEnabled = [self.preferences objectForKey:@"WireGuardEnabled"];
         [self.preferences removeObjectForKey:@"WireGuardConfig"];
+        [self.preferences removeObjectForKey:@"WireGuardEnabled"];
         if (![self.preferences synchronize]) {
             if (previous) [self.preferences setObject:previous forKey:@"WireGuardConfig"];
+            if (previousEnabled) [self.preferences setObject:previousEnabled forKey:@"WireGuardEnabled"];
             [self showError:@"Could not save the WireGuard configuration."]; return;
         }
         TVNCRestartVNCService();
@@ -328,7 +310,7 @@
     }
     NSString *bind = [self.preferences stringForKey:@"BindHost"] ?: @"";
     if (!TVNCSharedBindAllowsWireGuard(bind)) {
-        [self showError:@"Clear the shared listen address to use both Wi-Fi and WireGuard."]; return;
+        [self showError:@"Use 0.0.0.0 to access both Wi-Fi and WireGuard."]; return;
     }
     int vnc = TVNCParseServicePort([self.preferences objectForKey:@"Port"] ?: @5901, NO);
     int zx = TVNCParseServicePort([self.preferences objectForKey:@"ZXTouchPort"] ?: @6000, NO);
@@ -337,10 +319,14 @@
         [self showError:@"Ports must be distinct and within 1024–65535. HTTP may be 0. Ports 46751 and 46752 are reserved."]; return;
     }
     NSDictionary *previousConfiguration = self.savedConfiguration;
+    NSNumber *previousEnabled = [self.preferences objectForKey:@"WireGuardEnabled"];
     [self.preferences setObject:configuration forKey:@"WireGuardConfig"];
+    if (!previousConfiguration) [self.preferences setBool:YES forKey:@"WireGuardEnabled"];
     if (![self.preferences synchronize]) {
         if (previousConfiguration) [self.preferences setObject:previousConfiguration forKey:@"WireGuardConfig"];
         else [self.preferences removeObjectForKey:@"WireGuardConfig"];
+        if (previousEnabled) [self.preferences setObject:previousEnabled forKey:@"WireGuardEnabled"];
+        else [self.preferences removeObjectForKey:@"WireGuardEnabled"];
         [self showError:@"Could not save the WireGuard configuration."];
         return;
     }
@@ -349,7 +335,9 @@
     self.configurationEditor.text = @"";
     [self updateSummary];
     TVNCRestartVNCService();
-    [self showNotice:@"Saved. TrollVNC is restarting both services with the shared network configuration."];
+    [self showNotice:TVNCWGShouldStart(configuration, [self.preferences objectForKey:@"WireGuardEnabled"]) ?
+        @"Saved. TrollVNC is restarting both services with the shared network configuration." :
+        @"Saved. WireGuard remains off until enabled in Network settings."];
 }
 
 @end

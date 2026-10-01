@@ -91,6 +91,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 @property(nonatomic, strong) NSDictionary *serviceStatus;
 @property(nonatomic, assign) BOOL fetchingStatus;
 @property(nonatomic, assign) BOOL statusReadCompleted;
+@property(nonatomic, assign) NSUInteger statusPollFailures;
 @property(nonatomic, strong) PSSpecifier *certSpecifier;
 @property(nonatomic, strong) PSSpecifier *keysSpecifier;
 @property(nonatomic, strong) PSSpecifier *exportCertSpecifier;
@@ -234,10 +235,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     UITableView *settingsTable = [self settingsTableView];
     TVNCStyleSettingsTable(settingsTable);
     self.title = @"TrollVNC";
-    UILabel *subtitle = TVNCSettingsLabel(UIFontTextStyleCaption1, UIColor.secondaryLabelColor);
-    subtitle.text = @"Dopamine · rootless"; subtitle.textAlignment = NSTextAlignmentCenter;
-    subtitle.frame = CGRectMake(0, 0, settingsTable.bounds.size.width, 28);
-    settingsTable.tableHeaderView = subtitle;
 
     self.monitor = nw_path_monitor_create();
     nw_path_monitor_set_queue(self.monitor, dispatch_get_main_queue());
@@ -279,9 +276,13 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
             typeof(self) strongSelf = weakSelf;
             if (!strongSelf) return;
             strongSelf.fetchingStatus = NO;
-            strongSelf.statusReadCompleted = YES;
-            strongSelf.serviceStatus = status;
-            [strongSelf updateFirstGroupAndReload:YES];
+            BOOL wasCompleted = strongSelf.statusReadCompleted;
+            NSDictionary *next = TVNCStatusAfterPoll(strongSelf.serviceStatus, status, &strongSelf->_statusPollFailures);
+            strongSelf.statusReadCompleted = wasCompleted || next != nil || strongSelf.statusPollFailures >= 3;
+            BOOL changed = !(strongSelf.serviceStatus == next || [strongSelf.serviceStatus isEqual:next]) ||
+                wasCompleted != strongSelf.statusReadCompleted;
+            strongSelf.serviceStatus = next;
+            if (changed) [strongSelf updateFirstGroupAndReload:YES];
         });
     });
 }
@@ -319,9 +320,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 
 - (NSString *)currentStatusText {
     if (!_serviceStatus) return NSLocalizedStringFromTableInBundle(_statusReadCompleted ? @"Service status unavailable" : @"Loading service status…", @"Localizable", self.bundle, nil);
-    return [NSString stringWithFormat:@"VNC %@ · ZXTouch %@\n%@", _serviceStatus[@"VNCPort"],
-        _serviceStatus[@"ZXTouchPort"], NSLocalizedStringFromTableInBundle(
-            [_serviceStatus[@"WireGuardStarted"] boolValue] ? @"Wi-Fi + WireGuard" : @"Local network", @"Localizable", self.bundle, nil)];
+    return [NSString stringWithFormat:@"VNC %@ · ZXTouch %@", _serviceStatus[@"VNCPort"], _serviceStatus[@"ZXTouchPort"]];
 }
 
 - (void)updateFirstGroupAndReload:(BOOL)reload {
@@ -372,7 +371,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     }
     if ([preferences dictionaryForKey:@"WireGuardConfig"] && !TVNCSharedBindAllowsWireGuard(bindHost)) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WireGuard"
-            message:NSLocalizedStringFromTableInBundle(@"Clear the shared listen address to use both Wi-Fi and WireGuard.", @"Localizable", self.bundle, nil)
+            message:NSLocalizedStringFromTableInBundle(@"Use 0.0.0.0 to access both Wi-Fi and WireGuard.", @"Localizable", self.bundle, nil)
             preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
         [[self actionPresenter] presentViewController:alert animated:YES completion:nil]; return;
@@ -760,11 +759,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
         cell.nameLabel.text = [self uiText:self.serviceStatus ? @"Service running" :
             (self.statusReadCompleted ? @"Service status unavailable" : @"Loading service status…")];
         cell.nameLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-        UILabel *status = TVNCSettingsLabel(UIFontTextStyleFootnote, UIColor.secondaryLabelColor);
-        status.text = [self currentStatusText];
-        UIStackView *labels = [[UIStackView alloc] initWithArrangedSubviews:@[cell.nameLabel, status]];
-        labels.axis = UILayoutConstraintAxisVertical; labels.spacing = 4;
-        [cell.rowStack insertArrangedSubview:labels atIndex:1];
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     } else if (indexPath.section == 1) {
         [cell.rowStack removeArrangedSubview:cell.valueLabel];

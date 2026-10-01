@@ -6,7 +6,7 @@
 
 static NSDictionary *FixtureStatus(void) {
     return @{@"VNCPort": @5901, @"ZXTouchPort": @6000, @"VNCRunning": @YES, @"ZXTouchRunning": @YES,
-        @"VNCAcceptsIPv4": @YES, @"VNCAcceptsIPv6": @YES, @"WireGuardConfigured": @YES,
+        @"VNCAcceptsIPv4": @YES, @"VNCAcceptsIPv6": @NO, @"WireGuardConfigured": @YES, @"WireGuardEnabled": @YES,
         @"WireGuardStarted": @YES, @"WireGuardAddress": @"10.99.0.2", @"WireGuardError": @"", @"BindHost": @"", @"ClientCount": @2};
 }
 @interface TVNCRootListController (PreviewHooks)
@@ -50,7 +50,11 @@ static NSDictionary *FixtureStatus(void) {
     NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:@"com.82flex.trollvnc"];
     [preferences setObject:@"example" forKey:@"FullPassword"];
     [preferences setObject:@"example" forKey:@"ViewOnlyPassword"];
-    [preferences setObject:@{@"Address": @[@"10.99.0.2/32"]} forKey:@"WireGuardConfig"];
+    [preferences setObject:@{@"Address": @[@"10.99.0.2/32"], @"ListenPort": @51820,
+        @"Peers": @[@{@"Endpoint": @"vpn.example.com:51820", @"AllowedIPs": @[@"0.0.0.0/0"],
+            @"PersistentKeepalive": @25, @"PublicKey": @"abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG="}]}
+        forKey:@"WireGuardConfig"];
+    [preferences setBool:YES forKey:@"WireGuardEnabled"];
     [preferences synchronize];
     TVNCPreviewRoot *root = [TVNCPreviewRoot new]; root.bundle = bundle;
     UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:root];
@@ -60,10 +64,17 @@ static NSDictionary *FixtureStatus(void) {
     [self.window makeKeyAndVisible];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         NSArray *pages = @[@"network", @"security", @"display", @"input", @"connections", @"performance", @"web"];
-        NSUInteger index = [pages indexOfObject:environment[@"TVNC_UI_PAGE"] ?: @"home"];
+        NSString *page = environment[@"TVNC_UI_PAGE"] ?: @"home";
+        NSUInteger index = [pages indexOfObject:[page isEqualToString:@"wireguard"] ? @"network" : page];
         if (index != NSNotFound) {
             UITableView *table = (UITableView *)root.view;
             [root tableView:table didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:index inSection:1]];
+            if ([page isEqualToString:@"wireguard"]) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    TVNCNetworkController *network = (TVNCNetworkController *)navigation.topViewController;
+                    [network tableView:network.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:2 inSection:2]];
+                });
+            }
         }
     });
     return YES;

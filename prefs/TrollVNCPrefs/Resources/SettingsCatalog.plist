@@ -10,7 +10,7 @@
 		<array>
 			<dict>
 				<key>title</key>
-				<string>Service ports</string>
+				<string>Service listeners</string>
 				<key>footer</key>
 				<string>Both protocols always run. Ports must differ.</string>
 				<key>rows</key>

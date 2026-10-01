@@ -1,5 +1,6 @@
 // GPL-2.0-only.
 #import "TVNCServiceStatus.h"
+#import "TVNCWireGuardConfig.h"
 #include <cassert>
 #include <thread>
 #include <chrono>
@@ -55,9 +56,20 @@ int main(void) {
         assert([TVNCServiceSocket(@"fe80::1%en0", @6000) isEqualToString:@"[fe80::1%en0]:6000"]);
         assert(TVNCWiFiAddresses(@"::1", YES, NO).count == 0);
         assert(TVNCWiFiAddresses(@"127.0.0.1", YES, NO).count == 1);
+        assert(TVNCWGShouldStart(@{}, nil)); // Existing configurations stay enabled by default.
+        assert(TVNCWGShouldStart(@{}, @YES));
+        assert(!TVNCWGShouldStart(@{}, @NO));
+        assert(!TVNCWGShouldStart(nil, @YES));
         NSDictionary *status = @{@"VNCPort": @5901, @"ZXTouchPort": @6000, @"VNCRunning": @YES,
-            @"ZXTouchRunning": @YES, @"VNCAcceptsIPv4": @YES, @"VNCAcceptsIPv6": @NO, @"WireGuardConfigured": @YES, @"WireGuardStarted": @NO,
+            @"ZXTouchRunning": @YES, @"VNCAcceptsIPv4": @YES, @"VNCAcceptsIPv6": @NO, @"WireGuardConfigured": @YES,
+            @"WireGuardEnabled": @YES, @"WireGuardStarted": @NO,
             @"BindHost": @"", @"WireGuardAddress": @"", @"WireGuardError": @"invalid configuration"};
+        NSUInteger failures = 0;
+        assert(TVNCStatusAfterPoll(nil, status, &failures) == status && failures == 0);
+        assert(TVNCStatusAfterPoll(status, nil, &failures) == status && failures == 1);
+        assert(TVNCStatusAfterPoll(status, nil, &failures) == status && failures == 2);
+        assert(TVNCStatusAfterPoll(status, nil, &failures) == nil && failures == 3);
+        assert(TVNCStatusAfterPoll(nil, status, &failures) == status && failures == 0);
         NSString *json = [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:status options:0 error:nil] encoding:NSUTF8StringEncoding];
         assert([fetch([json stringByAppendingString:@"\n"]) isEqualToDictionary:status]);
         assert(!fetch(@"{}\n")); assert(!fetch(@"invalid\n"));

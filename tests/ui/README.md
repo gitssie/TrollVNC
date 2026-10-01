@@ -20,17 +20,17 @@ SIMCTL_CHILD_TVNC_UI_PAGE=home xcrun simctl launch --terminate-running-process b
 ```
 
 `TVNC_UI_PAGE` accepts `home`, `network`, `security`, `display`, `input`,
-`connections`, `performance`, and `web`. Set `SIMCTL_CHILD_TVNC_UI_DARK=1` to
+`connections`, `performance`, `web`, and `wireguard`. The latter opens Network
+settings and then its configuration-details row. Set `SIMCTL_CHILD_TVNC_UI_DARK=1` to
 preview dark appearance. Page selection calls the production navigation handler;
 it does not verify physical taps. Run separate tap checks from the home screen.
 
 Compare screenshots against `docs/trollvnc-complete-ui-concept.png`, especially
 row density, icon size, card spacing, and title/value alignment. Also check small
-screens, accessibility text sizes, long IPv6 addresses, and landscape. Verify
+screens, accessibility text sizes, long WireGuard peer values, and landscape. Verify
 port editing, switches, sliders, address copying, certificate actions, and the
 Apply confirmation through actual UI input.
 
-The host configuration tests and rootless package build passed for this redesign.
-Visual and tap checks remain pending: the available simulator stalled during
-system startup, and desktop automation reported blocked Accessibility access.
-Neither successful compilation nor direct page selection proves visual fidelity.
+The simulator preview exercises the production list navigation and renders the
+home, network, and WireGuard details pages. It does not substitute for a real
+iOS 15.8.8 device test or verify physical taps.
