@@ -34,9 +34,6 @@
 #import "TVNCRootListController.h"
 #import "TVNCUtil.h"
 #import "TVNCServiceStatus.h"
-#import "TVNCSettingsModel.h"
-#import "TVNCSettingsAppearance.h"
-#import "TVNCSettingsPageController.h"
 #import "ZTSelfSignedCertificate.h"
 
 #ifdef THEBOOTSTRAP
@@ -190,7 +187,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     [super viewDidLoad];
 
     _notificationGenerator = [[UINotificationFeedbackGenerator alloc] init];
-    _primaryColor = TVNCAccentColor();
+    _primaryColor = [UIColor colorWithRed:35 / 255.0 green:158 / 255.0 blue:171 / 255.0 alpha:1.0];
     [[UISwitch appearanceWhenContainedInInstancesOfClasses:@[
         [self class],
     ]] setOnTintColor:_primaryColor];
@@ -216,14 +213,29 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                action:@selector(applyChanges)];
     applyItem.tintColor = _primaryColor;
 
-    self.navigationItem.rightBarButtonItem = applyItem;
-    UITableView *settingsTable = [self settingsTableView];
-    TVNCStyleSettingsTable(settingsTable);
-    self.title = @"TrollVNC";
-    UILabel *subtitle = TVNCSettingsLabel(UIFontTextStyleCaption1, UIColor.secondaryLabelColor);
-    subtitle.text = @"Dopamine · rootless"; subtitle.textAlignment = NSTextAlignmentCenter;
-    subtitle.frame = CGRectMake(0, 0, settingsTable.bounds.size.width, 28);
-    settingsTable.tableHeaderView = subtitle;
+    UIBarButtonItem *clientsItem = [[UIBarButtonItem alloc]
+        initWithTitle:NSLocalizedStringFromTableInBundle(@"Clients", @"Localizable", self.bundle, nil)
+                style:UIBarButtonItemStylePlain
+               target:self
+               action:@selector(showClients)];
+    clientsItem.tintColor = _primaryColor;
+
+#ifdef THEBOOTSTRAP
+    BOOL isApp = YES;
+#else
+    BOOL isApp = NO;
+#endif
+
+    BOOL isPad = ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad);
+    if (isApp || isPad) {
+        self.navigationItem.leftBarButtonItem = clientsItem;
+        self.navigationItem.rightBarButtonItem = applyItem;
+    } else {
+        self.navigationItem.rightBarButtonItems = @[
+            applyItem,
+            clientsItem,
+        ];
+    }
 
     self.monitor = nw_path_monitor_create();
     nw_path_monitor_set_queue(self.monitor, dispatch_get_main_queue());
@@ -277,7 +289,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     vc.primaryColor = self.primaryColor;
     vc.notificationGenerator = self.notificationGenerator;
     UINavigationController *navController = [[UINavigationController alloc] initWithRootViewController:vc];
-    [[self actionPresenter] presentViewController:navController animated:YES completion:nil];
+    [self.navigationController presentViewController:navController animated:YES completion:nil];
 }
 
 - (NSString *)defaultFooterText {
@@ -314,10 +326,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
         return;
     }
 
-    if (![self hasManagedConfiguration]) {
-        if (reload && self.isViewLoaded) [[self settingsTableView] reloadData];
-        return;
-    }
     NSString *footerText = [NSString stringWithFormat:@"%@\n%@", [self defaultFooterText], [self currentStatusText]];
     [_firstGroupSpecifier setProperty:footerText forKey:@"footerText"];
 
@@ -341,26 +349,30 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     // Resign first responder status
     [self.view endEditing:YES];
 
-    NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:@"com.82flex.trollvnc"];
-    [preferences synchronize];
-    int port = TVNCParseServicePort([preferences objectForKey:@"Port"] ?: @5901, NO);
-    int zxPort = TVNCParseServicePort([preferences objectForKey:@"ZXTouchPort"] ?: @6000, NO);
-    int httpPort = TVNCParseServicePort([preferences objectForKey:@"HttpPort"] ?: @0, YES);
-    NSString *bindHost = [preferences stringForKey:@"BindHost"] ?: @"";
+    int port = 5901, zxPort = 6000, httpPort = 0;
+    NSString *bindHost = @"";
+    for (PSSpecifier *sp in _specifiers) {
+        NSString *key = [sp propertyForKey:@"key"];
+        if ([key isEqualToString:@"BindHost"]) bindHost = [self readPreferenceValue:sp] ?: @"";
+        if ([key isEqualToString:@"Port"]) port = TVNCParseServicePort([self readPreferenceValue:sp], NO);
+        if ([key isEqualToString:@"ZXTouchPort"]) zxPort = TVNCParseServicePort([self readPreferenceValue:sp], NO);
+        if ([key isEqualToString:@"HttpPort"]) httpPort = TVNCParseServicePort([self readPreferenceValue:sp], YES);
+    }
     if (!TVNCServicePortsValid(port, zxPort, httpPort)) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:
             NSLocalizedStringFromTableInBundle(@"Invalid Port", @"Localizable", self.bundle, nil)
             message:NSLocalizedStringFromTableInBundle(@"Ports must be distinct and within 1024–65535. HTTP may be 0. Ports 46751 and 46752 are reserved.", @"Localizable", self.bundle, nil)
             preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
-        [[self actionPresenter] presentViewController:alert animated:YES completion:nil]; return;
+        [self presentViewController:alert animated:YES completion:nil]; return;
     }
+    NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:@"com.82flex.trollvnc"];
     if ([preferences dictionaryForKey:@"WireGuardConfig"] && !TVNCSharedBindAllowsWireGuard(bindHost)) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"WireGuard"
             message:NSLocalizedStringFromTableInBundle(@"Clear the shared listen address to use both Wi-Fi and WireGuard.", @"Localizable", self.bundle, nil)
             preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
-        [[self actionPresenter] presentViewController:alert animated:YES completion:nil]; return;
+        [self presentViewController:alert animated:YES completion:nil]; return;
     }
 
     if (!TVNCIsValidBindHostLiteral(bindHost)) {
@@ -375,7 +387,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:ok style:UIAlertActionStyleCancel handler:nil]];
 
-        [[self actionPresenter] presentViewController:alert animated:YES completion:nil];
+        [self presentViewController:alert animated:YES completion:nil];
         return; // do not restart now
     }
 
@@ -401,7 +413,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                 [weakSelf.view endEditing:YES];
                                             }]];
 
-    [[self actionPresenter] presentViewController:alert animated:YES completion:nil];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (NSString *)jbrootPath {
@@ -464,7 +476,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     [logsVC setLocalizationBundle:self.bundle];
 
     UINavigationController *navController = [[UINavigationController alloc] initWithRootViewController:logsVC];
-    [[self actionPresenter] presentViewController:navController animated:YES completion:nil];
+    [self presentViewController:navController animated:YES completion:nil];
 }
 
 - (NSString *)cacertPath {
@@ -500,7 +512,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:ok style:UIAlertActionStyleCancel handler:nil]];
 
-        [[self actionPresenter] presentViewController:alert animated:YES completion:nil];
+        [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
@@ -516,10 +528,9 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     if (_exportCertSpecifier) {
         exportCertCell = [self cachedCellForSpecifier:_exportCertSpecifier];
     }
-    activityViewController.popoverPresentationController.sourceView = exportCertCell ?: [self actionPresenter].view;
-    activityViewController.popoverPresentationController.sourceRect = activityViewController.popoverPresentationController.sourceView.bounds;
+    activityViewController.popoverPresentationController.sourceView = exportCertCell ?: self.view;
 
-    [[self actionPresenter] presentViewController:activityViewController animated:YES completion:nil];
+    [self presentViewController:activityViewController animated:YES completion:nil];
 }
 
 - (void)generateKeys {
@@ -551,7 +562,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                     [weakSelf exportCertificate];
                                                 }]];
 
-        [[self actionPresenter] presentViewController:alert animated:YES completion:nil];
+        [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
@@ -574,7 +585,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:ok style:UIAlertActionStyleCancel handler:nil]];
 
-        [[self actionPresenter] presentViewController:alert animated:YES completion:nil];
+        [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
@@ -621,7 +632,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:ok style:UIAlertActionStyleCancel handler:nil]];
 
-        [[self actionPresenter] presentViewController:alert animated:YES completion:nil];
+        [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
@@ -629,7 +640,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     [super setPreferenceValue:[self cakeyPath] specifier:[self keysSpecifier]];
 
     [self reloadSpecifiers];
-    [[NSNotificationCenter defaultCenter] postNotificationName:TVNCSettingsDidChangeNotification object:nil];
 
     NSString *title = NSLocalizedStringFromTableInBundle(@"Generation Succeeded", @"Localizable", self.bundle, nil);
     NSString *message = NSLocalizedStringFromTableInBundle(
@@ -649,7 +659,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                 [self exportCertificate];
                                             }]];
 
-    [[self actionPresenter] presentViewController:alert animated:YES completion:nil];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)resetDefaults {
@@ -670,7 +680,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
                                                 [weakSelf _reallyResetDefaults];
                                             }]];
 
-    [[self actionPresenter] presentViewController:alert animated:YES completion:nil];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)_reallyResetDefaults {
@@ -694,152 +704,66 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     }
 }
 
-#pragma mark - Dashboard
+#pragma mark - UITableViewDataSource & UITableViewDelegate
 
-- (UIViewController *)actionPresenter { return self.navigationController.topViewController ?: self; }
-// Preferences' table/tableView accessors vary between iOS versions. Resolve the
-// actual UIKit table from the loaded view instead of sending a private selector.
-- (UITableView *)settingsTableInView:(UIView *)view {
-    if ([view isKindOfClass:UITableView.class]) return (UITableView *)view;
-    for (UIView *child in view.subviews) {
-        UITableView *table = [self settingsTableInView:child];
-        if (table) return table;
-    }
-    return nil;
-}
-- (UITableView *)settingsTableView {
-    return self.isViewLoaded ? [self settingsTableInView:self.view] : nil;
-}
-- (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
-- (NSArray<NSArray<NSString *> *> *)dashboardCategories {
-    return @[
-        @[@"network", @"Network settings", @"Shared network, ports & addresses", @"wifi"],
-        @[@"security", @"Access & security", @"Passwords, view-only, clipboard & files", @"lock"],
-        @[@"display", @"Display settings", @"Scale, frame rate & orientation", @"display"],
-        @[@"input", @"Input settings", @"Mouse, keyboard & touch", @"keyboard"],
-        @[@"connections", @"Connections & notifications", @"Discovery, reverse connections & keepalive", @"network"],
-        @[@"performance", @"Performance tuning", @"Updates, tiles & encoding", @"wrench.and.screwdriver"],
-        @[@"web", @"VNC Web & TLS", @"HTTP, certificates & private keys", @"globe"]
-    ];
-}
-- (NSString *)uiText:(NSString *)key { return TVNCUIString(self.bundle, key); }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return [self hasManagedConfiguration] ? [super numberOfSectionsInTableView:tableView] : 3;
-}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if ([self hasManagedConfiguration]) return [super tableView:tableView numberOfRowsInSection:section];
-    return section == 0 ? 1 : section == 1 ? self.dashboardCategories.count : 2;
-}
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return [self hasManagedConfiguration] ? [super tableView:tableView titleForHeaderInSection:section] : nil;
-}
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if ([self hasManagedConfiguration]) return [super tableView:tableView titleForFooterInSection:section];
-    return section == 2 ? [self uiText:@"Apply changes to restart the unified service."] : nil;
-}
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section {
-    if ([self hasManagedConfiguration]) return UITableViewAutomaticDimension;
-    return section == 0 ? 8 : 16;
-}
-- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    if ([self hasManagedConfiguration]) return UITableViewAutomaticDimension;
-    return UITableViewAutomaticDimension;
-}
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    if ([self hasManagedConfiguration]) return [super tableView:tableView cellForRowAtIndexPath:indexPath];
-    TVNCSettingsValueCell *cell = [[TVNCSettingsValueCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
-    if (indexPath.section == 0) {
-        [cell addLeadingSymbol:self.serviceStatus ? @"circle.fill" : @"circle.dotted"];
-        UIImageView *dot = (UIImageView *)cell.rowStack.arrangedSubviews.firstObject;
-        dot.image = [UIImage systemImageNamed:self.serviceStatus ? @"circle.fill" : @"circle.dotted" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12]];
-        dot.contentMode = UIViewContentModeCenter;
-        dot.tintColor = self.serviceStatus ? TVNCAccentColor() : UIColor.secondaryLabelColor;
-        cell.nameLabel.text = [self uiText:self.serviceStatus ? @"Service running" : @"Service status unavailable"];
-        cell.nameLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-        UILabel *status = TVNCSettingsLabel(UIFontTextStyleFootnote, UIColor.secondaryLabelColor);
-        status.text = [self currentStatusText];
-        UIStackView *labels = [[UIStackView alloc] initWithArrangedSubviews:@[cell.nameLabel, status]];
-        labels.axis = UILayoutConstraintAxisVertical; labels.spacing = 4;
-        [cell.rowStack insertArrangedSubview:labels atIndex:1];
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (indexPath.section == 1) {
-        NSArray *category = self.dashboardCategories[indexPath.row];
-        [cell addLeadingSymbol:category[3]];
-        UILabel *subtitle = TVNCSettingsLabel(UIFontTextStyleCaption1, UIColor.secondaryLabelColor);
-        subtitle.text = [self uiText:category[2]];
-        cell.nameLabel.text = [self uiText:category[1]];
-        UIStackView *labels = [[UIStackView alloc] initWithArrangedSubviews:@[cell.nameLabel, subtitle]];
-        labels.axis = UILayoutConstraintAxisVertical; labels.spacing = 2;
-        [cell.rowStack insertArrangedSubview:labels atIndex:1];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.accessibilityIdentifier = [@"category." stringByAppendingString:category[0]];
-    } else if (indexPath.row == 0) {
-        cell.nameLabel.text = [self uiText:@"Connected clients"];
-        id count = self.serviceStatus[@"ClientCount"];
-        cell.valueLabel.text = [count isKindOfClass:NSNumber.class] ? [count stringValue] : @"—";
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-    } else {
-        [cell.rowStack removeArrangedSubview:cell.nameLabel]; [cell.nameLabel removeFromSuperview];
-        [cell.rowStack removeArrangedSubview:cell.valueLabel]; [cell.valueLabel removeFromSuperview];
-        NSArray *names = @[@"View Logs", @"Reset settings", @"About"];
-        NSArray *symbols = @[@"doc.text", @"arrow.counterclockwise", @"info.circle"];
-        for (NSUInteger i = 0; i < names.count; i++) {
-            UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-            [button setTitle:[self uiText:names[i]] forState:UIControlStateNormal];
-            [button setImage:[UIImage systemImageNamed:symbols[i]] forState:UIControlStateNormal];
-            button.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-            button.titleLabel.adjustsFontForContentSizeCategory = YES;
-            button.tintColor = TVNCAccentColor(); button.tag = i;
-            [button.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
-            [button addTarget:self action:@selector(dashboardAction:) forControlEvents:UIControlEventTouchUpInside];
-            [cell.rowStack addArrangedSubview:button];
+    if ([self hasManagedConfiguration]) {
+        return [super tableView:tableView cellForRowAtIndexPath:indexPath];
+    }
+
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    NSString *key = [specifier propertyForKey:@"cell"];
+    if ([key isEqualToString:@"PSButtonCell"]) {
+        UITableViewCell *cell = [super tableView:tableView cellForRowAtIndexPath:indexPath];
+
+        BOOL isDestructive =
+            ([specifier propertyForKey:@"isDestructive"] && [[specifier propertyForKey:@"isDestructive"] boolValue]);
+        cell.textLabel.textColor = isDestructive ? [UIColor systemRedColor] : self.primaryColor;
+        cell.textLabel.highlightedTextColor = isDestructive ? [UIColor systemRedColor] : self.primaryColor;
+        return cell;
+    }
+
+    return [super tableView:tableView cellForRowAtIndexPath:indexPath];
+}
+
+- (void)tableView:(UITableView *)tableView
+      willDisplayCell:(UITableViewCell *)cell
+    forRowAtIndexPath:(NSIndexPath *)indexPath {
+    PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
+    NSString *key = [specifier propertyForKey:@"cell"];
+    if ([key isEqualToString:@"PSSliderCell"]) {
+        // Find any UILabel in the cell's content view recursively
+        UILabel *label = [self findLabelInView:cell.contentView];
+        if (label) {
+            // Do something with the label
+            [label sizeToFit];
         }
-        cell.rowStack.distribution = UIStackViewDistributionFillEqually;
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    }
-    return cell;
-}
-- (NSIndexPath *)tableView:(UITableView *)tableView willSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    if ([self hasManagedConfiguration]) return [super tableView:tableView willSelectRowAtIndexPath:indexPath];
-    return (indexPath.section == 1 || (indexPath.section == 2 && indexPath.row == 0)) ? indexPath : nil;
-}
-- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
-    if ([self hasManagedConfiguration]) [super tableView:tableView willDisplayCell:cell forRowAtIndexPath:indexPath];
-}
-- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
-    return [self hasManagedConfiguration] ? [super tableView:tableView viewForHeaderInSection:section] : nil;
-}
-- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section {
-    return [self hasManagedConfiguration] ? [super tableView:tableView viewForFooterInSection:section] : nil;
-}
-- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section {
-    return [self hasManagedConfiguration] || section == 2 ? UITableViewAutomaticDimension : 0.01;
-}
-- (void)dashboardAction:(UIButton *)sender {
-    if (sender.tag == 0) [self viewLogs];
-    else if (sender.tag == 1) [self resetDefaults];
-    else {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"TrollVNC" message:[self defaultFooterText] preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:[self uiText:@"View Source Code"] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { [self source]; }]];
-        [alert addAction:[UIAlertAction actionWithTitle:[self uiText:@"OK"] style:UIAlertActionStyleCancel handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
     }
 }
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    if ([self hasManagedConfiguration]) { [super tableView:tableView didSelectRowAtIndexPath:indexPath]; return; }
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 1) {
-        NSString *identifier = self.dashboardCategories[indexPath.row][0];
-        if ([identifier isEqualToString:@"network"]) { [self openNetworkSettings]; return; }
-        TVNCSettingsPageController *controller = [TVNCSettingsPageController new];
-        controller.localizationBundle = self.bundle; controller.categoryIdentifier = identifier;
-        __weak typeof(self) weakSelf = self;
-        controller.actionHandler = ^(NSString *action) {
-            if ([action isEqualToString:@"generateKeys"]) [weakSelf generateKeys];
-            else if ([action isEqualToString:@"exportCertificate"]) [weakSelf exportCertificate];
-        };
-        [self.navigationController pushViewController:controller animated:YES];
-    } else if (indexPath.section == 2 && indexPath.row == 0) [self showClients];
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    if (section == 0 && ![self hasManagedConfiguration]) {
+#ifdef THEBOOTSTRAP
+        do {
+            GitHubReleaseUpdater *updater = [GitHubReleaseUpdater shared];
+            if (![updater hasNewerVersionInCache]) {
+                break;
+            }
+
+            GHReleaseInfo *releaseInfo = [updater cachedLatestRelease];
+            if (!releaseInfo) {
+                break;
+            }
+
+            return [NSString stringWithFormat:NSLocalizedStringFromTableInBundle(
+                                                  @"A new version %@ is available! You’re currently using v%@. "
+                                                  @"Download the latest version from Havoc Marketplace.",
+                                                  @"Localizable", self.bundle, nil),
+                                              releaseInfo.tagName, [[GitHubReleaseUpdater shared] currentVersion]];
+        } while (0);
+#endif
+    }
+    return [super tableView:tableView titleForFooterInSection:section];
 }
 
 #pragma mark - Helper Methods
