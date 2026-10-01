@@ -180,6 +180,14 @@ __used NS_INLINE void STAccurateSleep(NSTimeInterval seconds) {
 // async calculated
 - (void)sendEventStream:(NSDictionary *)eventInfo;
 
+// Immediate packet of normalized native-screen touches. Caller serializes
+// updates; unlike sendEventStream this does not schedule an asynchronous stream.
+- (void)dispatchNormalizedTouches:(NSArray<NSDictionary *> *)touches;
+- (void)flushPendingEvents;
+// Serializes a short keyboard press/chord with other clients and releaseEveryKeys.
+// The block must not synchronously wait for the main queue.
+- (void)performKeyboardSequence:(dispatch_block_t)block;
+
 /* MARK: --- ASCII Keyboard --- */
 
 // sync 0.05

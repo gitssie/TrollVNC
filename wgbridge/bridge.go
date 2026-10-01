@@ -19,11 +19,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
-	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
@@ -43,10 +43,18 @@ type bridgeConfig struct {
 	Peers      []peerConfig `json:"Peers"`
 }
 
+// Service ports are independent inside one userspace WireGuard network.
+type serviceRoute struct {
+	Port      int `json:"Port"`
+	LocalPort int `json:"LocalPort"`
+}
+
 type bridge struct {
-	listener net.Listener
-	device   *device.Device
-	tun      tun.Device
+	listeners   []net.Listener
+	device      *device.Device
+	mu          sync.Mutex
+	closed      bool
+	connections map[net.Conn]struct{}
 }
 
 var state struct {
@@ -136,61 +144,105 @@ func parseConfig(raw []byte) (bridgeConfig, []netip.Addr, string, error) {
 }
 
 func start(raw []byte, vncPort int) error {
-	if vncPort < 1 || vncPort > 65535 {
-		return errors.New("invalid VNC port")
+	return startServices(raw, []serviceRoute{{Port: vncPort, LocalPort: vncPort}})
+}
+
+func validateRoutes(routes []serviceRoute) error {
+	if len(routes) == 0 || len(routes) > 16 {
+		return errors.New("1..16 service routes are required")
+	}
+	seen := make(map[int]bool)
+	for _, route := range routes {
+		if route.Port < 1 || route.Port > 65535 || route.LocalPort < 1 || route.LocalPort > 65535 {
+			return errors.New("invalid service port")
+		}
+		if seen[route.Port] {
+			return errors.New("duplicate WireGuard service port")
+		}
+		seen[route.Port] = true
+	}
+	return nil
+}
+
+func startServices(raw []byte, routes []serviceRoute) error {
+	if err := validateRoutes(routes); err != nil {
+		return err
 	}
 	cfg, addresses, ipc, err := parseConfig(raw)
 	if err != nil {
 		return err
+	}
+	state.Lock()
+	defer state.Unlock()
+	if state.active != nil {
+		return errors.New("WireGuard bridge is already running")
 	}
 	tunDevice, network, err := netstack.CreateNetTUN(addresses, nil, cfg.MTU)
 	if err != nil {
 		return err
 	}
 	wg := device.NewDevice(tunDevice, conn.NewDefaultBind(), device.NewLogger(device.LogLevelError, "TrollVNC WG: "))
+	b := &bridge{device: wg, connections: make(map[net.Conn]struct{})}
 	if err = wg.IpcSet(ipc); err == nil {
 		err = wg.Up()
 	}
 	if err != nil {
-		wg.Close()
+		b.close()
 		return err
 	}
-	listener, err := network.ListenTCP(&net.TCPAddr{Port: vncPort})
-	if err != nil {
-		wg.Close()
-		return err
-	}
-	b := &bridge{listener: listener, device: wg, tun: tunDevice}
-	state.Lock()
-	if state.active != nil {
-		state.Unlock()
-		listener.Close()
-		wg.Close()
-		return errors.New("WireGuard bridge is already running")
+	for _, route := range routes {
+		listener, err := network.ListenTCP(&net.TCPAddr{Port: route.Port})
+		if err != nil {
+			b.close()
+			return err
+		}
+		b.listeners = append(b.listeners, listener)
 	}
 	state.active = b
-	state.Unlock()
-	go b.serve(vncPort)
+	for i, route := range routes {
+		go b.serve(b.listeners[i], route.LocalPort)
+	}
 	return nil
 }
 
-func (b *bridge) serve(port int) {
+func (b *bridge) track(c net.Conn) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		c.Close()
+		return false
+	}
+	b.connections[c] = struct{}{}
+	return true
+}
+
+func (b *bridge) forget(c net.Conn) {
+	c.Close()
+	b.mu.Lock()
+	delete(b.connections, c)
+	b.mu.Unlock()
+}
+
+func (b *bridge) serve(listener net.Listener, port int) {
 	for {
-		incoming, err := b.listener.Accept()
+		incoming, err := listener.Accept()
 		if err != nil {
 			return
 		}
+		if !b.track(incoming) {
+			return
+		}
 		go func() {
-			local, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+			defer b.forget(incoming)
+			target := strconv.Itoa(port)
+			local, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", target), 3*time.Second)
 			if err != nil {
-				local, err = net.Dial("tcp", net.JoinHostPort("::1", strconv.Itoa(port)))
+				local, err = net.DialTimeout("tcp", net.JoinHostPort("::1", target), 3*time.Second)
 			}
-			if err != nil {
-				incoming.Close()
+			if err != nil || !b.track(local) {
 				return
 			}
-			defer incoming.Close()
-			defer local.Close()
+			defer b.forget(local)
 			done := make(chan struct{}, 2)
 			go func() { io.Copy(local, incoming); done <- struct{}{} }()
 			go func() { io.Copy(incoming, local); done <- struct{}{} }()
@@ -199,15 +251,41 @@ func (b *bridge) serve(port int) {
 	}
 }
 
+func (b *bridge) close() {
+	b.mu.Lock()
+	b.closed = true
+	for c := range b.connections {
+		c.Close()
+	}
+	b.mu.Unlock()
+	for _, listener := range b.listeners {
+		listener.Close()
+	}
+	b.device.Close()
+}
+
 func stop() {
 	state.Lock()
-	b := state.active
-	state.active = nil
-	state.Unlock()
-	if b != nil {
-		b.listener.Close()
-		b.device.Close()
+	defer state.Unlock()
+	if state.active != nil {
+		state.active.close()
+		state.active = nil
 	}
+}
+
+//export TVNCWGStartServices
+func TVNCWGStartServices(config *C.char, services *C.char) *C.char {
+	if config == nil || services == nil {
+		return C.CString("WireGuard configuration and service routes are required")
+	}
+	var routes []serviceRoute
+	if err := json.Unmarshal([]byte(C.GoString(services)), &routes); err != nil {
+		return C.CString("invalid WireGuard service routes")
+	}
+	if err := startServices([]byte(C.GoString(config)), routes); err != nil {
+		return C.CString(err.Error())
+	}
+	return nil
 }
 
 //export TVNCWGStart

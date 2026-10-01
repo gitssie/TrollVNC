@@ -375,6 +375,11 @@ Connect from your browser. Open the bundled web page at `http://<host>:5801/`. T
 
 ## Optional WireGuard VPN Access
 
+An optional integrated ZXTouch TCP control service can share this tunnel on its
+own port (default 6000), or accept direct Wi-Fi connections. Its UI is deferred;
+see [ZXTouch integration](docs/zxtouch-integration.md) for CLI/preferences,
+supported commands, and validation limits.
+
 TrollVNC does not require a VPN. It can serve VNC on the local network as usual.
 WireGuard is an optional way to reach VNC through an encrypted tunnel. Its
 built-in userspace client connects to a standard WireGuard peer; it does not
@@ -395,12 +400,14 @@ configuration is edited and is never printed in the server log.
 The phone must be a peer in your existing WireGuard network, with its own
 `Address` and key. The network's other peers must route the phone's address
 to it. If the phone is behind NAT, `PersistentKeepalive = 25` is often useful.
-Only TCP connections arriving at the phone's WireGuard address on the VNC port
-are forwarded to the local TrollVNC listener. The bridge does not create an
+TCP connections arriving at the phone's WireGuard address on enabled VNC and
+ZXTouch ports are forwarded to their corresponding local listeners. The bridge does not create an
 iOS VPN interface or change system routes.
 
-WireGuard access requires a local VNC listener. Disable Reverse Connection and
-leave Bind Address empty (or bind to loopback) before enabling it. Supported
+WireGuard access requires at least one local listener reachable through loopback.
+For VNC, disable Reverse Connection and leave Bind Address empty (or bind to
+loopback). ZXTouch can also use the tunnel independently of VNC; the existing
+WireGuard settings UI still applies its VNC-only checks. Supported
 configuration keys are `PrivateKey`, `Address`, `ListenPort`, `MTU`, `DNS`,
 `PublicKey`, `PresharedKey`, `Endpoint`, `AllowedIPs`, and
 `PersistentKeepalive`. Unsupported keys are rejected on save rather than

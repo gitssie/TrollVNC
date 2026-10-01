@@ -51,6 +51,8 @@
 #import "AppManagement.h"
 #import "ScreenUnlock.h"
 #import "TVNCWireGuardConfig.h"
+#import "TVNCZXTouchService.h"
+#include "ZXTouchProtocol.hpp"
 #import "IOKitSPI.h"
 #import "Logging.h"
 #import "PSAssistiveTouchSettingsDetail.h"
@@ -76,8 +78,12 @@ static NSString *gBindHost = nil; // optional bind address from CLI/config
 static NSDictionary *gWireGuardConfig = nil;
 static BOOL gWireGuardEnabled = NO;
 static BOOL gWireGuardStarted = NO;
+static BOOL gZXTouchEnabled = NO;
+static int gZXTouchPort = 6000;
+static NSString *gZXTouchBindHost = @"::";
+static TVNCZXTouchService *gZXTouchService = nil;
 #if !TARGET_IPHONE_SIMULATOR
-extern "C" char *TVNCWGStart(const char *configurationJSON, int vncPort);
+extern "C" char *TVNCWGStartServices(const char *configurationJSON, const char *servicesJSON);
 extern "C" void TVNCWGStop(void);
 extern "C" void TVNCWGFree(char *value);
 #endif
@@ -313,6 +319,10 @@ static void printUsageAndExit(const char *prog) {
 
     fprintf(stderr, "Basic:\n");
     fprintf(stderr, "  -b host    Bind host address (IPv4/IPv6 literal, default to all)\n");
+    fprintf(stderr, "  -zxtouch on|off   Enable ZXTouch TCP control (default off)\n");
+    fprintf(stderr, "  -zxtouch-only     Run ZXTouch without a VNC listener\n");
+    fprintf(stderr, "  -zxtouch-port n   ZXTouch TCP port (default 6000)\n");
+    fprintf(stderr, "  -zxtouch-bind ip  ZXTouch numeric bind address (default ::, dual stack)\n");
     fprintf(stderr, "  -p port    VNC TCP port (default: %d)\n", gPort);
     fprintf(stderr, "  -c port    Client management TCP port (0=off, default: 0)\n");
     fprintf(stderr, "  -n name    Desktop name (default: %s)\n", [gDesktopName UTF8String]);
@@ -450,6 +460,10 @@ static void parseWheelOptions(const char *spec) {
         }
     }
     free(dup);
+}
+
+static BOOL tvLoopbackReachable(NSString *host) {
+    return !host.length || [@[@"::", @"0.0.0.0", @"127.0.0.1", @"::1"] containsObject:host];
 }
 
 static void parseDaemonOptions(void) {
@@ -888,18 +902,27 @@ static void parseDaemonOptions(void) {
         TVLog(@"-daemon: Reverse enabled -> overriding: port=-1, http=0, bonjour=off");
     }
 
-    id wireGuard = [prefs objectForKey:@"WireGuardConfig"];
-    id wireGuardEnabled = [prefs objectForKey:@"WireGuardEnabled"];
-    if ([wireGuard isKindOfClass:[NSDictionary class]] && [wireGuardEnabled respondsToSelector:@selector(boolValue)] &&
-        [wireGuardEnabled boolValue]) {
-        if (gPort <= 0 || (gBindHost.length && ![gBindHost isEqualToString:@"127.0.0.1"] &&
-                           ![gBindHost isEqualToString:@"::1"])) {
-            TVLog(@"WireGuard access requires a local VNC listener; check Reverse Connection and Bind Address");
-        } else {
-            gWireGuardConfig = wireGuard;
-            gWireGuardEnabled = YES;
-            TVLog(@"WireGuard access configured for %@", TVNCWGPrimaryAddress(wireGuard));
+    id zxEnabled = prefs[@"ZXTouchEnabled"];
+    gZXTouchEnabled = [zxEnabled respondsToSelector:@selector(boolValue)] && [zxEnabled boolValue];
+    id zxPort = prefs[@"ZXTouchPort"];
+    if (zxPort) {
+        int port = 0;
+        if (!zxtouch::integer([[zxPort description] UTF8String], port) || port < 1 || port > 65535) {
+            TVPrintError("Invalid ZXTouchPort preference");
+            exit(EXIT_FAILURE);
         }
+        gZXTouchPort = port;
+    }
+    id zxHost = prefs[@"ZXTouchBindAddress"];
+    if ([zxHost isKindOfClass:NSString.class] && [zxHost length]) gZXTouchBindHost = zxHost;
+
+    id wireGuard = prefs[@"WireGuardConfig"];
+    id wireGuardEnabled = prefs[@"WireGuardEnabled"];
+    if ([wireGuard isKindOfClass:NSDictionary.class] && [wireGuardEnabled respondsToSelector:@selector(boolValue)] &&
+        [wireGuardEnabled boolValue]) {
+        gWireGuardConfig = wireGuard;
+        gWireGuardEnabled = YES;
+        TVLog(@"WireGuard access configured for %@", TVNCWGPrimaryAddress(wireGuard));
     }
 
     // Passwords via environment (leveraging existing setupRfbClassicAuthentication).
@@ -984,6 +1007,24 @@ static void parseCLI(int argc, const char *argv[]) {
     BOOL __reverseEnabled = NO;
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
+        if (strcmp(arg, "-zxtouch") == 0 || strcmp(arg, "-zxtouch-port") == 0 || strcmp(arg, "-zxtouch-bind") == 0) {
+            if (i + 1 >= argc) { TVPrintError("%s requires an argument", arg); exit(EXIT_FAILURE); }
+            const char *value = argv[++i];
+            if (strcmp(arg, "-zxtouch") == 0) {
+                if (strcmp(value, "on") && strcmp(value, "off")) { TVPrintError("-zxtouch requires on|off"); exit(EXIT_FAILURE); }
+                gZXTouchEnabled = strcmp(value, "on") == 0;
+            } else if (strcmp(arg, "-zxtouch-port") == 0) {
+                if (!zxtouch::integer(value, gZXTouchPort) || gZXTouchPort < 1 || gZXTouchPort > 65535) {
+                    TVPrintError("Invalid ZXTouch port"); exit(EXIT_FAILURE);
+                }
+            } else gZXTouchBindHost = [NSString stringWithUTF8String:value];
+            continue;
+        }
+        if (strcmp(arg, "-zxtouch-only") == 0) {
+            gEnabled = NO;
+            gZXTouchEnabled = YES;
+            continue;
+        }
         if (strcmp(arg, "-reverse") == 0) {
             if (i + 1 >= argc) {
                 TVPrintError("-reverse requires host:port");
@@ -4851,26 +4892,6 @@ static void initializeAndRunRfbServer(void) {
     rfbInitServer(gScreen);
     TVLog(@"VNC server initialized on port %d, %dx%d, name '%@'", gPort, gWidth, gHeight, gDesktopName);
 
-#if !TARGET_IPHONE_SIMULATOR
-    if (gWireGuardEnabled) {
-        NSError *serializationError = nil;
-        NSData *json = [NSJSONSerialization dataWithJSONObject:gWireGuardConfig options:0 error:&serializationError];
-        if (!json) {
-            TVLog(@"WireGuard settings could not be serialized: %@", serializationError.localizedDescription);
-        } else {
-            NSString *jsonText = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
-            char *errorText = TVNCWGStart(jsonText.UTF8String, gPort);
-            if (errorText) {
-                TVLog(@"WireGuard access failed: %s", errorText);
-                TVNCWGFree(errorText);
-            } else {
-                gWireGuardStarted = YES;
-                TVLog(@"WireGuard access listening on %@:%d", TVNCWGPrimaryAddress(gWireGuardConfig), gPort);
-            }
-        }
-    }
-#endif
-
     if (isRepeaterEnabled()) {
         static CFTimeInterval sRetryInterval = 0.0;
         const char *envRetryInterval = getenv("TROLLVNC_REPEATER_RETRY_INTERVAL");
@@ -4912,6 +4933,45 @@ static void initializeAndRunRfbServer(void) {
 
     // Start Bonjour advertisement after server is ready
     startBonjour();
+}
+
+static void startZXTouchService(void) {
+    if (!gZXTouchEnabled) return;
+    if ((gEnabled && (gZXTouchPort == gPort || gZXTouchPort == gHttpPort)) ||
+        (gTvCtlPort > 0 && gZXTouchPort == gTvCtlPort) || gZXTouchPort == kTvAlivePort) {
+        TVPrintError("ZXTouch port conflicts with another TrollVNC service");
+        exit(EXIT_FAILURE);
+    }
+    gZXTouchService = [TVNCZXTouchService new];
+    NSError *error = nil;
+    if (![gZXTouchService startOnHost:gZXTouchBindHost port:gZXTouchPort error:&error]) {
+        TVPrintError("ZXTouch could not listen: %s", error.localizedDescription.UTF8String);
+        exit(EXIT_FAILURE);
+    }
+    TVLog(@"ZXTouch control listening on %@:%d", gZXTouchBindHost, gZXTouchPort);
+}
+
+static void startWireGuardServices(void) {
+#if !TARGET_IPHONE_SIMULATOR
+    if (!gWireGuardEnabled) return;
+    NSMutableArray *routes = [NSMutableArray array];
+    if (gEnabled && gPort > 0 && tvLoopbackReachable(gBindHost))
+        [routes addObject:@{@"Port": @(gPort), @"LocalPort": @(gPort)}];
+    else if (gEnabled) TVLog(@"WireGuard: VNC is not reachable through loopback; skipping VNC route");
+    if (gZXTouchService && tvLoopbackReachable(gZXTouchBindHost))
+        [routes addObject:@{@"Port": @(gZXTouchPort), @"LocalPort": @(gZXTouchPort)}];
+    else if (gZXTouchService) TVLog(@"WireGuard: ZXTouch is not reachable through loopback; skipping ZXTouch route");
+    if (!routes.count) { TVLog(@"WireGuard has no enabled local service routes"); return; }
+    NSData *configuration = [NSJSONSerialization dataWithJSONObject:gWireGuardConfig options:0 error:nil];
+    NSData *services = [NSJSONSerialization dataWithJSONObject:routes options:0 error:nil];
+    if (!configuration || !services) { TVLog(@"WireGuard settings could not be serialized"); return; }
+    NSString *configurationText = [[NSString alloc] initWithData:configuration encoding:NSUTF8StringEncoding];
+    NSString *servicesText = [[NSString alloc] initWithData:services encoding:NSUTF8StringEncoding];
+    char *error = TVNCWGStartServices(configurationText.UTF8String, servicesText.UTF8String);
+    if (error) { TVLog(@"WireGuard access failed: %s", error); TVNCWGFree(error); return; }
+    gWireGuardStarted = YES;
+    TVLog(@"WireGuard listening on %@ for %lu service(s)", TVNCWGPrimaryAddress(gWireGuardConfig), (unsigned long)routes.count);
+#endif
 }
 
 static void handleSignal(int signum) {
@@ -5030,6 +5090,7 @@ static void dropPrivileges(void) {
 }
 
 static void cleanupAndExit(int code) {
+    [gZXTouchService stop];
 #if !TARGET_IPHONE_SIMULATOR
     if (gWireGuardStarted) {
         TVNCWGStop();
@@ -5192,36 +5253,29 @@ int main(int argc, const char *argv[]) {
 #endif
     }
 
-    /* Do nothing but keep the runloop alive */
-    if (!gEnabled) {
-        CFRunLoopRun();
-        return EXIT_SUCCESS;
-    }
-
     @autoreleasepool {
-        setupGeometry();
-        setupOrientationObserver();
-
-        setupRfbLogging();
-        setupRfbScreen(argc, argv);
-        setupRfbEventHandlers();
-        setupRfbClassicAuthentication();
-        setupRfbCutTextHandlers();
-        setupRfbServerSideCursor();
-        setupRfbHttpServer();
-        tvRegisterAppManagement(gScreen);
-        setupRfbFileTransferExtension();
-
-        prepareBulletinManager();
-        prepareClipboardManager();
-        prepareScreenCapturer();
-
-        initializeTilingOrReset();
-        initializeAndRunRfbServer();
-
         installSignalHandlers();
         installTerminationHandlers();
-
+        startZXTouchService();
+        if (gEnabled) {
+            setupGeometry();
+            setupOrientationObserver();
+            setupRfbLogging();
+            setupRfbScreen(argc, argv);
+            setupRfbEventHandlers();
+            setupRfbClassicAuthentication();
+            setupRfbCutTextHandlers();
+            setupRfbServerSideCursor();
+            setupRfbHttpServer();
+            tvRegisterAppManagement(gScreen);
+            setupRfbFileTransferExtension();
+            prepareBulletinManager();
+            prepareClipboardManager();
+            prepareScreenCapturer();
+            initializeTilingOrReset();
+            initializeAndRunRfbServer();
+        }
+        startWireGuardServices();
         tvStartControlSocketIfNeeded();
     }
 

@@ -24,6 +24,11 @@ trollvncserver_USE_MODULES := 0
 
 trollvncserver_FILES += src/trollvncserver.mm
 trollvncserver_FILES += src/TVNCWireGuardConfig.m
+trollvncserver_FILES += src/TVNCZXTouchService.mm
+trollvncserver_FILES += vendor/zxtouch/src/ZXTouchProtocol.cpp
+trollvncserver_FILES += vendor/zxtouch/src/ZXTouchImage.cpp
+trollvncserver_FILES += vendor/zxtouch/src/ZXTouchTCPServer.mm
+trollvncserver_CFLAGS += -Ivendor/zxtouch/include
 trollvncserver_FILES += src/FileManagement.c
 trollvncserver_FILES += src/AppManagement.mm
 trollvncserver_FILES += src/ScreenUnlock.mm
@@ -79,6 +84,8 @@ trollvncserver_LIBRARIES += z
 endif
 
 trollvncserver_FRAMEWORKS += Accelerate
+trollvncserver_FRAMEWORKS += Vision
+trollvncserver_FRAMEWORKS += CoreImage
 trollvncserver_FRAMEWORKS += CoreGraphics
 trollvncserver_FRAMEWORKS += CoreMedia
 trollvncserver_FRAMEWORKS += CoreVideo

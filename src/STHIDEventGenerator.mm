@@ -243,16 +243,18 @@ NS_INLINE void _DTXCalcLinearPinchStartEndPoints(CGRect bounds, CGFloat pixelsSc
 #pragma mark - HID Events
 
 - (void)_sendIOHIDKeyboardEvent:(uint32_t)page usage:(uint32_t)usage isKeyDown:(boolean_t)isKeyDown {
-    if (page != kHIDPage_Telephony) {
-        uint64_t keyCode = ((uint64_t)page << 32) | usage;
-        NSNumber *nsKeyCode = @(keyCode);
-        if (isKeyDown) {
-            [_activeKeyCodes addObject:nsKeyCode];
-        } else {
-            [_activeKeyCodes removeObject:nsKeyCode];
+    @synchronized(_activeKeyCodes) {
+        if (page != kHIDPage_Telephony) {
+            uint64_t keyCode = ((uint64_t)page << 32) | usage;
+            NSNumber *nsKeyCode = @(keyCode);
+            if (isKeyDown) {
+                [_activeKeyCodes addObject:nsKeyCode];
+            } else {
+                [_activeKeyCodes removeObject:nsKeyCode];
+            }
         }
+        [self __sendIOHIDKeyboardEvent:page usage:usage isKeyDown:isKeyDown];
     }
-    [self __sendIOHIDKeyboardEvent:page usage:usage isKeyDown:isKeyDown];
 }
 
 - (void)__sendIOHIDKeyboardEvent:(uint32_t)page usage:(uint32_t)usage isKeyDown:(boolean_t)isKeyDown {
@@ -1197,21 +1199,23 @@ static inline uint32_t hidUsageCodeForCharacter(NSString *key) {
 }
 
 - (void)keyPress:(NSString *)character {
-    struct timespec pressDelay = {0, (long)(fingerLiftDelay * nanosecondsPerSecond)};
-    bool shouldWrapWithShift = shouldWrapWithShiftKeyEventForCharacter(character);
-    uint32_t usage = hidUsageCodeForCharacter(character);
+    @synchronized(_activeKeyCodes) {
+        struct timespec pressDelay = {0, (long)(fingerLiftDelay * nanosecondsPerSecond)};
+        bool shouldWrapWithShift = shouldWrapWithShiftKeyEventForCharacter(character);
+        uint32_t usage = hidUsageCodeForCharacter(character);
 
-    if (shouldWrapWithShift)
-        [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:kHIDUsage_KeyboardLeftShift isKeyDown:true];
+        if (shouldWrapWithShift)
+            [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:kHIDUsage_KeyboardLeftShift isKeyDown:true];
 
-    [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:usage isKeyDown:true];
-    nanosleep(&pressDelay, 0);
-    [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:usage isKeyDown:false];
+        [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:usage isKeyDown:true];
+        nanosleep(&pressDelay, 0);
+        [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:usage isKeyDown:false];
 
-    if (shouldWrapWithShift)
-        [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:kHIDUsage_KeyboardLeftShift isKeyDown:false];
+        if (shouldWrapWithShift)
+            [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:kHIDUsage_KeyboardLeftShift isKeyDown:false];
 
-    [self sendMarkerHIDEvent];
+        [self sendMarkerHIDEvent];
+    }
 }
 
 - (void)dispatchHandResetEvent {
@@ -1224,6 +1228,18 @@ static inline uint32_t hidUsageCodeForCharacter(NSString *key) {
     IOHIDEventRef eventRef = [self _createIOHIDEventWithInfo:eventInfo];
     _sendHIDEvent(eventRef, _hidEventQueue);
     CFRelease(eventRef);
+}
+
+- (void)dispatchNormalizedTouches:(NSArray<NSDictionary *> *)touches {
+    [self dispatchEventWithInfo:@{HIDEventInputType: HIDEventInputTypeHand, HIDEventTouchesKey: touches}];
+}
+
+- (void)performKeyboardSequence:(dispatch_block_t)block {
+    @synchronized(_activeKeyCodes) { block(); }
+}
+
+- (void)flushPendingEvents {
+    dispatch_sync(_hidEventQueue, ^{});
 }
 
 - (NSArray<NSDictionary *> *)interpolatedEvents:(NSDictionary *)interpolationsDictionary {
@@ -1623,13 +1639,15 @@ static inline uint32_t hidUsageCodeForCharacter(NSString *key) {
 }
 
 - (void)releaseEveryKeys {
-    for (NSNumber *nsKeyCode in _activeKeyCodes) {
-        uint64_t keyCode = [nsKeyCode unsignedLongLongValue];
-        uint32_t page = (keyCode >> 32);
-        uint32_t usage = (keyCode & 0xFFFFFFFF);
-        [self __sendIOHIDKeyboardEvent:page usage:usage isKeyDown:false];
+    @synchronized(_activeKeyCodes) {
+        for (NSNumber *nsKeyCode in _activeKeyCodes) {
+            uint64_t keyCode = [nsKeyCode unsignedLongLongValue];
+            uint32_t page = (keyCode >> 32);
+            uint32_t usage = (keyCode & 0xFFFFFFFF);
+            [self __sendIOHIDKeyboardEvent:page usage:usage isKeyDown:false];
+        }
+        [_activeKeyCodes removeAllObjects];
     }
-    [_activeKeyCodes removeAllObjects];
 }
 
 - (void)hardwareLock {

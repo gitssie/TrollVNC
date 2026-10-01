@@ -70,6 +70,42 @@ void CARenderServerRenderDisplay(kern_return_t a, CFStringRef b, IOSurfaceRef su
     return _inst;
 }
 
++ (CGImageRef)copyNativeScreenImage {
+    NSAssert(NSThread.isMainThread, @"Capture ZXTouch images on main thread");
+    CGSize size = [UIScreen.mainScreen _unjailedReferenceBoundsInPixels].size;
+    size_t width = (size_t)round(size.width), height = (size_t)round(size.height);
+    if (!width || !height || width > 16384 || height > 16384) return NULL;
+    size_t stride = IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, width * 4);
+    NSDictionary *properties = @{
+        (__bridge NSString *)kIOSurfaceWidth: @(width),
+        (__bridge NSString *)kIOSurfaceHeight: @(height),
+        (__bridge NSString *)kIOSurfaceBytesPerElement: @4,
+        (__bridge NSString *)kIOSurfaceBytesPerRow: @(stride),
+        (__bridge NSString *)kIOSurfaceAllocSize: @(stride * height),
+        (__bridge NSString *)kIOSurfacePixelFormat: @(0x42475241)
+    };
+    IOSurfaceRef surface = IOSurfaceCreate((__bridge CFDictionaryRef)properties);
+    if (!surface) return NULL;
+    CARenderServerRenderDisplay(0, CFSTR("LCD"), surface, 0, 0);
+    IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
+    // Own the pixels independently of the surface. A bitmap-context image can
+    // share externally owned backing storage through copy-on-write.
+    CFDataRef pixels = CFDataCreate(kCFAllocatorDefault,
+        (const UInt8 *)IOSurfaceGetBaseAddress(surface), stride * height);
+    IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+    CFRelease(surface);
+    if (!pixels) return NULL;
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData(pixels);
+    CFRelease(pixels);
+    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGImageRef image = provider ? CGImageCreate(width, height, 8, 32, stride, space,
+        (CGBitmapInfo)kCGBitmapByteOrder32Little | (CGBitmapInfo)kCGImageAlphaPremultipliedFirst,
+        provider, NULL, false, kCGRenderingIntentDefault) : NULL;
+    if (provider) CGDataProviderRelease(provider);
+    CGColorSpaceRelease(space);
+    return image;
+}
+
 - (instancetype)init {
     self = [super init];
     if (!self)

@@ -50,6 +50,10 @@ NS_ASSUME_NONNULL_BEGIN
 /** Returns the shared singleton instance. */
 + (instancetype)sharedCapturer;
 
+// Fresh native portrait image, independent of the VNC frame handler, scaling,
+// dirty-frame detection and orientation offset. Call on the main thread.
++ (nullable CGImageRef)copyNativeScreenImage CF_RETURNS_RETAINED;
+
 + (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
