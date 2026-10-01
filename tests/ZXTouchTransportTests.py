@@ -83,8 +83,10 @@ class TransportTests(unittest.TestCase):
             connection.sendall(b"1011990000100001\r\n")
             self.assertEqual(connection.recv(1024), b"")
 
-    def test_ipv6_and_multiple_clients(self):
-        with self.connect("::1") as first, self.connect() as second:
+    def test_ipv4_only_and_multiple_clients(self):
+        with self.assertRaises(OSError):
+            self.connect("::1")
+        with self.connect() as first, self.connect() as second:
             first.sendall(b"251\r\n")
             second.sendall(b"253\r\n")
             self.assertEqual(first.recv(1024), b"0;;1\r\n")

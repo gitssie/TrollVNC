@@ -47,7 +47,9 @@
 						<key>kind</key>
 						<string>text</string>
 						<key>placeholder</key>
-						<string>Leave empty for all interfaces</string>
+						<string>0.0.0.0</string>
+						<key>default</key>
+						<string>0.0.0.0</string>
 					</dict>
 				</array>
 			</dict>

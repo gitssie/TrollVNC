@@ -27,8 +27,11 @@ static NSDictionary *FixtureStatus(void) {
 }
 @end
 @interface TVNCPreviewRoot : TVNCRootListController
+@property(nonatomic, strong) NSBundle *previewBundle;
 @end
 @implementation TVNCPreviewRoot
+- (NSBundle *)bundle { return self.previewBundle; }
+- (void)setBundle:(NSBundle *)bundle { self.previewBundle = bundle; }
 - (void)refreshServiceStatus {
     [self setValue:FixtureStatus() forKey:@"serviceStatus"];
     [self updateFirstGroupAndReload:YES];
@@ -57,9 +60,10 @@ static NSDictionary *FixtureStatus(void) {
     [self.window makeKeyAndVisible];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         NSArray *pages = @[@"network", @"security", @"display", @"input", @"connections", @"performance", @"web"];
-        NSInteger index = [pages indexOfObject:environment[@"TVNC_UI_PAGE"] ?: @"home"];
+        NSUInteger index = [pages indexOfObject:environment[@"TVNC_UI_PAGE"] ?: @"home"];
         if (index != NSNotFound) {
-            [root tableView:root.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:index inSection:1]];
+            UITableView *table = (UITableView *)root.view;
+            [root tableView:table didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:index inSection:1]];
         }
     });
     return YES;

@@ -1,10 +1,9 @@
 # Native settings preview
 
-Release 3.2-303 temporarily restores the pre-redesign settings entry from
-`20d4d07` to isolate a reported iOS 15.8.8 Settings crash. The redesigned category
-navigation described below is retained as development scaffolding and does not
-represent the restored production home screen. Do not use its direct navigation
-handler calls as a release smoke test until the harness is updated.
+Release 3.2-303 temporarily restored the pre-redesign settings entry from
+`20d4d07` to isolate a reported iOS 15.8.8 Settings crash. The user confirmed
+that entry worked. The new entry now uses a native `PSListController` specifier
+table and `PSTableCell` subclasses for its redesigned rows.
 
 This harness compiles the production UIKit settings controllers into a simulator
 app. Only service status and local addresses are fixtures; it does not start the

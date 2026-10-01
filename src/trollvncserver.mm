@@ -1,3 +1,4 @@
+#import "TVNCBindAddress.h"
 /*
  This file is part of TrollVNC
  Copyright (c) 2025 82Flex <82flex@gmail.com> and contributors
@@ -160,51 +161,6 @@ static BOOL gUserSingleNotifsEnabled = YES;
 // Blocked hosts (temporary blacklist)
 static NSMutableSet<NSString *> *gBlockedHosts = nil;
 
-typedef NS_ENUM(uint8_t, TVBindHostKind) {
-    kTVBindHostKindNone = 0,
-    kTVBindHostKindIPv4,
-    kTVBindHostKindIPv6,
-    kTVBindHostKindInvalid,
-};
-
-static TVBindHostKind tvClassifyBindHost(NSString *host, in_addr_t *outIPv4, struct in6_addr *outIPv6) {
-    if (outIPv4)
-        *outIPv4 = 0;
-    if (outIPv6)
-        memset(outIPv6, 0, sizeof(*outIPv6));
-
-    if (!host || host.length == 0)
-        return kTVBindHostKindNone;
-
-    const char *cstr = [host UTF8String];
-    if (!cstr || *cstr == '\0')
-        return kTVBindHostKindNone;
-
-    struct in_addr v4;
-    if (inet_pton(AF_INET, cstr, &v4) == 1) {
-        if (outIPv4)
-            *outIPv4 = v4.s_addr;
-        return kTVBindHostKindIPv4;
-    }
-
-    char addrBuf[INET6_ADDRSTRLEN + 1];
-    const char *pct = strchr(cstr, '%');
-    size_t copyLen = pct ? (size_t)(pct - cstr) : strlen(cstr);
-    if (copyLen >= sizeof(addrBuf))
-        copyLen = sizeof(addrBuf) - 1;
-    memcpy(addrBuf, cstr, copyLen);
-    addrBuf[copyLen] = '\0';
-
-    struct in6_addr v6;
-    if (inet_pton(AF_INET6, addrBuf, &v6) == 1) {
-        if (outIPv6)
-            *outIPv6 = v6;
-        return kTVBindHostKindIPv6;
-    }
-
-    return kTVBindHostKindInvalid;
-}
-
 NS_INLINE BOOL isRepeaterEnabled(void) {
     return gRepeaterMode > 0 && gRepeaterHost != NULL && gRepeaterHost[0] != '\0' && gRepeaterPort > 0;
 }
@@ -322,7 +278,7 @@ static void printUsageAndExit(const char *prog) {
     fprintf(stderr, "Usage: %s [-p port] [-n name] [options]\n\n", prog);
 
     fprintf(stderr, "Basic:\n");
-    fprintf(stderr, "  -b host    Bind host address (IPv4/IPv6 literal, default to all)\n");
+    fprintf(stderr, "  -b host    Bind host address (IPv4 literal, default 0.0.0.0)\n");
     fprintf(stderr, "  -zxtouch-port n   ZXTouch TCP port (default 6000)\n");
     fprintf(stderr, "  -p port    VNC TCP port (default: %d)\n", gPort);
     fprintf(stderr, "  -c port    Client management TCP port (0=off, default: 0)\n");
@@ -464,7 +420,7 @@ static void parseWheelOptions(const char *spec) {
 }
 
 static BOOL tvLoopbackReachable(NSString *host) {
-    return !host.length || [@[@"::", @"0.0.0.0", @"127.0.0.1", @"::1"] containsObject:host];
+    return TVNCIPv4BindAllowsWireGuard(host);
 }
 
 static void parseDaemonOptions(void) {
@@ -4604,32 +4560,13 @@ static void setupRfbScreen(int argc, const char *argv[]) {
 
     // Server ports
     gScreen->port = gPort;
-    gScreen->ipv6port = gPort;
-
-    // Server bind addresses
-    in_addr_t v4Addr = INADDR_ANY;
-    struct in6_addr v6Addr;
-    memset(&v6Addr, 0, sizeof(v6Addr));
-
-    TVBindHostKind hostKind = tvClassifyBindHost(gBindHost, &v4Addr, &v6Addr);
-    if (hostKind == kTVBindHostKindIPv4) {
-        gScreen->listenInterface = v4Addr;
-        gScreen->ipv6port = -1; // Both protocols bind the same address family.
-    } else if (hostKind == kTVBindHostKindIPv6) {
-        char ifaceBuf[INET6_ADDRSTRLEN];
-        const char *iface = inet_ntop(AF_INET6, &v6Addr, ifaceBuf, sizeof(ifaceBuf));
-        if (!iface) {
-            TVPrintError("Failed to normalize IPv6 bind host");
-            exit(EXIT_FAILURE);
-        }
-        gScreen->listen6Interface = strdup(gBindHost.UTF8String);
-        if (!IN6_IS_ADDR_UNSPECIFIED(&v6Addr)) gScreen->port = -1;
-    } else if (hostKind == kTVBindHostKindInvalid && gBindHost) {
-        TVPrintError("Invalid host address: %s", [gBindHost UTF8String]);
+    gScreen->ipv6port = -1;
+    struct in_addr address;
+    if (inet_pton(AF_INET, gBindHost.UTF8String, &address) != 1) {
+        TVPrintError("Bind address must be an IPv4 literal: %s", gBindHost.UTF8String);
         exit(EXIT_FAILURE);
-    } else {
-        // Do nothing; default ANY
     }
+    gScreen->listenInterface = address.s_addr;
 
     // Event handlers
     gScreen->newClientHook = newClientHook;
@@ -4745,7 +4682,7 @@ static void setupRfbHttpServer(void) {
     gScreen->httpEnableProxyConnect = TRUE; // always allow CONNECT if HTTP is enabled
     if (gHttpPort > 0) {
         gScreen->httpPort = gHttpPort; // enable HTTP on specified port
-        gScreen->http6Port = gHttpPort;
+        gScreen->http6Port = -1;
         if (gHttpDirOverride) {
             // Use override absolute path
             gScreen->httpDir = strdup(gHttpDirOverride);
@@ -4869,11 +4806,11 @@ static void startZXTouchService(void) {
     }
     gZXTouchService = [TVNCZXTouchService new];
     NSError *error = nil;
-    if (![gZXTouchService startOnHost:(gBindHost.length ? gBindHost : @"::") port:gZXTouchPort error:&error]) {
+    if (![gZXTouchService startOnHost:TVNCIPv4BindAddress(gBindHost) port:gZXTouchPort error:&error]) {
         TVPrintError("ZXTouch could not listen: %s", error.localizedDescription.UTF8String);
         exit(EXIT_FAILURE);
     }
-    TVLog(@"ZXTouch control listening on %@:%d", gBindHost ?: @"::", gZXTouchPort);
+    TVLog(@"ZXTouch control listening on %@:%d", TVNCIPv4BindAddress(gBindHost), gZXTouchPort);
 }
 
 static void startWireGuardServices(void) {
@@ -4883,7 +4820,7 @@ static void startWireGuardServices(void) {
         gWireGuardError = @"Shared bind address must allow loopback access for WireGuard.";
         TVLog(@"%@", gWireGuardError); return;
     }
-    NSString *localHost = gScreen->listenSock >= 0 ? @"127.0.0.1" : @"::1";
+    NSString *localHost = @"127.0.0.1";
     NSMutableArray *routes = [NSMutableArray array];
     if (gPort > 0 && tvLoopbackReachable(gBindHost))
         [routes addObject:@{@"Port": @(gPort), @"LocalPort": @(gPort), @"LocalHost": localHost}];
@@ -5192,7 +5129,7 @@ int main(int argc, const char *argv[]) {
     }
 
     @autoreleasepool {
-        gBindHost = [gBindHost stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        gBindHost = TVNCIPv4BindAddress(gBindHost);
         installSignalHandlers();
         installTerminationHandlers();
         {

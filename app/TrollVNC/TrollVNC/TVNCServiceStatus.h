@@ -1,3 +1,4 @@
+#import "TVNCBindAddress.h"
 // Shared native UI helpers. GPL-2.0-only.
 #pragma once
 #import <Foundation/Foundation.h>
@@ -27,7 +28,7 @@ NS_INLINE BOOL TVNCServicePortsValid(int vnc, int zx, int http) {
 }
 NS_INLINE BOOL TVNCSharedBindAllowsWireGuard(NSString *host) {
     NSString *bind = [host stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    return !bind.length || [@[@"0.0.0.0", @"::", @"127.0.0.1", @"::1"] containsObject:bind];
+    return TVNCIPv4BindAllowsWireGuard(bind);
 }
 // Call on a worker queue. One absolute deadline bounds connect and fragmented reads.
 NS_INLINE NSDictionary *TVNCFetchServiceStatus(int port) {

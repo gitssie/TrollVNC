@@ -18,6 +18,28 @@ int main(int argc, char **argv) {
                     assert((!expected && !row[@"default"]) || [expected isEqual:row[@"default"]]);
                 }
         assert(original.count == 37 && [[NSSet setWithArray:original.allKeys] isEqual:[NSSet setWithArray:rows.allKeys]]);
+        NSString *dashboardPath = [@(argv[1]).stringByDeletingLastPathComponent stringByAppendingPathComponent:@"Dashboard.plist"];
+        NSArray *dashboardItems = [NSDictionary dictionaryWithContentsOfFile:dashboardPath][@"items"];
+        NSMutableArray *groupSizes = [NSMutableArray array];
+        NSMutableSet *actions = [NSMutableSet set];
+        NSInteger groupSize = -1;
+        for (NSDictionary *item in dashboardItems) {
+            if ([item[@"cell"] isEqualToString:@"PSGroupCell"]) {
+                if (groupSize >= 0) [groupSizes addObject:@(groupSize)];
+                groupSize = 0;
+            } else {
+                assert(groupSize >= 0 && [item[@"tvncDashboardRow"] boolValue]);
+                assert([item[@"cellClass"] isEqualToString:@"TVNCDashboardCell"]);
+                assert(!item[@"key"]); // navigation must never overwrite a preference
+                if (item[@"action"]) {
+                    assert(![actions containsObject:item[@"action"]]);
+                    [actions addObject:item[@"action"]];
+                }
+                ++groupSize;
+            }
+        }
+        [groupSizes addObject:@(groupSize)];
+        assert(([groupSizes isEqual:@[@1, @7, @2]] && actions.count == 8));
         NSString *suite = [@"com.82flex.trollvnc.settings-tests." stringByAppendingString:NSUUID.UUID.UUIDString];
         NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:suite];
         [preferences setObject:@"secret-value" forKey:@"FullPassword"];
@@ -46,6 +68,8 @@ int main(int argc, char **argv) {
         [preferences setObject:@{} forKey:@"WireGuardConfig"];
         assert(!TVNCWriteSetting(preferences, rows[@"BindHost"], @"192.168.1.2", &error));
         assert(TVNCWriteSetting(preferences, rows[@"BindHost"], @"::", &error));
+        assert([[preferences stringForKey:@"BindHost"] isEqualToString:@"0.0.0.0"]);
+        assert(!TVNCWriteSetting(preferences, rows[@"BindHost"], @"fe80::1", &error));
         assert(TVNCWriteSetting(preferences, rows[@"FullPassword"], @"", &error));
         assert([preferences stringForKey:@"FullPassword"].length == 0);
         [preferences removePersistentDomainForName:suite]; [preferences synchronize];

@@ -29,7 +29,8 @@
 "Are you sure you want to restart the VNC service?" = "确定要重启 VNC 服务吗？";
 
 /* No comment provided by engineer. */
-"Bind address must be a valid IPv4/IPv6 literal, or empty to listen on all interfaces." = "绑定地址必须是合法的 IPv4/IPv6 字面量，或留空以监听所有网卡。";
+"Bind address must be a valid IPv4 literal. Leave empty to use 0.0.0.0." = "绑定地址必须是合法的 IPv4 地址；留空则使用 0.0.0.0。";
+"Use 0.0.0.0 to access both Wi-Fi and WireGuard." = "如需同时通过 Wi-Fi 和 WireGuard 访问，请使用 0.0.0.0。";
 
 /* No comment provided by engineer. */
 "Block" = "封禁";
@@ -309,3 +310,4 @@
 
 "%.0f s" = "%.0f 秒";
 "%.3f s" = "%.3f 秒";
+"Loading service status…" = "正在读取服务状态…";

@@ -46,6 +46,11 @@ int main(void) {
         assert(TVNCParseServicePort(@"0", YES) == 0);
         assert(TVNCSharedBindAllowsWireGuard(@"::1"));
         assert(TVNCSharedBindAllowsWireGuard(@"0.0.0.0"));
+        assert([TVNCIPv4BindAddress(nil) isEqualToString:@"0.0.0.0"]);
+        assert([TVNCIPv4BindAddress(@"::") isEqualToString:@"0.0.0.0"]);
+        assert([TVNCIPv4BindAddress(@"::1") isEqualToString:@"127.0.0.1"]);
+        assert(TVNCValidIPv4BindAddress(@"127.0.0.1"));
+        assert(!TVNCValidIPv4BindAddress(@"fe80::1"));
         assert(!TVNCSharedBindAllowsWireGuard(@"192.168.1.2"));
         assert([TVNCServiceSocket(@"fe80::1%en0", @6000) isEqualToString:@"[fe80::1%en0]:6000"]);
         assert(TVNCWiFiAddresses(@"::1", YES, NO).count == 0);

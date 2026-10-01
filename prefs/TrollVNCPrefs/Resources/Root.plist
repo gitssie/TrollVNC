@@ -64,9 +64,11 @@
 			<key>label</key>
 			<string>Bind Address</string>
 			<key>placeholder</key>
-			<string>Leave empty for all interfaces</string>
+			<string>0.0.0.0</string>
 			<key>noAutoCorrect</key>
 			<true/>
+			<key>default</key>
+			<string>0.0.0.0</string>
 		</dict>
 		<dict>
 			<key>cell</key>

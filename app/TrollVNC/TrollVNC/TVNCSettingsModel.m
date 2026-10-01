@@ -12,7 +12,8 @@ NSDictionary *TVNCSettingsCatalog(NSBundle *bundle) {
     return [NSDictionary dictionaryWithContentsOfFile:[bundle pathForResource:@"SettingsCatalog" ofType:@"plist"]] ?: @{};
 }
 id TVNCSettingValue(NSUserDefaults *preferences, NSDictionary *row) {
-    return [preferences objectForKey:row[@"key"]] ?: row[@"default"] ?: @"";
+    id value = [preferences objectForKey:row[@"key"]] ?: row[@"default"] ?: @"";
+    return [row[@"key"] isEqualToString:@"BindHost"] ? TVNCIPv4BindAddress(value) : value;
 }
 NSString *TVNCSettingDisplay(NSUserDefaults *preferences, NSDictionary *row, NSBundle *bundle) {
     id value = TVNCSettingValue(preferences, row);
@@ -65,14 +66,12 @@ BOOL TVNCWriteSetting(NSUserDefaults *preferences, NSDictionary *row, id value, 
     } else {
         if (![value isKindOfClass:NSString.class]) return TVNCSettingError(error, @"Invalid text");
         if (![kind isEqualToString:@"secret"]) value = [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if ([key isEqualToString:@"BindHost"] && [value length]) {
-            struct addrinfo hints = {0}, *result = NULL;
-            hints.ai_flags = AI_NUMERICHOST; hints.ai_socktype = SOCK_STREAM;
-            int status = getaddrinfo([value UTF8String], NULL, &hints, &result);
-            if (result) freeaddrinfo(result);
-            if (status != 0) return TVNCSettingError(error, @"Bind address must be a valid IPv4/IPv6 literal, or empty to listen on all interfaces.");
+        if ([key isEqualToString:@"BindHost"]) {
+            value = TVNCIPv4BindAddress(value);
+            if (!TVNCValidIPv4BindAddress(value))
+                return TVNCSettingError(error, @"Bind address must be a valid IPv4 literal. Leave empty to use 0.0.0.0.");
             if ([preferences dictionaryForKey:@"WireGuardConfig"] && !TVNCSharedBindAllowsWireGuard(value))
-                return TVNCSettingError(error, @"Clear the shared listen address to use both Wi-Fi and WireGuard.");
+                return TVNCSettingError(error, @"Use 0.0.0.0 to access both Wi-Fi and WireGuard.");
         }
         if ([@[@"HttpDir", @"SslCertFile", @"SslKeyFile"] containsObject:key] && [value length] && ![value hasPrefix:@"/"])
             return TVNCSettingError(error, @"Enter an absolute file path, or leave empty for the default.");

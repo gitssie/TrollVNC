@@ -37,7 +37,7 @@ int main(int argc, const char *argv[]) {
         } disconnected:^(NSUInteger client) {}];
         weakServer = server;
         NSError *error;
-        if (![server startOnHost:@"::" port:atoi(argv[1]) error:&error]) {
+        if (![server startOnHost:@"0.0.0.0" port:atoi(argv[1]) error:&error]) {
             fprintf(stderr, "%s\n", error.localizedDescription.UTF8String); return 1;
         }
         id token = [[NSNotificationCenter defaultCenter] addObserverForName:@"ZXTestStop" object:nil queue:nil usingBlock:^(NSNotification *note) {

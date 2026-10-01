@@ -29,7 +29,8 @@
 "Are you sure you want to restart the VNC service?" = "Are you sure you want to restart the VNC service?";
 
 /* No comment provided by engineer. */
-"Bind address must be a valid IPv4/IPv6 literal, or empty to listen on all interfaces." = "Bind address must be a valid IPv4/IPv6 literal, or empty to listen on all interfaces.";
+"Bind address must be a valid IPv4 literal. Leave empty to use 0.0.0.0." = "Bind address must be a valid IPv4 literal. Leave empty to use 0.0.0.0.";
+"Use 0.0.0.0 to access both Wi-Fi and WireGuard." = "Use 0.0.0.0 to access both Wi-Fi and WireGuard.";
 
 /* No comment provided by engineer. */
 "Block" = "Block";
@@ -306,3 +307,4 @@
 "Invalid selection" = "Invalid selection";
 "Invalid setting" = "Invalid setting";
 "Invalid text" = "Invalid text";
+"Loading service status…" = "Loading service status…";

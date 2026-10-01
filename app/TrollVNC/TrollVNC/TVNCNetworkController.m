@@ -11,6 +11,7 @@
 @property(nonatomic, strong) NSArray<NSString *> *localAddresses;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, assign) BOOL fetching;
+@property(nonatomic, assign) BOOL statusReadCompleted;
 @end
 @implementation TVNCNetworkController
 - (instancetype)init { self = [super init]; if (self) self.categoryIdentifier = @"network"; return self; }
@@ -34,10 +35,11 @@
     __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         NSDictionary *status = TVNCFetchServiceStatus(kTvDefaultCtlPort);
-        NSArray *addresses = status ? TVNCWiFiAddresses(status[@"BindHost"], [status[@"VNCAcceptsIPv4"] boolValue], [status[@"VNCAcceptsIPv6"] boolValue]) : @[];
+        NSArray *addresses = status ? TVNCWiFiAddresses(status[@"BindHost"], [status[@"VNCAcceptsIPv4"] boolValue], NO) : @[];
         dispatch_async(dispatch_get_main_queue(), ^{
             typeof(self) strongSelf = weakSelf; if (!strongSelf) return;
-            strongSelf.fetching = NO; strongSelf.status = status; strongSelf.localAddresses = addresses;
+            strongSelf.fetching = NO; strongSelf.statusReadCompleted = YES;
+            strongSelf.status = status; strongSelf.localAddresses = addresses;
             [strongSelf.refreshControl endRefreshing]; [strongSelf.tableView reloadData];
         });
     });
@@ -72,13 +74,13 @@
             cell.accessoryView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"doc.on.doc"]];
             cell.accessoryView.tintColor = TVNCAccentColor();
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-        } else cell.valueLabel.text = [self text:@"Address unavailable"];
+        } else cell.valueLabel.text = [self text:!self.status && !self.statusReadCompleted ? @"Loading service status…" : @"Address unavailable"];
     } else if ([self.preferences dictionaryForKey:@"WireGuardConfig"] && row == [self tableView:tableView numberOfRowsInSection:2] - 1) {
         cell.nameLabel.text = [self text:@"Remove configuration"];
         cell.nameLabel.textColor = UIColor.systemRedColor;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     } else if (row == 0) {
-        NSString *state = !self.status ? @"Service status unavailable" :
+        NSString *state = !self.status ? (self.statusReadCompleted ? @"Service status unavailable" : @"Loading service status…") :
             [self.status[@"WireGuardStarted"] boolValue] ? @"Interface running" :
             [self.status[@"WireGuardConfigured"] boolValue] ? @"Network failed to start" : @"No configuration";
         cell.nameLabel.text = [self text:state];

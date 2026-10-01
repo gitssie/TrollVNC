@@ -162,7 +162,7 @@ README for provenance and licensing.
 Run `bash tests/run_zxtouch_tests.sh` for sanitized core tests and native macOS
 TCP transport tests, process/IPC lifecycle tests and real-socket Python client
 method/return-shape tests, plus unified-port validation and fragmented/timeout status-query tests. Run `go test -race ./...` in `wgbridge` for real userspace
-WG tests, including simultaneous VNC/ZXTouch routes, explicit IPv6 loopback destinations, connection cleanup and route shutdown. The iOS server is compiled with the normal Theos build.
+WG tests, including simultaneous VNC/ZXTouch routes, explicit loopback destinations, connection cleanup and route shutdown. The iOS server is compiled with the normal Theos build. VNC, ZXTouch and the optional VNC HTTP viewer listen on IPv4; an empty bind address uses `0.0.0.0`.
 Device input injection, screen orientation, Unicode paste and OCR still require
 physical-device acceptance testing, including SpringBoard scenes, dialogs,
 keyboard selectors and global touch monitoring; host transport tests use a mock command

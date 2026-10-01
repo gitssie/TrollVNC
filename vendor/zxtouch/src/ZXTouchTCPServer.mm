@@ -36,7 +36,7 @@
         return NO;
     }
     struct addrinfo hints = {}, *addresses = nullptr;
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
     int result = getaddrinfo(host.UTF8String, std::to_string(port).c_str(), &hints, &addresses);
@@ -46,10 +46,9 @@
             fd = socket(address->ai_family, SOCK_STREAM, 0);
             if (fd < 0) { savedError = errno; continue; }
             fcntl(fd, F_SETFD, FD_CLOEXEC);
-            int yes = 1, no = 0;
+            int yes = 1;
             setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
             setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
-            if (address->ai_family == AF_INET6) setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &no, sizeof(no));
             if (!bind(fd, address->ai_addr, address->ai_addrlen) && !listen(fd, 16) &&
                 fcntl(fd, F_SETFL, O_NONBLOCK) != -1) break;
             savedError = errno;
