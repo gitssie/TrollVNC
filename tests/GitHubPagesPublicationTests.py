@@ -22,13 +22,15 @@ SPEC.loader.exec_module(pages)
 
 class GitHubPagesPublicationTests(unittest.TestCase):
     def make_deb(
-        self, root: Path, author: str = "XenSpace", bad_permissions: bool = False
+        self, root: Path, author: str = "XenSpace", bad_permissions: bool = False,
+        architecture: str = "iphoneos-arm64e", payload_prefix=None
     ) -> Path:
         source = pages.fields_from_control((ROOT / "layout/DEBIAN/control").read_bytes())
         version = pages.expected_version()
         control = dict(source)
         control["Author"] = author
-        control["Architecture"] = "iphoneos-arm64e"
+        control["Architecture"] = architecture
+        prefix = payload_prefix if payload_prefix is not None else ("var/jb/" if architecture == "iphoneos-arm64" else "")
         control["Version"] = version
         control_data = "".join(f"{name}: {value}\n" for name, value in control.items()).encode()
         archive = io.BytesIO()
@@ -48,7 +50,7 @@ class GitHubPagesPublicationTests(unittest.TestCase):
                 "usr",
                 "usr/bin",
             ):
-                info = tarfile.TarInfo("./" + name + "/")
+                info = tarfile.TarInfo("./" + prefix + name + "/")
                 info.type = tarfile.DIRTYPE
                 info.mode = 0o700 if bad_permissions and name == "Library/PreferenceBundles" else 0o755
                 tar.addfile(info)
@@ -59,12 +61,12 @@ class GitHubPagesPublicationTests(unittest.TestCase):
                 ("Library/PreferenceBundles/TrollVNCPrefs.bundle/Info.plist", 0o644),
             ):
                 payload = b"fixture"
-                info = tarfile.TarInfo("./" + name)
+                info = tarfile.TarInfo("./" + prefix + name)
                 info.size = len(payload)
                 info.mode = 0o700 if bad_permissions and name.endswith("/TrollVNCPrefs") else mode
                 tar.addfile(info, io.BytesIO(payload))
         (root / "data.tar.gz").write_bytes(data_archive.getvalue())
-        package = root / f"{source['Package']}_{version}_iphoneos-arm64e.deb"
+        package = root / f"{source['Package']}_{version}_{architecture}.deb"
         with package.open("wb") as stream:
             stream.write(b"!<arch>\n")
             for name in ("debian-binary", "control.tar.gz", "data.tar.gz"):
@@ -102,6 +104,24 @@ class GitHubPagesPublicationTests(unittest.TestCase):
             root = Path(temporary)
             package = self.make_deb(root, "82Flex <82flex@gmail.com>")
             with self.assertRaisesRegex(pages.PublicationError, "deb Author"):
+                pages.render(package, root / "site")
+
+    def test_rootless_repository_matches_architecture_and_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = self.make_deb(root, architecture="iphoneos-arm64")
+            output = root / "site"
+            pages.render(package, output)
+            self.assertIn("Architectures: iphoneos-arm64\n", (output / "Release").read_text())
+            self.assertIn("Dopamine rootless", (output / "index.html").read_text())
+            self.assertNotIn("RootHide", (output / "index.html").read_text())
+            pages.validate_site(output, package)
+
+    def test_rootless_package_rejects_unrelocated_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = self.make_deb(root, architecture="iphoneos-arm64", payload_prefix="")
+            with self.assertRaisesRegex(pages.PublicationError, "missing TrollVNC payload"):
                 pages.render(package, root / "site")
 
     def test_detects_tampered_published_package(self):

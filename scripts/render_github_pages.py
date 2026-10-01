@@ -72,6 +72,15 @@ def deb_control(package: Path) -> dict[str, str]:
     archive = subprocess.run(
         ("ar", "p", str(package), controls[0][1]), capture_output=True, check=True
     ).stdout
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:*") as tar:
+        controls_found = [entry for entry in tar.getmembers() if entry.name in ("control", "./control")]
+        if len(controls_found) != 1 or not controls_found[0].isfile():
+            raise PublicationError("deb control entry is missing or unsafe")
+        stream = tar.extractfile(controls_found[0])
+        if stream is None:
+            raise PublicationError("could not read deb control")
+        fields = fields_from_control(stream.read())
+    prefix = "var/jb/" if fields.get("Architecture") == "iphoneos-arm64" else ""
     payloads = [name.rstrip("/") for name in members if name.rstrip("/").startswith("data.tar.")]
     if len(payloads) != 1 or payloads[0] not in (
         "data.tar.gz", "data.tar.xz", "data.tar.lzma", "data.tar.bz2"
@@ -83,18 +92,19 @@ def deb_control(package: Path) -> dict[str, str]:
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as tar:
         entries = {entry.name.removeprefix("./").rstrip("/"): entry for entry in tar.getmembers()}
         files = {name for name, entry in entries.items() if entry.isfile()}
-        required = {
+        required = {prefix + name for name in {
             "usr/bin/trollvncserver",
             "Library/LaunchDaemons/com.82flex.trollvnc.plist",
             "Library/PreferenceBundles/TrollVNCPrefs.bundle/TrollVNCPrefs",
-        }
+        }}
         if not required.issubset(files):
             raise PublicationError("deb data archive is missing TrollVNC payload files")
         for name in ("Library", "Library/PreferenceBundles", "Library/PreferenceBundles/TrollVNCPrefs.bundle"):
+            name = prefix + name
             entry = entries.get(name)
             if entry is None or not entry.isdir() or entry.mode & 0o005 != 0o005:
                 raise PublicationError(f"deb preferences permissions prevent access to {name}")
-        bundle_prefix = "Library/PreferenceBundles/TrollVNCPrefs.bundle/"
+        bundle_prefix = prefix + "Library/PreferenceBundles/TrollVNCPrefs.bundle/"
         for name, entry in entries.items():
             if not name.startswith(bundle_prefix):
                 continue
@@ -102,17 +112,10 @@ def deb_control(package: Path) -> dict[str, str]:
                 raise PublicationError(f"deb preferences permissions prevent access to {name}")
             if entry.isfile() and entry.mode & 0o004 != 0o004:
                 raise PublicationError(f"deb preferences permissions prevent reading {name}")
-        for name in ("usr/bin/trollvncserver", bundle_prefix + "TrollVNCPrefs"):
+        for name in (prefix + "usr/bin/trollvncserver", bundle_prefix + "TrollVNCPrefs"):
             if entries[name].mode & 0o005 != 0o005:
                 raise PublicationError(f"deb executable permissions prevent running {name}")
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:*") as tar:
-        entries = [entry for entry in tar.getmembers() if entry.name in ("control", "./control")]
-        if len(entries) != 1 or not entries[0].isfile():
-            raise PublicationError("deb control entry is missing or unsafe")
-        stream = tar.extractfile(entries[0])
-        if stream is None:
-            raise PublicationError("could not read deb control")
-        return fields_from_control(stream.read())
+    return fields
 
 
 def expected_version() -> str:
@@ -126,11 +129,13 @@ def expected_version() -> str:
 def validate_package(package: Path) -> dict[str, str]:
     source = fields_from_control((ROOT / "layout/DEBIAN/control").read_bytes())
     fields = deb_control(package)
+    if fields.get("Architecture") not in ("iphoneos-arm64", "iphoneos-arm64e"):
+        raise PublicationError("deb Architecture must be rootless arm64 or RootHide arm64e")
     expected = {
         "Package": source.get("Package", ""),
         "Name": "TrollVNC",
         "Version": expected_version(),
-        "Architecture": "iphoneos-arm64e",
+        "Architecture": fields["Architecture"],
         "Author": "XenSpace",
         "Maintainer": "XenSpace",
     }
@@ -174,14 +179,16 @@ def control_stanza(fields: dict[str, str], package: Path) -> bytes:
 
 def release_file(output: Path) -> bytes:
     date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    architecture = fields_from_control((output / "Packages").read_bytes())["Architecture"]
+    target = "Dopamine rootless" if architecture == "iphoneos-arm64" else "Dopamine RootHide"
     lines = [
         "Origin: XenSpace",
         "Label: TrollVNC",
         "Suite: stable",
         "Codename: trollvnc",
-        "Architectures: iphoneos-arm64e",
+        f"Architectures: {architecture}",
         "Components: main",
-        "Description: TrollVNC for Dopamine RootHide",
+        f"Description: TrollVNC for {target}",
         f"Date: {date}",
         "Acquire-By-Hash: no",
     ]
@@ -204,6 +211,7 @@ def replace_tokens(template: str, tokens: dict[str, str], *, escape: bool) -> st
 def validate_site(output: Path, package: Path) -> None:
     packages = (output / "Packages").read_bytes()
     fields = fields_from_control(packages)
+    release_architecture = "Architectures: " + fields["Architecture"] + "\n"
     for name, value in {
         "Author": "XenSpace",
         "Maintainer": "XenSpace",
@@ -228,6 +236,8 @@ def validate_site(output: Path, package: Path) -> None:
     if lzma.decompress((output / "Packages.xz").read_bytes()) != packages:
         raise PublicationError("Packages.xz does not match Packages")
     release = (output / "Release").read_text(encoding="utf-8")
+    if release_architecture not in release:
+        raise PublicationError("Release architecture does not match the package")
     for section, algorithm in HASHES:
         if section + ":" not in release:
             raise PublicationError(f"Release is missing {section}")
@@ -276,6 +286,7 @@ def render(package: Path, output: Path) -> dict[str, str]:
         "PACKAGE_URL": SOURCE_URL + "/pool/" + package.name,
         "VERSION": fields["Version"],
         "ARCHITECTURE": fields["Architecture"],
+        "PACKAGE_TARGET": "Dopamine rootless" if fields["Architecture"] == "iphoneos-arm64" else "Dopamine RootHide",
         "PACKAGE_SIZE": f"{len(package_data) / 1024 / 1024:.2f} MB",
         "SHA256": digest(package_data, "sha256"),
     }

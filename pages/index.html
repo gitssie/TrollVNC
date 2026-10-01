@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101512">
-  <meta name="description" content="TrollVNC for Dopamine RootHide. View and control your iPhone over VNC.">
+  <meta name="description" content="TrollVNC for {{PACKAGE_TARGET}}. View and control your iPhone over VNC.">
   <title>TrollVNC — remote access for iPhone</title>
   <link rel="icon" href="icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -89,7 +89,7 @@
   <header class="topbar">
     <nav class="wrap" aria-label="Main navigation">
       <a class="brand" href="#top"><img src="icon.png" alt=""><span>TrollVNC</span></a>
-      <div class="toplinks"><span class="status">RootHide build</span><a href="#install">Install</a><a href="https://github.com/gitssie/TrollVNC">GitHub ↗</a></div>
+      <div class="toplinks"><span class="status">{{PACKAGE_TARGET}} build</span><a href="#install">Install</a><a href="https://github.com/gitssie/TrollVNC">GitHub ↗</a></div>
     </nav>
   </header>
   <main id="top">
@@ -97,7 +97,7 @@
       <div>
         <p class="eyebrow">Remote access / iPhone</p>
         <h1 id="hero-title">Your screen.<br><em>Anywhere.</em></h1>
-        <p class="lede">TrollVNC turns your iPhone into a VNC server. View, control, and connect from the tools you already use, with a dedicated build for Dopamine RootHide.</p>
+        <p class="lede">TrollVNC provides VNC viewing and ZXTouch automation on your iPhone. View, control, and connect from the tools you already use, over local Wi-Fi or shared WireGuard networking, packaged for {{PACKAGE_TARGET}}.</p>
         <div class="actions"><a class="button primary" href="{{SILEO_URL}}">Add to Sileo <span aria-hidden="true">↗</span></a><a class="button" href="#install">Installation guide <span aria-hidden="true">↓</span></a></div>
         <div class="hero-meta"><span>iOS 15+</span><span>{{ARCHITECTURE}}</span><span>Version {{VERSION}}</span></div>
       </div>
@@ -119,8 +119,8 @@
     </section>
     <section class="section" id="install">
       <div class="wrap install">
-        <div><p class="section-kicker">02 / Installation</p><h2>Ready for<br>RootHide.</h2><p class="section-note" style="margin-top:21px">This package is built for Dopamine RootHide on iOS 15 or later. Add the source in Sileo, refresh, and install TrollVNC.</p><div class="sourcebox"><label for="source-url">Sileo source URL</label><code id="source-url">{{SOURCE_URL}}</code></div><div class="download"><a class="button primary" href="{{SILEO_URL}}">Add source to Sileo ↗</a><a class="button" href="{{PACKAGE_URL}}">Download .deb ↓</a></div></div>
-        <div><div class="steps"><div class="step"><b>01</b><span>Open Sileo on your RootHide device.</span></div><div class="step"><b>02</b><span>Add this repository using the source URL or the button on this page.</span></div><div class="step"><b>03</b><span>Refresh sources, find TrollVNC, then install version {{VERSION}}.</span></div></div><p class="checksum">Package size: {{PACKAGE_SIZE}}<br>SHA-256: {{SHA256}}</p></div>
+        <div><p class="section-kicker">02 / Installation</p><h2>Ready for<br>{{PACKAGE_TARGET}}.</h2><p class="section-note" style="margin-top:21px">This package is built for {{PACKAGE_TARGET}} on iOS 15 or later. Add the source in Sileo, refresh, and install TrollVNC.</p><div class="sourcebox"><label for="source-url">Sileo source URL</label><code id="source-url">{{SOURCE_URL}}</code></div><div class="download"><a class="button primary" href="{{SILEO_URL}}">Add source to Sileo ↗</a><a class="button" href="{{PACKAGE_URL}}">Download .deb ↓</a></div></div>
+        <div><div class="steps"><div class="step"><b>01</b><span>Open Sileo on your {{PACKAGE_TARGET}} device.</span></div><div class="step"><b>02</b><span>Add this repository using the source URL or the button on this page.</span></div><div class="step"><b>03</b><span>Refresh sources, find TrollVNC, then install version {{VERSION}}.</span></div></div><p class="checksum">Package size: {{PACKAGE_SIZE}}<br>SHA-256: {{SHA256}}</p></div>
       </div>
     </section>
   </main>
