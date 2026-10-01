@@ -13,6 +13,7 @@ typedef void (^ZXTouchDisconnectHandler)(NSUInteger client);
 - (instancetype)initWithHandler:(ZXTouchCommandHandler)handler
                    disconnected:(ZXTouchDisconnectHandler)disconnected;
 - (BOOL)startOnHost:(NSString *)host port:(int)port error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)isClientConnected:(NSUInteger)client;
 - (void)stop;
 @end
 

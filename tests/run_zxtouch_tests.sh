@@ -15,3 +15,12 @@ xcrun clang++ -std=c++20 -fobjc-arc -framework Foundation \
     "$PROJECT_ROOT/vendor/zxtouch/src/ZXTouchTCPServer.mm" \
     "$PROJECT_ROOT/vendor/zxtouch/src/ZXTouchProtocol.cpp" -o "$TEST_DIR/transport-host"
 python3 "$PROJECT_ROOT/tests/ZXTouchTransportTests.py" "$TEST_DIR/transport-host"
+
+xcrun clang++ -std=c++20 -fobjc-arc -framework Foundation \
+    -I "$PROJECT_ROOT/vendor/zxtouch/include" \
+    "$PROJECT_ROOT/tests/ZXTouchRuntimeTests.mm" \
+    "$PROJECT_ROOT/vendor/zxtouch/src/ZXTouchProcessRunner.mm" \
+    "$PROJECT_ROOT/vendor/zxtouch/src/ZXTouchUIBridge.mm" -o "$TEST_DIR/runtime-tests"
+"$TEST_DIR/runtime-tests" "$PROJECT_ROOT/layout/usr/share/trollvnc/python"
+
+python3 "$PROJECT_ROOT/tests/ZXTouchClientTests.py"

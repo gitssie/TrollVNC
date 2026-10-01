@@ -12,4 +12,6 @@ Commands are a two-digit task ID followed immediately by the payload and CRLF.
 Payload fields use `;;`. Touch (10) has no response. Other commands respond
 with `0[;;fields]\r\n` or `-1;;message\r\n`. Screenshot (30) responds with
 `0;;image/jpeg;;length\r\n` followed by exactly `length` binary bytes.
-Recording and phone-side script playback are intentionally excluded.
+Touch recording and recorded-event playback are intentionally excluded. Python
+script execution and native UI adapters are implemented separately from the
+protocol/transport core. The Python interpreter is an external dependency.

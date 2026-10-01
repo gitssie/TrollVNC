@@ -1,4 +1,5 @@
 import socket
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -49,10 +50,33 @@ class TransportTests(unittest.TestCase):
     def test_excluded_commands_return_error(self):
         with self.connect() as connection:
             stream = connection.makefile("rb")
-            for task in (14, 15, 19, 20):
+            for task in (14, 15):
                 connection.sendall(f"{task}\r\n".encode())
                 self.assertTrue(stream.readline().startswith(b"-1;;"))
             stream.close()
+
+    def test_pipelined_disconnect_cancels_busy_handler(self):
+        connection = self.connect()
+        connection.sendall(b"97\r\n")
+        time.sleep(.05)  # Let the handler start before queuing another command.
+        connection.sendall(b"251\r\n")
+        connection.shutdown(socket.SHUT_WR)
+        with self.connect() as probe:
+            stream = probe.makefile("rb")
+            for _ in range(100):
+                probe.sendall(b"96\r\n")
+                if stream.readline() == b"0;;1\r\n":
+                    break
+                time.sleep(.01)
+            else:
+                self.fail("EOF remained hidden behind queued command bytes")
+            stream.close()
+        connection.close()
+
+    def test_bare_newline_text_is_preserved(self):
+        with self.connect() as connection:
+            connection.sendall(b"241;;line\nnext\r\n")
+            self.assertEqual(connection.recv(1024), b"0;;1;;line\nnext\r\n")
 
     def test_invalid_touch_closes_without_stray_response(self):
         with self.connect() as connection:

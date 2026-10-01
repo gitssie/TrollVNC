@@ -33,10 +33,15 @@ bool parse(std::string_view line, Command &command, std::string &error) {
     command = {};
     error = "Invalid ZXTouch command";
     if (line.size() < 2 || line.size() > maximumCommandBytes ||
-        line.find_first_of("\r\n\0", 0, 3) != std::string_view::npos ||
+        line.find("\r\n") != std::string_view::npos || line.find('\0') != std::string_view::npos ||
         line[0] < '0' || line[0] > '9' || line[1] < '0' || line[1] > '9') return false;
     command.task = (line[0] - '0') * 10 + line[1] - '0';
     command.payload = std::string(line.substr(2));
+    // Shell and script paths consume their complete payload, including ;;.
+    if (command.task == 13 || command.task == 19) {
+        command.fields = {command.payload};
+        return true;
+    }
     // Commands have at most twelve fields. Bound parsing allocations before
     // constructing the field vector for an untrusted network payload.
     std::size_t position = 0, fieldCount = 1;

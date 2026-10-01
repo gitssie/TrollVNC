@@ -28,6 +28,8 @@ trollvncserver_FILES += src/TVNCZXTouchService.mm
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchProtocol.cpp
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchImage.cpp
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchTCPServer.mm
+trollvncserver_FILES += vendor/zxtouch/src/ZXTouchProcessRunner.mm
+trollvncserver_FILES += vendor/zxtouch/src/ZXTouchUIBridge.mm
 trollvncserver_CFLAGS += -Ivendor/zxtouch/include
 trollvncserver_FILES += src/FileManagement.c
 trollvncserver_FILES += src/AppManagement.mm
@@ -129,6 +131,10 @@ endif
 endif
 
 include $(THEOS_MAKE_PATH)/tool.mk
+
+ifeq ($(THEBOOTSTRAP)$(THEOS_DEVICE_SIMULATOR),)
+SUBPROJECTS += zxtouch-adapter
+endif
 
 SUBPROJECTS += prefs/TrollVNCPrefs
 SUBPROJECTS += prefs/CCTrollVNC

@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/event.h>
 #include <unistd.h>
 #include <atomic>
 
@@ -12,6 +13,8 @@
     ZXTouchDisconnectHandler _disconnected;
     dispatch_source_t _acceptSource;
     NSMutableSet<NSNumber *> *_sockets;
+    NSMutableDictionary<NSNumber *, NSNumber *> *_clientSockets;
+    NSMutableDictionary<NSNumber *, NSNumber *> *_clientEvents;
     NSUInteger _nextClient;
     std::atomic<bool> _running;
     std::atomic<NSUInteger> _generation;
@@ -21,6 +24,8 @@
         _handler = [handler copy];
         _disconnected = [disconnected copy];
         _sockets = [NSMutableSet set];
+        _clientSockets = [NSMutableDictionary dictionary];
+        _clientEvents = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -40,6 +45,7 @@
         for (auto address = addresses; address; address = address->ai_next) {
             fd = socket(address->ai_family, SOCK_STREAM, 0);
             if (fd < 0) { savedError = errno; continue; }
+            fcntl(fd, F_SETFD, FD_CLOEXEC);
             int yes = 1, no = 0;
             setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
             setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
@@ -76,12 +82,23 @@
         }
         // Accepted sockets are blocking on Darwin; enforce it explicitly.
         fcntl(fd, F_SETFL, 0);
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
         int yes = 1;
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
         struct timeval timeout = {60, 0};
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
         NSUInteger client = ++_nextClient;
+        int monitor = kqueue();
+        struct kevent change;
+        EV_SET(&change, fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, nullptr);
+        if (monitor < 0 || kevent(monitor, &change, 1, nullptr, 0, nullptr) < 0) {
+            if (monitor >= 0) close(monitor);
+            @synchronized(_sockets) { [_sockets removeObject:@(fd)]; close(fd); }
+            continue;
+        }
+        fcntl(monitor, F_SETFD, FD_CLOEXEC);
+        @synchronized(_sockets) { _clientSockets[@(client)] = @(fd); _clientEvents[@(client)] = @(monitor); }
         NSUInteger generation = _generation;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [self serve:fd client:client generation:generation]; });
     }
@@ -130,8 +147,23 @@ static BOOL ZXWrite(int fd, NSData *data) {
     }
     _disconnected(client);
     @synchronized(_sockets) {
+        close([_clientEvents[@(client)] intValue]);
+        [_clientEvents removeObjectForKey:@(client)];
+        [_clientSockets removeObjectForKey:@(client)];
         [_sockets removeObject:@(fd)];
         close(fd);
+    }
+}
+- (BOOL)isClientConnected:(NSUInteger)client {
+    @synchronized(_sockets) {
+        NSNumber *socket = _clientSockets[@(client)];
+        if (!_running || !socket) return NO;
+        // EV_EOF sees a received FIN even with queued pipelined bytes. MSG_PEEK
+        // alone would keep long-running commands alive behind those bytes.
+        struct kevent event;
+        struct timespec timeout = {};
+        int result = kevent([_clientEvents[@(client)] intValue], nullptr, 0, &event, 1, &timeout);
+        return result == 0 || (result > 0 && !(event.flags & (EV_EOF | EV_ERROR))) || (result < 0 && errno == EINTR);
     }
 }
 - (void)stop {

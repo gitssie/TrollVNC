@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #import "TVNCZXTouchService.h"
 #import "ZXTouchTCPServer.h"
+#import "ZXTouchProcessRunner.h"
+#import "ZXTouchUIBridge.h"
+#include <dlfcn.h>
 #import "ZXTouchImage.hpp"
 #import "STHIDEventGenerator.h"
 #import "ScreenCapturer.h"
@@ -14,6 +17,7 @@
 #include <cmath>
 
 @interface NSObject (ZXTouchWorkspace)
++ (id)defaultCenter;
 + (id)defaultWorkspace;
 - (BOOL)openApplicationWithBundleID:(NSString *)identifier;
 @end
@@ -27,8 +31,8 @@ static NSString *ZXString(const std::string &value) {
     return text;
 }
 static NSString *ZXClean(NSString *text) {
-    return [[[text ?: @"" stringByReplacingOccurrencesOfString:@"\r" withString:@" "]
-        stringByReplacingOccurrencesOfString:@"\n" withString:@" "] stringByReplacingOccurrencesOfString:@";;" withString:@"; "];
+    return [[text ?: @"" stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"]
+        stringByReplacingOccurrencesOfString:@";;" withString:@"; "];
 }
 static NSData *ZXReply(NSString *fields) {
     return [[fields ? [NSString stringWithFormat:@"0;;%@\r\n", fields] : @"0\r\n" copy] dataUsingEncoding:NSUTF8StringEncoding];
@@ -80,6 +84,9 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 
 @implementation TVNCZXTouchService {
     ZXTouchTCPServer *_server;
+    ZXTouchProcessRunner *_processRunner;
+    ZXTouchUIBridge *_uiBridge;
+    BOOL _hasAppAdapter;
     FBSOrientationObserver *_observer;
     UIInterfaceOrientation _orientation; // main thread only
     NSMutableDictionary<NSNumber *, NSMutableDictionary<NSNumber *, NSDictionary *> *> *_clients;
@@ -103,6 +110,16 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         return NO;
     }
     _stopping = false;
+    NSString *executable = [NSProcessInfo.processInfo.arguments.firstObject stringByResolvingSymlinksInPath];
+    NSRange prefix = [executable rangeOfString:@"/usr/bin/" options:NSBackwardsSearch];
+    NSString *root = prefix.location == NSNotFound ? @"" : [executable substringToIndex:prefix.location];
+    NSString *modules = prefix.location == NSNotFound ? [executable.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"python"] :
+        [root stringByAppendingString:@"/usr/share/trollvnc/python"];
+    _processRunner = [[ZXTouchProcessRunner alloc] initWithRuntimeRoot:root modulePath:modules
+        logPath:@"/var/mobile/Library/Logs/TrollVNC/zxtouch-process.log"];
+    _hasAppAdapter = [NSFileManager.defaultManager fileExistsAtPath:[root stringByAppendingString:@"/Library/MobileSubstrate/DynamicLibraries/TVNCZXTouchAdapter.dylib"]];
+    _processRunner.environment = @{@"ZXTOUCH_PORT": @(port).stringValue};
+    _uiBridge = [[ZXTouchUIBridge alloc] initWithCenter:[NSClassFromString(@"NSDistributedNotificationCenter") defaultCenter]];
     _observer = [FBSOrientationObserver new];
     _orientation = _observer.activeInterfaceOrientation;
     __weak TVNCZXTouchService *weakSelf = self;
@@ -119,6 +136,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 }
 - (void)stop {
     _stopping = true;
+    [_uiBridge stop];
+    [_processRunner stop];
     [_server stop];
     [_observer invalidate];
     _observer = nil;
@@ -224,7 +243,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     if (task == 1 || task == 2 || task == 3 || task == 4 || task == 7) ZXRequire(f.size() == 2, @"Keyboard command requires one argument");
     else ZXRequire(f.size() == 1, @"Unexpected keyboard arguments");
     NSString *text = f.size() == 2 ? ZXString(f[1]) : @"";
-    if (task == 2) return ZXError(@"Keyboard visibility requires an app-side adapter");
+    if (task == 2) return ZXError(@"Use the foreground-app keyboard adapter");
     int count = task == 3 || task == 4 ? ZXInteger(f[1], task == 3 ? -256 : 0, 256) : 0;
     ZXRequire(task != 1 || text.length <= 256, @"Text is too long; send at most 256 characters per command");
     __block NSString *result = @"";
@@ -253,7 +272,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 }
 - (NSData *)deviceInfo:(const zxtouch::Command &)command {
     ZXRequire(command.fields.size() == 1, @"Invalid device-info arguments");
-    int task = ZXInteger(command.fields[0], 1, 31);
+    int task = ZXInteger(command.fields[0], 1, 32);
     __block NSString *result = nil;
     ZXMain(^{
         int q = ZXQuad(self->_orientation);
@@ -272,6 +291,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
             result = [NSString stringWithFormat:@"%ld;;%g", (long)device.batteryState, device.batteryLevel * 100];
         }
     });
+    if (command.payload == "32") result = [NSString stringWithFormat:@"%@;;%d;;0", ZXClean([self foreground]), [_processRunner isScriptRunning]];
     ZXRequire(result != nil, @"Unsupported device-info task");
     return ZXReply(result);
 }
@@ -379,7 +399,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     request.minimumTextHeight = f[3].empty() ? 1.0/32 : ZXNumber(f[3],0,1);
     if (!f[5].empty()) request.recognitionLanguages = [ZXString(f[5]) componentsSeparatedByString:@",,"];
     request.usesLanguageCorrection = ZXInteger(f[6],0,1);
-    ZXRequire(f[7].empty(), @"OCR debug-image output is not included");
+    NSString *debugPath = ZXString(f[7]);
+    ZXRequire(!debugPath.length || debugPath.isAbsolutePath, @"Debug image path must be absolute");
     CGImageRef crop = CGImageCreateWithImageInRect(image.CGImage, CGRectMake(x,y,w,h));
     ZXRequire(crop != NULL, @"Unable to crop OCR region");
     VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:crop options:@{}];
@@ -395,7 +416,40 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         [result addObject:[NSString stringWithFormat:@"%@,,%d,,%d,,%d,,%d", clean,
             (int)(x+box.origin.x*w), (int)(y+(1-CGRectGetMaxY(box))*h), (int)(box.size.width*w), (int)(box.size.height*h)]];
     }
+    if (debugPath.length) {
+        UIGraphicsBeginImageContextWithOptions(image.size, YES, 1);
+        [image drawAtPoint:CGPointZero];
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGContextSetRGBStrokeColor(context, 1, 0, 0, 1);
+        CGContextSetLineWidth(context, 2);
+        for (VNRecognizedTextObservation *observation in request.results) {
+            CGRect b = observation.boundingBox;
+            CGContextStrokeRect(context, CGRectMake(x+b.origin.x*w, y+(1-CGRectGetMaxY(b))*h, b.size.width*w, b.size.height*h));
+        }
+        UIImage *debug = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        NSData *data = [debugPath.pathExtension.lowercaseString isEqualToString:@"png"] ? UIImagePNGRepresentation(debug) : UIImageJPEGRepresentation(debug, .9);
+        if (![NSFileManager.defaultManager createDirectoryAtPath:debugPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:&error] ||
+            ![data writeToFile:debugPath options:NSDataWritingAtomic error:&error]) return ZXError(error.localizedDescription ?: @"Cannot write debug image");
+    }
     return ZXReply([result componentsJoinedByString:@";;"]);
+}
+- (NSString *)foreground {
+    typedef CFStringRef (*CopyForeground)(void);
+    static CopyForeground copyForeground;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        void *library = dlopen("/System/Library/PrivateFrameworks/SpringBoardServices.framework/SpringBoardServices", RTLD_LAZY);
+        if (library) copyForeground = (CopyForeground)dlsym(library, "SBSCopyFrontmostApplicationDisplayIdentifier");
+    });
+    return copyForeground ? (CFBridgingRelease(copyForeground()) ?: @"com.apple.springboard") : @"com.apple.springboard";
+}
+- (NSData *)ui:(const zxtouch::Command &)command client:(NSUInteger)client target:(NSString *)target {
+    NSMutableArray *fields = [NSMutableArray array];
+    for (auto &field : command.fields) [fields addObject:ZXString(field)];
+    NSDictionary *reply = [_uiBridge requestTask:command.task fields:fields target:target
+        timeout:command.task == 29 ? 120 : 5 cancelled:^BOOL { return self->_stopping || ![self->_server isClientConnected:client]; }];
+    return [reply[@"ok"] boolValue] ? ZXReply([reply[@"value"] length] ? ZXClean(reply[@"value"]) : nil) : ZXError(reply[@"error"]);
 }
 - (NSData *)execute:(const zxtouch::Command &)command client:(NSUInteger)client {
     if (_stopping) return command.task == 10 ? nil : ZXError(@"ZXTouch service is stopping");
@@ -418,13 +472,44 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
             case 18: {
                 ZXRequire(command.fields.size() == 1, @"Invalid sleep arguments");
                 int remaining = ZXInteger(command.payload, 0, 60000000);
-                while (remaining > 0 && !_stopping) { int chunk = std::min(remaining, 10000); usleep(chunk); remaining -= chunk; }
+                while (remaining > 0 && !_stopping && [_server isClientConnected:client]) { int chunk = std::min(remaining, 10000); usleep(chunk); remaining -= chunk; }
                 return ZXReply(@"Sleep ends");
             }
-            case 24: return [self keyboard:command];
+            case 12: case 22: case 26: case 29:
+                return [self ui:command client:client target:@"com.apple.springboard"];
+            case 13: {
+                NSError *error = nil;
+                BOOL ok = [_processRunner runShell:ZXString(command.payload) cancelled:^BOOL {
+                    return self->_stopping || ![self->_server isClientConnected:client];
+                } error:&error];
+                return ok ? ZXReply(nil) : ZXError(error.localizedDescription);
+            }
+            case 19: {
+                NSError *error = nil;
+                NSString *path = ZXString(command.payload);
+                NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@"info.plist"]];
+                NSDictionary *config = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/ZXTouch/config/tweak/config.plist"];
+                NSString *front = [info[@"FrontApp"] isKindOfClass:NSString.class] ? info[@"FrontApp"] : nil;
+                if (front.length && (!config[@"switch_app_before_run_script"] || [config[@"switch_app_before_run_script"] boolValue])) {
+                    ZXMain(^{ id workspace = [NSClassFromString(@"LSApplicationWorkspace") defaultWorkspace];
+                        if ([workspace respondsToSelector:@selector(openApplicationWithBundleID:)]) [workspace openApplicationWithBundleID:front]; });
+                }
+                BOOL ok = [_processRunner startScript:path error:&error];
+                return ok ? ZXReply(nil) : ZXError(error.localizedDescription);
+            }
+            case 20: {
+                ZXRequire(command.payload.empty(), @"Stop script takes no arguments");
+                NSError *error = nil;
+                return [_processRunner stopScript:&error] ? ZXReply(nil) : ZXError(error.localizedDescription);
+            }
+            case 90: return [self ui:command client:client target:@"com.apple.springboard"];
+            case 99: return ZXReply(@"TrollVNC ZXTouch");
+            case 24:
+                if (command.fields[0] == "2" || (_hasAppAdapter && ZXInteger(command.fields[0], 1, 7) <= 5)) return [self ui:command client:client target:[self foreground]];
+                return [self keyboard:command];
             case 25: return [self deviceInfo:command];
-            case 14: case 15: case 19: case 20:
-                return ZXError(@"Recording and phone-side script playback are not included");
+            case 14: case 15:
+                return ZXError(@"Touch recording is excluded");
             case 21: case 23: case 27: case 28: case 30: {
                 dispatch_semaphore_wait(_imageSlot, DISPATCH_TIME_FOREVER);
                 @try {
