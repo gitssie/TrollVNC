@@ -217,12 +217,13 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     applyItem.tintColor = _primaryColor;
 
     self.navigationItem.rightBarButtonItem = applyItem;
-    TVNCStyleSettingsTable(self.tableView);
+    UITableView *settingsTable = [self settingsTableView];
+    TVNCStyleSettingsTable(settingsTable);
     self.title = @"TrollVNC";
     UILabel *subtitle = TVNCSettingsLabel(UIFontTextStyleCaption1, UIColor.secondaryLabelColor);
     subtitle.text = @"Dopamine · rootless"; subtitle.textAlignment = NSTextAlignmentCenter;
-    subtitle.frame = CGRectMake(0, 0, self.tableView.bounds.size.width, 28);
-    self.tableView.tableHeaderView = subtitle;
+    subtitle.frame = CGRectMake(0, 0, settingsTable.bounds.size.width, 28);
+    settingsTable.tableHeaderView = subtitle;
 
     self.monitor = nw_path_monitor_create();
     nw_path_monitor_set_queue(self.monitor, dispatch_get_main_queue());
@@ -314,7 +315,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     }
 
     if (![self hasManagedConfiguration]) {
-        if (reload && self.isViewLoaded) [self.tableView reloadData];
+        if (reload && self.isViewLoaded) [[self settingsTableView] reloadData];
         return;
     }
     NSString *footerText = [NSString stringWithFormat:@"%@\n%@", [self defaultFooterText], [self currentStatusText]];
@@ -696,6 +697,19 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 #pragma mark - Dashboard
 
 - (UIViewController *)actionPresenter { return self.navigationController.topViewController ?: self; }
+// Preferences' table/tableView accessors vary between iOS versions. Resolve the
+// actual UIKit table from the loaded view instead of sending a private selector.
+- (UITableView *)settingsTableInView:(UIView *)view {
+    if ([view isKindOfClass:UITableView.class]) return (UITableView *)view;
+    for (UIView *child in view.subviews) {
+        UITableView *table = [self settingsTableInView:child];
+        if (table) return table;
+    }
+    return nil;
+}
+- (UITableView *)settingsTableView {
+    return self.isViewLoaded ? [self settingsTableInView:self.view] : nil;
+}
 - (UITableViewStyle)tableViewStyle { return UITableViewStyleInsetGrouped; }
 - (NSArray<NSArray<NSString *> *> *)dashboardCategories {
     return @[
