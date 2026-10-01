@@ -52,6 +52,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Fresh native portrait image, independent of the VNC frame handler, scaling,
 // dirty-frame detection and orientation offset. Call on the main thread.
+// Pixel dimensions used by both the native image and ZXTouch coordinates.
++ (CGSize)nativeScreenSize;
 + (nullable CGImageRef)copyNativeScreenImage CF_RETURNS_RETAINED;
 
 + (instancetype)new NS_UNAVAILABLE;

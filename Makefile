@@ -68,7 +68,8 @@ trollvncserver_LDFLAGS += -FPrivateFrameworks
 else
 trollvncserver_CFLAGS += -Iinclude
 trollvncserver_LDFLAGS += -Llib -Lwgbridge/build
-trollvncserver_LIBRARIES += tvncwg
+# Keep the archive in link prerequisites so bridge changes relink the server.
+trollvncserver_OBJ_FILES += wgbridge/build/libtvncwg.a
 endif
 
 ifeq ($(THEOS_DEVICE_SIMULATOR),1)

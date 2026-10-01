@@ -21,6 +21,10 @@ xcrun clang++ -std=c++20 -fobjc-arc -framework Foundation \
     "$PROJECT_ROOT/tests/ZXTouchRuntimeTests.mm" \
     "$PROJECT_ROOT/vendor/zxtouch/src/ZXTouchProcessRunner.mm" \
     "$PROJECT_ROOT/vendor/zxtouch/src/ZXTouchUIBridge.mm" -o "$TEST_DIR/runtime-tests"
-"$TEST_DIR/runtime-tests" "$PROJECT_ROOT/layout/usr/share/trollvnc/python"
+python3 - "$TEST_DIR/runtime-tests" "$PROJECT_ROOT/layout/usr/share/trollvnc/python" <<'PY_RUNTIME'
+import subprocess, sys
+# A PATH launch or exec caller can supply argv[0] independently of the binary.
+subprocess.run(['spoofed-server-name', sys.argv[2]], executable=sys.argv[1], check=True)
+PY_RUNTIME
 
 python3 "$PROJECT_ROOT/tests/ZXTouchClientTests.py"

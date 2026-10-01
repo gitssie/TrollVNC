@@ -8,6 +8,7 @@
 #include <vector>
 #include <cstring>
 #include <cmath>
+#include <mach-o/dyld.h>
 
 @interface ZXProcess : NSObject
 @property pid_t pid;
@@ -29,6 +30,23 @@ static BOOL ZXProcessError(NSError **error, NSString *message, int code = EINVAL
     NSMutableSet<ZXProcess *> *_processes;
     ZXProcess *_script;
     BOOL _stopped;
+}
+// argv[0] may be only "trollvncserver", or an arbitrary caller-provided name.
+// dyld identifies the executable independently of the launcher's argv.
++ (NSDictionary<NSString *, NSString *> *)runtimePaths {
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> buffer(size);
+    NSString *executable = _NSGetExecutablePath(buffer.data(), &size) == 0 ?
+        [NSFileManager.defaultManager stringWithFileSystemRepresentation:buffer.data() length:strlen(buffer.data())] : nil;
+    if (!executable.length) executable = NSBundle.mainBundle.executablePath;
+    if (!executable.isAbsolutePath) executable = [NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:executable ?: @""];
+    executable = executable.stringByResolvingSymlinksInPath;
+    NSRange prefix = [executable rangeOfString:@"/usr/bin/" options:NSBackwardsSearch];
+    NSString *root = prefix.location == NSNotFound ? @"" : [executable substringToIndex:prefix.location];
+    NSString *modules = prefix.location == NSNotFound ? [executable.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"python"] :
+        [root stringByAppendingString:@"/usr/share/trollvnc/python"];
+    return @{@"executable":executable, @"root":root, @"modules":modules};
 }
 - (instancetype)initWithRuntimeRoot:(NSString *)root modulePath:(NSString *)modulePath logPath:(NSString *)logPath {
     if ((self = [super init])) {
@@ -112,8 +130,17 @@ static BOOL ZXProcessError(NSError **error, NSString *message, int code = EINVAL
                 // PID is still owned until waitpid reaps it under this lock.
                 kill(-process.pid, SIGKILL);
             }
-            result = waitpid(process.pid, &status, WNOHANG);
-            if (result < 0) failure = errno;
+            // Keep the exited leader unreaped as a PID/group ownership anchor
+            // until remaining descendants are killed. Reaping first would both
+            // lose those descendants and permit this group ID to be reused.
+            siginfo_t info = {};
+            int observed = waitid(P_PID, process.pid, &info, WEXITED | WNOHANG | WNOWAIT);
+            if (observed < 0) { result = -1; failure = errno; }
+            else if (info.si_pid == process.pid) {
+                kill(-process.pid, SIGKILL);
+                result = waitpid(process.pid, &status, WNOHANG);
+                if (result < 0) failure = errno;
+            } else result = 0;
             if (result == process.pid || (result < 0 && failure != EINTR)) {
                 [_processes removeObject:process];
                 if (_script == process) _script = nil;

@@ -70,9 +70,15 @@ void CARenderServerRenderDisplay(kern_return_t a, CFStringRef b, IOSurfaceRef su
     return _inst;
 }
 
++ (CGSize)nativeScreenSize {
+    NSAssert(NSThread.isMainThread, @"Query native screen dimensions on main thread");
+    CGSize size = [UIScreen.mainScreen _unjailedReferenceBoundsInPixels].size;
+    return CGSizeMake(round(MIN(size.width, size.height)), round(MAX(size.width, size.height)));
+}
+
 + (CGImageRef)copyNativeScreenImage {
     NSAssert(NSThread.isMainThread, @"Capture ZXTouch images on main thread");
-    CGSize size = [UIScreen.mainScreen _unjailedReferenceBoundsInPixels].size;
+    CGSize size = [self nativeScreenSize];
     size_t width = (size_t)round(size.width), height = (size_t)round(size.height);
     if (!width || !height || width > 16384 || height > 16384) return NULL;
     size_t stride = IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, width * 4);

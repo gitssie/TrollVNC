@@ -41,7 +41,9 @@ WG forwards only enabled service ports to local loopback. A listener bound to a
 specific Wi-Fi address remains available on Wi-Fi but is skipped for WG; use a
 wildcard or loopback listener to support WG. VNC reverse connection can coexist
 with a ZXTouch-only WG route. The bridge does not create an iOS system VPN or
-route unrelated script traffic through WG.
+route unrelated script traffic through WG. On shutdown local sockets close
+immediately; WG stays alive for a bounded 250 ms window to transmit queued TCP
+close packets. An offline peer may still need its own TCP timeout.
 
 The integrated service must own its port; stop a standalone ZXTouch listener
 on 6000 before enabling this one. Port conflicts with VNC, HTTP and control
@@ -93,7 +95,9 @@ device.disconnect()
 | 30 | Fresh JPEG screenshot with binary length framing |
 
 Coordinates refer to full-resolution pixels in the current interface
-orientation, independent of VNC scaling and orientation offsets. A client's
+orientation, independent of VNC scaling and orientation offsets. Capture, touch
+normalization and screen-size replies share the render surface dimensions rather
+than mixing them with potentially different physical `nativeBounds`. A client's
 unchanged fingers are carried as stationary events; disconnect and service
 stop cancel its active fingers. Invalid touch packets close the connection;
 invalid phase transitions release that client's fingers without adding a
@@ -138,7 +142,10 @@ Shell commands and scripts inherit TrollVNC's `mobile` privileges. stdout/stderr
 append to `/var/mobile/Library/Logs/TrollVNC/zxtouch-process.log`; nonzero shell
 exit returns an error. Disconnect cancels a synchronous shell request; script
 execution is independent of the requesting connection and stops via task 20 or
-service shutdown, which kills the owned process group.
+service shutdown, which kills the owned process group. When the top-level
+command exits, remaining children in that group are terminated before its PID
+is reaped. Cleanup covers descendants that remain in the owned process group;
+a process that deliberately starts a new session/group is outside that group.
 
 Jailbreak packages include `TVNCZXTouchAdapter`, loaded into SpringBoard and
 UIKit applications. This module owns no TCP listener. Correlated distributed

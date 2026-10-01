@@ -49,6 +49,9 @@ type serviceRoute struct {
 	LocalPort int `json:"LocalPort"`
 }
 
+// Bounded best-effort drain for TCP close packets queued by netstack.
+const shutdownGrace = 250 * time.Millisecond
+
 type bridge struct {
 	listeners   []net.Listener
 	device      *device.Device
@@ -261,6 +264,11 @@ func (b *bridge) close() {
 	for _, listener := range b.listeners {
 		listener.Close()
 	}
+	// Keep the tunnel alive while netstack queues TCP FIN/RST and WireGuard
+	// encrypts/sends them, including packets from recently forgotten streams
+	// and pending listener accepts. Immediate device.Close drops these packets.
+	// UDP delivery remains best effort, not an acknowledgment guarantee.
+	time.Sleep(shutdownGrace)
 	b.device.Close()
 }
 

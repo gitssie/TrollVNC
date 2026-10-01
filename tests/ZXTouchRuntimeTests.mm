@@ -25,6 +25,8 @@ static void Check(BOOL ok, NSString *message) {
 @end
 
 int main(int argc, const char *argv[]) { @autoreleasepool {
+    NSDictionary *runtimePaths = [ZXTouchProcessRunner runtimePaths];
+    Check([runtimePaths[@"executable"] isAbsolutePath] && [[runtimePaths[@"executable"] lastPathComponent] isEqual:@"runtime-tests"], @"Runtime path followed spoofed argv[0]");
     NSString *root = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     NSString *bin = [root stringByAppendingPathComponent:@"usr/bin"];
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -35,6 +37,12 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     Check([runner runShell:@"printf '%s' \"literal ' spaces\"" cancelled:^BOOL { return NO; } error:&error], error.description);
     Check([[NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:@"output.log"] encoding:NSUTF8StringEncoding error:nil] isEqual:@"literal ' spaces"], @"Shell quoting changed");
     Check(![runner runShell:@"exit 7" cancelled:^BOOL { return NO; } error:&error], @"Nonzero exit succeeded");
+    NSString *orphanMarker = [root stringByAppendingPathComponent:@"orphan-survived"];
+    // A shell that exits immediately must not strand a child after untracking.
+    NSString *background = [NSString stringWithFormat:@"(sleep .3; touch '%@') &", orphanMarker];
+    Check([runner runShell:background cancelled:^BOOL { return NO; } error:&error], error.description);
+    usleep(500000);
+    Check(![fm fileExistsAtPath:orphanMarker], @"Background descendant survived command completion");
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
     Check(![runner runShell:@"sleep 30 & wait" cancelled:^BOOL { return CFAbsoluteTimeGetCurrent() - start > .1; } error:&error], @"Cancellation succeeded");
     Check(CFAbsoluteTimeGetCurrent() - start < 2, @"Process cancellation was not prompt");

@@ -110,11 +110,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         return NO;
     }
     _stopping = false;
-    NSString *executable = [NSProcessInfo.processInfo.arguments.firstObject stringByResolvingSymlinksInPath];
-    NSRange prefix = [executable rangeOfString:@"/usr/bin/" options:NSBackwardsSearch];
-    NSString *root = prefix.location == NSNotFound ? @"" : [executable substringToIndex:prefix.location];
-    NSString *modules = prefix.location == NSNotFound ? [executable.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"python"] :
-        [root stringByAppendingString:@"/usr/share/trollvnc/python"];
+    NSDictionary *paths = [ZXTouchProcessRunner runtimePaths];
+    NSString *root = paths[@"root"], *modules = paths[@"modules"];
     _processRunner = [[ZXTouchProcessRunner alloc] initWithRuntimeRoot:root modulePath:modules
         logPath:@"/var/mobile/Library/Logs/TrollVNC/zxtouch-process.log"];
     _hasAppAdapter = [NSFileManager.defaultManager fileExistsAtPath:[root stringByAppendingString:@"/Library/MobileSubstrate/DynamicLibraries/TVNCZXTouchAdapter.dylib"]];
@@ -165,8 +162,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 - (void)touch:(const zxtouch::Command &)command client:(NSUInteger)client {
     ZXMain(^{
         if (self->_stopping) return;
-        CGSize native = [UIScreen.mainScreen nativeBounds].size;
-        // nativeBounds may reflect orientation on some runtimes; use portrait axes.
+        CGSize native = [ScreenCapturer nativeScreenSize];
+        // Use the same pixel dimensions as capture, including display zoom.
         double width = MIN(native.width, native.height), height = MAX(native.width, native.height);
         int q = ZXQuad(self->_orientation);
         double orientedWidth = q % 2 ? height : width, orientedHeight = q % 2 ? width : height;
@@ -276,7 +273,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     __block NSString *result = nil;
     ZXMain(^{
         int q = ZXQuad(self->_orientation);
-        CGSize size = UIScreen.mainScreen.nativeBounds.size;
+        CGSize size = [ScreenCapturer nativeScreenSize];
         double width = MIN(size.width, size.height), height = MAX(size.width, size.height);
         UIDevice *device = UIDevice.currentDevice;
         if (task == 1) result = [NSString stringWithFormat:@"%.0f;;%.0f", q % 2 ? height : width, q % 2 ? width : height];
