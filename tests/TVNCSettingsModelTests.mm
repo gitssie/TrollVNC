@@ -39,7 +39,9 @@ int main(int argc, char **argv) {
             }
         }
         [groupSizes addObject:@(groupSize)];
-        assert(([groupSizes isEqual:@[@1, @7, @2]] && actions.count == 8));
+        assert(([groupSizes isEqual:@[@7, @2]] && actions.count == 8));
+        assert(![dashboardItems.firstObject objectForKey:@"footerText"]);
+        assert(![dashboardItems[8] objectForKey:@"footerText"]);
         NSString *suite = [@"com.82flex.trollvnc.settings-tests." stringByAppendingString:NSUUID.UUID.UUIDString];
         NSUserDefaults *preferences = [[NSUserDefaults alloc] initWithSuiteName:suite];
         [preferences setObject:@"secret-value" forKey:@"FullPassword"];

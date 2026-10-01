@@ -16,7 +16,6 @@
 */
 
 #import <Foundation/Foundation.h>
-#import <Network/Network.h>
 #import <Preferences/PSSpecifier.h>
 #import <Preferences/PSTableCell.h>
 #import <SystemConfiguration/SystemConfiguration.h>
@@ -25,7 +24,6 @@
 #import <dlfcn.h>
 #import <ifaddrs.h>
 #import <net/if.h>
-#import <notify.h>
 #import <signal.h>
 #import <stdlib.h>
 #import <string.h>
@@ -80,8 +78,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 
 @interface TVNCRootListController ()
 
-@property(nonatomic, strong) nw_path_monitor_t monitor;
-
 @property(nonatomic, strong) UINotificationFeedbackGenerator *notificationGenerator;
 @property(nonatomic, strong) UIColor *primaryColor;
 @property(nonatomic, copy) NSString *jbrootPath;
@@ -100,9 +96,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 
 @end
 
-@implementation TVNCRootListController {
-    int _notifyToken;
-}
+@implementation TVNCRootListController
 
 #ifdef THEBOOTSTRAP
 @synthesize bundle = _bundle;
@@ -192,12 +186,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 
 - (void)dealloc {
     [_statusTimer invalidate];
-    if (_monitor) {
-        nw_path_monitor_cancel(_monitor);
-    }
-    if (_notifyToken) {
-        notify_cancel(_notifyToken);
-    }
 }
 
 // Add Apply button in nav bar
@@ -236,22 +224,11 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     TVNCStyleSettingsTable(settingsTable);
     self.title = @"TrollVNC";
 
-    self.monitor = nw_path_monitor_create();
-    nw_path_monitor_set_queue(self.monitor, dispatch_get_main_queue());
-
-    __weak typeof(self) weakSelf = self;
-    nw_path_monitor_set_update_handler(self.monitor, ^(nw_path_t _Nonnull path) {
-        [weakSelf updateFirstGroupAndReload:YES];
-    });
-    nw_path_monitor_start(self.monitor);
-
-    notify_register_dispatch(TVNC_NOTIFY_PREFS_CHANGED, &_notifyToken, dispatch_get_main_queue(), ^(int token) {
-        [weakSelf refreshServiceStatus];
-    });
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    if (![self hasManagedConfiguration]) return;
 
     [self refreshServiceStatus];
     [_statusTimer invalidate];
@@ -329,7 +306,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     }
 
     if (![self hasManagedConfiguration]) {
-        if (reload && self.isViewLoaded) [[self settingsTableView] reloadData];
         return;
     }
     NSString *footerText = [NSString stringWithFormat:@"%@\n%@", [self defaultFooterText], [self currentStatusText]];
@@ -397,7 +373,8 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     NSString *message = NSLocalizedStringFromTableInBundle(@"Restart TrollVNC to apply changes to both VNC and ZXTouch?",
                                                            @"Localizable", self.bundle, nil);
 
-    NSString *fullMessage = [NSString stringWithFormat:@"%@\n%@", message, [self currentStatusText]];
+    NSString *fullMessage = [self hasManagedConfiguration] ?
+        [NSString stringWithFormat:@"%@\n%@", message, [self currentStatusText]] : message;
     NSString *cancel = NSLocalizedStringFromTableInBundle(@"Cancel", @"Localizable", self.bundle, nil);
     NSString *restart = NSLocalizedStringFromTableInBundle(@"Restart", @"Localizable", self.bundle, nil);
 
@@ -751,18 +728,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     if (indexPath.section == 0) {
         [cell.rowStack removeArrangedSubview:cell.valueLabel];
         [cell.valueLabel removeFromSuperview];
-        [cell addLeadingSymbol:self.serviceStatus ? @"circle.fill" : @"circle.dotted"];
-        UIImageView *dot = (UIImageView *)cell.rowStack.arrangedSubviews.firstObject;
-        dot.image = [UIImage systemImageNamed:self.serviceStatus ? @"circle.fill" : @"circle.dotted" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12]];
-        dot.contentMode = UIViewContentModeCenter;
-        dot.tintColor = self.serviceStatus ? TVNCAccentColor() : UIColor.secondaryLabelColor;
-        cell.nameLabel.text = [self uiText:self.serviceStatus ? @"Service running" :
-            (self.statusReadCompleted ? @"Service status unavailable" : @"Loading service status…")];
-        cell.nameLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-        cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    } else if (indexPath.section == 1) {
-        [cell.rowStack removeArrangedSubview:cell.valueLabel];
-        [cell.valueLabel removeFromSuperview];
         NSArray *category = self.dashboardCategories[indexPath.row];
         [cell addLeadingSymbol:category[3]];
         UILabel *subtitle = TVNCSettingsLabel(UIFontTextStyleCaption1, UIColor.secondaryLabelColor);
@@ -778,8 +743,8 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
         cell.accessibilityIdentifier = [@"category." stringByAppendingString:category[0]];
     } else if (indexPath.row == 0) {
         cell.nameLabel.text = [self uiText:@"Connected clients"];
-        id count = self.serviceStatus[@"ClientCount"];
-        cell.valueLabel.text = [count isKindOfClass:NSNumber.class] ? [count stringValue] : @"—";
+        [cell.rowStack removeArrangedSubview:cell.valueLabel];
+        [cell.valueLabel removeFromSuperview];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     } else {
         [cell.rowStack removeArrangedSubview:cell.nameLabel]; [cell.nameLabel removeFromSuperview];

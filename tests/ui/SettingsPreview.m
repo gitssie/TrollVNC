@@ -10,8 +10,6 @@ static NSDictionary *FixtureStatus(void) {
         @"WireGuardStarted": @YES, @"WireGuardAddress": @"10.99.0.2", @"WireGuardError": @"", @"BindHost": @"", @"ClientCount": @2};
 }
 @interface TVNCRootListController (PreviewHooks)
-- (void)updateFirstGroupAndReload:(BOOL)reload;
-- (void)refreshServiceStatus;
 - (void)openNetworkSettings;
 @end
 @interface TVNCNetworkController (PreviewHooks)
@@ -32,10 +30,6 @@ static NSDictionary *FixtureStatus(void) {
 @implementation TVNCPreviewRoot
 - (NSBundle *)bundle { return self.previewBundle; }
 - (void)setBundle:(NSBundle *)bundle { self.previewBundle = bundle; }
-- (void)refreshServiceStatus {
-    [self setValue:FixtureStatus() forKey:@"serviceStatus"];
-    [self updateFirstGroupAndReload:YES];
-}
 - (void)openNetworkSettings {
     TVNCPreviewNetwork *page = [TVNCPreviewNetwork new]; page.localizationBundle = self.bundle;
     [self.navigationController pushViewController:page animated:NO];
@@ -68,7 +62,7 @@ static NSDictionary *FixtureStatus(void) {
         NSUInteger index = [pages indexOfObject:[page isEqualToString:@"wireguard"] ? @"network" : page];
         if (index != NSNotFound) {
             UITableView *table = (UITableView *)root.view;
-            [root tableView:table didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:index inSection:1]];
+            [root tableView:table didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:index inSection:0]];
             if ([page isEqualToString:@"wireguard"]) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                     TVNCNetworkController *network = (TVNCNetworkController *)navigation.topViewController;

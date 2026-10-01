@@ -7,16 +7,28 @@
 #import "TVNCUtil.h"
 #import "TVNCWireGuardConfig.h"
 
+// Keep the last successful snapshot while Settings recreates this page or a poll fails.
+static NSDictionary *sLastNetworkStatus;
+static NSArray<NSString *> *sLastLocalAddresses;
+
 @interface TVNCNetworkController ()
 @property(nonatomic, strong) NSDictionary *status;
 @property(nonatomic, strong) NSArray<NSString *> *localAddresses;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, assign) BOOL fetching;
 @property(nonatomic, assign) BOOL statusReadCompleted;
-@property(nonatomic, assign) NSUInteger statusPollFailures;
 @end
 @implementation TVNCNetworkController
-- (instancetype)init { self = [super init]; if (self) self.categoryIdentifier = @"network"; return self; }
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        self.categoryIdentifier = @"network";
+        self.status = sLastNetworkStatus;
+        self.localAddresses = sLastLocalAddresses ?: @[];
+        self.statusReadCompleted = self.status != nil;
+    }
+    return self;
+}
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = [self text:@"Network settings"];
     TVNCStyleSettingsTable(self.tableView);
@@ -26,7 +38,7 @@
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated]; [self refreshStatus];
     [self.timer invalidate]; __weak typeof(self) weakSelf = self;
-    self.timer = [NSTimer scheduledTimerWithTimeInterval:3 repeats:YES block:^(NSTimer *timer) { [weakSelf refreshStatus]; }];
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:10 repeats:YES block:^(NSTimer *timer) { [weakSelf refreshStatus]; }];
 }
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated]; [self.timer invalidate]; self.timer = nil;
@@ -42,14 +54,34 @@
             typeof(self) strongSelf = weakSelf; if (!strongSelf) return;
             strongSelf.fetching = NO;
             BOOL wasCompleted = strongSelf.statusReadCompleted;
-            NSDictionary *next = TVNCStatusAfterPoll(strongSelf.status, status, &strongSelf->_statusPollFailures);
-            strongSelf.statusReadCompleted = wasCompleted || next != nil || strongSelf.statusPollFailures >= 3;
-            NSArray *nextAddresses = status ? addresses : (next ? strongSelf.localAddresses : @[]);
-            BOOL changed = !(strongSelf.status == next || [strongSelf.status isEqual:next]) ||
-                ![strongSelf.localAddresses isEqualToArray:nextAddresses] || wasCompleted != strongSelf.statusReadCompleted;
-            strongSelf.status = next; strongSelf.localAddresses = nextAddresses;
             [strongSelf.refreshControl endRefreshing];
-            if (changed) [strongSelf.tableView reloadData];
+            if (!status) {
+                // A failed control request must not erase working connection addresses.
+                if (!wasCompleted) {
+                    strongSelf.statusReadCompleted = YES;
+                    [strongSelf.tableView reloadSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(1, 2)]
+                        withRowAnimation:UITableViewRowAnimationNone];
+                }
+                return;
+            }
+            NSDictionary *previous = strongSelf.status;
+            BOOL localChanged = ![strongSelf.localAddresses isEqualToArray:addresses] ||
+                !(previous[@"VNCPort"] == status[@"VNCPort"] || [previous[@"VNCPort"] isEqual:status[@"VNCPort"]]) ||
+                !(previous[@"ZXTouchPort"] == status[@"ZXTouchPort"] || [previous[@"ZXTouchPort"] isEqual:status[@"ZXTouchPort"]]);
+            BOOL wireGuardChanged = !wasCompleted;
+            for (NSString *key in @[@"WireGuardStarted", @"WireGuardEnabled", @"WireGuardConfigured",
+                                    @"WireGuardAddress", @"WireGuardError", @"VNCPort", @"ZXTouchPort"]) {
+                if (!(previous[key] == status[key] || [previous[key] isEqual:status[key]])) wireGuardChanged = YES;
+            }
+            strongSelf.status = status;
+            strongSelf.localAddresses = addresses;
+            strongSelf.statusReadCompleted = YES;
+            sLastNetworkStatus = status;
+            sLastLocalAddresses = addresses;
+            NSMutableIndexSet *sections = [NSMutableIndexSet indexSet];
+            if (localChanged) [sections addIndex:1];
+            if (wireGuardChanged) [sections addIndex:2];
+            if (sections.count) [strongSelf.tableView reloadSections:sections withRowAnimation:UITableViewRowAnimationNone];
         });
     });
 }
