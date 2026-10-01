@@ -57,6 +57,10 @@
 		FB000000000000000000011 /* TVNCWireGuardController.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000001 /* TVNCWireGuardController.m */; };
 		FB000000000000000000020 /* TVNCWireGuardConfig.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000002 /* TVNCWireGuardConfig.m */; };
 		FB000000000000000000021 /* TVNCWireGuardConfig.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000002 /* TVNCWireGuardConfig.m */; };
+		FB000000000000000000030 /* TVNCSettingsPageController.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000003 /* TVNCSettingsPageController.m */; };
+		FB000000000000000000031 /* TVNCSettingsPageController.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000003 /* TVNCSettingsPageController.m */; };
+		FB000000000000000000040 /* TVNCSettingsModel.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000004 /* TVNCSettingsModel.m */; };
+		FB000000000000000000041 /* TVNCSettingsModel.m in Sources */ = {isa = PBXBuildFile; fileRef = FA0000000000000000000004 /* TVNCSettingsModel.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -110,6 +114,8 @@
 		FA0000000000000000000000 /* TVNCNetworkController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "TVNCNetworkController.m"; sourceTree = "<group>"; };
 		FA0000000000000000000001 /* TVNCWireGuardController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "TVNCWireGuardController.m"; sourceTree = "<group>"; };
 		FA0000000000000000000002 /* TVNCWireGuardConfig.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "../../../src/TVNCWireGuardConfig.m"; sourceTree = "<group>"; };
+		FA0000000000000000000003 /* TVNCSettingsPageController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "TVNCSettingsPageController.m"; sourceTree = "<group>"; };
+		FA0000000000000000000004 /* TVNCSettingsModel.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "TVNCSettingsModel.m"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -213,6 +219,8 @@
 				CC91EF962E6EF165002F5B2A /* TVNCListItemsController.m */,
 				61C756B12E65BDAC00B2B371 /* TVNCRootListController.h */,
 				61C756B22E65BDAC00B2B371 /* TVNCRootListController.m */,
+				FA0000000000000000000004 /* TVNCSettingsModel.m */,
+				FA0000000000000000000003 /* TVNCSettingsPageController.m */,
 				FA0000000000000000000002 /* TVNCWireGuardConfig.m */,
 				FA0000000000000000000001 /* TVNCWireGuardController.m */,
 				FA0000000000000000000000 /* TVNCNetworkController.m */,
@@ -386,6 +394,8 @@
 				61C756C42E65BDAC00B2B371 /* TVNCHotspotManager.m in Sources */,
 				CC17D9BB2EC79DA1005C275A /* ZTSelfSignedCertificate.m in Sources */,
 				61C756C52E65BDAC00B2B371 /* TVNCRootListController.m in Sources */,
+				FB000000000000000000040 /* TVNCSettingsModel.m in Sources */,
+				FB000000000000000000030 /* TVNCSettingsPageController.m in Sources */,
 				FB000000000000000000020 /* TVNCWireGuardConfig.m in Sources */,
 				FB000000000000000000010 /* TVNCWireGuardController.m in Sources */,
 				FB000000000000000000000 /* TVNCNetworkController.m in Sources */,
@@ -412,6 +422,8 @@
 				615401B82EB1180C009FDD6F /* TVNCHotspotManager.m in Sources */,
 				CC17D9BA2EC79DA1005C275A /* ZTSelfSignedCertificate.m in Sources */,
 				615401B92EB1180C009FDD6F /* TVNCRootListController.m in Sources */,
+				FB000000000000000000041 /* TVNCSettingsModel.m in Sources */,
+				FB000000000000000000031 /* TVNCSettingsPageController.m in Sources */,
 				FB000000000000000000021 /* TVNCWireGuardConfig.m in Sources */,
 				FB000000000000000000011 /* TVNCWireGuardController.m in Sources */,
 				FB000000000000000000001 /* TVNCNetworkController.m in Sources */,

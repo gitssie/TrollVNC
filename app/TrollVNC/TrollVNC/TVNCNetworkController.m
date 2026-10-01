@@ -2,6 +2,9 @@
 #import "TVNCNetworkController.h"
 #import "TVNCServiceStatus.h"
 #import "TVNCWireGuardController.h"
+#import "TVNCSettingsAppearance.h"
+#import "TVNCSettingsModel.h"
+#import "TVNCUtil.h"
 
 @interface TVNCNetworkController ()
 @property(nonatomic, strong) NSDictionary *status;
@@ -10,14 +13,10 @@
 @property(nonatomic, assign) BOOL fetching;
 @end
 @implementation TVNCNetworkController
-- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
-- (NSString *)text:(NSString *)key {
-    return NSLocalizedStringFromTableInBundle(key, @"Localizable", self.localizationBundle ?: [NSBundle bundleForClass:self.class], nil);
-}
+- (instancetype)init { self = [super init]; if (self) self.categoryIdentifier = @"network"; return self; }
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = [self text:@"Network settings"];
-    self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 52;
+    TVNCStyleSettingsTable(self.tableView);
     self.refreshControl = [UIRefreshControl new];
     [self.refreshControl addTarget:self action:@selector(refreshStatus) forControlEvents:UIControlEventValueChanged];
 }
@@ -45,62 +44,63 @@
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 3; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section == 0) return 3;
+    if (section == 0) return [super tableView:tableView numberOfRowsInSection:section];
     if (section == 1) return MAX(1, self.localAddresses.count) * 2;
-    return [self.status[@"WireGuardStarted"] boolValue] ? 4 : 2;
+    BOOL configured = [self.preferences dictionaryForKey:@"WireGuardConfig"] != nil;
+    return ([self.status[@"WireGuardStarted"] boolValue] ? 4 : 2) + (configured ? 1 : 0);
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return [self text:(section == 0 ? @"Service" : section == 1 ? @"Local network" : @"WireGuard")];
+    if (section == 0) return [super tableView:tableView titleForHeaderInSection:section];
+    return [self text:section == 1 ? @"Local network" : @"WireGuard"];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (section == 0) return [self text:@"VNC and ZXTouch always run together. The addresses below reflect the running service, not unapplied edits."];
+    if (section == 0) return [self text:@"Both protocols always run. Ports must differ. Apply port edits from the home screen."];
     if (section == 1) return [self text:@"Both protocols share the same network. Tap an address to copy it."];
     if (self.status && [self.status[@"WireGuardConfigured"] boolValue] && ![self.status[@"WireGuardStarted"] boolValue])
         return self.status[@"WireGuardError"];
     return [self text:@"One WireGuard configuration provides access to both ports. Saving a configuration restarts TrollVNC; removing it keeps local access available."];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    cell.textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-    cell.detailTextLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-    cell.textLabel.adjustsFontForContentSizeCategory = YES; cell.detailTextLabel.adjustsFontForContentSizeCategory = YES;
-    cell.textLabel.numberOfLines = 0; cell.detailTextLabel.numberOfLines = 0;
+    if (indexPath.section == 0) return [super tableView:tableView cellForRowAtIndexPath:indexPath];
+    TVNCSettingsValueCell *cell = [[TVNCSettingsValueCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     NSInteger row = indexPath.row;
-    if (indexPath.section == 0) {
-        if (row == 0) {
-            cell.textLabel.text = [self text:self.status ? @"Running" : @"Service status unavailable"];
-            cell.detailTextLabel.text = @"TrollVNC · Dopamine rootless";
-        } else {
-            NSString *name = row == 1 ? @"VNC" : @"ZXTouch";
-            cell.textLabel.text = name;
-            cell.detailTextLabel.text = self.status ? [NSString stringWithFormat:@"TCP %@", self.status[row == 1 ? @"VNCPort" : @"ZXTouchPort"]] : @"—";
-        }
-    } else if (indexPath.section == 1) {
-        cell.textLabel.text = row % 2 ? @"ZXTouch" : @"VNC";
+    if (indexPath.section == 1) {
+        cell.nameLabel.text = row % 2 ? @"ZXTouch" : @"VNC";
         if (self.localAddresses.count) {
-            cell.detailTextLabel.text = TVNCServiceSocket(self.localAddresses[row / 2], self.status[row % 2 ? @"ZXTouchPort" : @"VNCPort"]);
+            cell.valueLabel.text = TVNCServiceSocket(self.localAddresses[row / 2], self.status[row % 2 ? @"ZXTouchPort" : @"VNCPort"]);
+            cell.accessoryView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"doc.on.doc"]];
+            cell.accessoryView.tintColor = TVNCAccentColor();
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-        } else cell.detailTextLabel.text = [self text:@"Address unavailable"];
+        } else cell.valueLabel.text = [self text:@"Address unavailable"];
+    } else if ([self.preferences dictionaryForKey:@"WireGuardConfig"] && row == [self tableView:tableView numberOfRowsInSection:2] - 1) {
+        cell.nameLabel.text = [self text:@"Remove configuration"];
+        cell.nameLabel.textColor = UIColor.systemRedColor;
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     } else if (row == 0) {
         NSString *state = !self.status ? @"Service status unavailable" :
             [self.status[@"WireGuardStarted"] boolValue] ? @"Interface running" :
             [self.status[@"WireGuardConfigured"] boolValue] ? @"Network failed to start" : @"No configuration";
-        cell.textLabel.text = [self text:state];
-        if ([self.status[@"WireGuardStarted"] boolValue]) cell.detailTextLabel.text = self.status[@"WireGuardAddress"];
+        cell.nameLabel.text = [self text:state];
+        if ([self.status[@"WireGuardStarted"] boolValue]) cell.valueLabel.text = self.status[@"WireGuardAddress"];
     } else if (row == 1) {
-        cell.textLabel.text = [self text:@"WireGuard configuration…"];
+        cell.nameLabel.text = [self text:@"Configuration management"];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     } else {
-        cell.textLabel.text = row == 2 ? @"VNC" : @"ZXTouch";
-        cell.detailTextLabel.text = TVNCServiceSocket(self.status[@"WireGuardAddress"], self.status[row == 2 ? @"VNCPort" : @"ZXTouchPort"]);
+        cell.nameLabel.text = row == 2 ? @"VNC" : @"ZXTouch";
+        cell.valueLabel.text = TVNCServiceSocket(self.status[@"WireGuardAddress"], self.status[row == 2 ? @"VNCPort" : @"ZXTouchPort"]);
+        cell.accessoryView = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"doc.on.doc"]]; cell.accessoryView.tintColor = TVNCAccentColor();
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
     return cell;
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.section == 2 && indexPath.row == 1) {
+    if (indexPath.section == 0) { [super tableView:tableView didSelectRowAtIndexPath:indexPath]; return; }
+    if (indexPath.section == 2 && [self.preferences dictionaryForKey:@"WireGuardConfig"] &&
+        indexPath.row == [self tableView:tableView numberOfRowsInSection:2] - 1) {
+        [self removeConfiguration];
+    } else if (indexPath.section == 2 && indexPath.row == 1) {
         TVNCWireGuardController *controller = [TVNCWireGuardController new];
         controller.localizationBundle = self.localizationBundle;
         [self.navigationController pushViewController:controller animated:YES];
@@ -110,8 +110,24 @@
         UIPasteboard.generalPasteboard.string = TVNCServiceSocket(address, self.status[isZX ? @"ZXTouchPort" : @"VNCPort"]);
         UINotificationFeedbackGenerator *feedback = [UINotificationFeedbackGenerator new];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
-        [tableView cellForRowAtIndexPath:indexPath].detailTextLabel.text = [self text:@"Copied"];
+        ((TVNCSettingsValueCell *)[tableView cellForRowAtIndexPath:indexPath]).valueLabel.text = [self text:@"Copied"];
     }
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 }
+- (void)removeConfiguration {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:[self text:@"Remove configuration"]
+        message:[self text:@"Remove WireGuard configuration and restart TrollVNC? Local access remains available."] preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:[self text:@"Cancel"] style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:[self text:@"Remove"] style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        NSDictionary *previous = [self.preferences dictionaryForKey:@"WireGuardConfig"];
+        [self.preferences removeObjectForKey:@"WireGuardConfig"];
+        if (![self.preferences synchronize]) {
+            if (previous) [self.preferences setObject:previous forKey:@"WireGuardConfig"];
+            [self showSettingError:[NSError errorWithDomain:@"TVNCSettings" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Could not save the WireGuard configuration."}]]; return;
+        }
+        TVNCRestartVNCService(); [self refreshStatus];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 @end

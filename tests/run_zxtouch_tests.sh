@@ -33,3 +33,9 @@ xcrun clang++ -std=c++20 -fobjc-arc -framework Foundation \
     -I "$PROJECT_ROOT/app/TrollVNC/TrollVNC" \
     "$PROJECT_ROOT/tests/TVNCServiceStatusTests.mm" -o "$TEST_DIR/status-tests"
 "$TEST_DIR/status-tests"
+
+xcrun clang++ -x objective-c++ -std=c++20 -fobjc-arc -framework Foundation \
+    -I "$PROJECT_ROOT/app/TrollVNC/TrollVNC" \
+    "$PROJECT_ROOT/tests/TVNCSettingsModelTests.mm" \
+    "$PROJECT_ROOT/app/TrollVNC/TrollVNC/TVNCSettingsModel.m" -o "$TEST_DIR/settings-tests"
+"$TEST_DIR/settings-tests" "$PROJECT_ROOT/prefs/TrollVNCPrefs/Resources/SettingsCatalog.plist"

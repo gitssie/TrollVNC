@@ -1,0 +1,721 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>network</key>
+	<dict>
+		<key>title</key>
+		<string>Network settings</string>
+		<key>groups</key>
+		<array>
+			<dict>
+				<key>title</key>
+				<string>Service ports</string>
+				<key>footer</key>
+				<string>Both protocols always run. Ports must differ.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>Port</string>
+						<key>title</key>
+						<string>VNC Port</string>
+						<key>kind</key>
+						<string>port</string>
+						<key>default</key>
+						<integer>5901</integer>
+						<key>placeholder</key>
+						<string>5901</string>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>ZXTouchPort</string>
+						<key>title</key>
+						<string>ZXTouch Port</string>
+						<key>kind</key>
+						<string>port</string>
+						<key>default</key>
+						<integer>6000</integer>
+						<key>placeholder</key>
+						<string>6000</string>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>BindHost</string>
+						<key>title</key>
+						<string>Shared listen address</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>placeholder</key>
+						<string>Leave empty for all interfaces</string>
+					</dict>
+				</array>
+			</dict>
+		</array>
+	</dict>
+	<key>security</key>
+	<dict>
+		<key>title</key>
+		<string>Access &amp; security</string>
+		<key>groups</key>
+		<array>
+			<dict>
+				<key>title</key>
+				<string>VNC authentication</string>
+				<key>footer</key>
+				<string>Classic VNC authentication uses the first 8 characters.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>FullPassword</string>
+						<key>title</key>
+						<string>Full-control password</string>
+						<key>kind</key>
+						<string>secret</string>
+						<key>placeholder</key>
+						<string>8 characters max.</string>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>ViewOnlyPassword</string>
+						<key>title</key>
+						<string>View-only password</string>
+						<key>kind</key>
+						<string>secret</string>
+						<key>placeholder</key>
+						<string>8 characters max.</string>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string>Access permissions</string>
+				<key>footer</key>
+				<string>Global view-only ignores VNC client input.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>ViewOnly</string>
+						<key>title</key>
+						<string>Global view-only</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<false/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>ClipboardEnabled</string>
+						<key>title</key>
+						<string>Clipboard Sync</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>FileTransferEnabled</string>
+						<key>title</key>
+						<string>File Transfer</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<false/>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string></string>
+				<key>footer</key>
+				<string></string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>kind</key>
+						<string>info</string>
+						<key>title</key>
+						<string>VNC passwords apply only to VNC authentication.</string>
+						<key>symbol</key>
+						<string>info.circle.fill</string>
+					</dict>
+				</array>
+			</dict>
+		</array>
+	</dict>
+	<key>display</key>
+	<dict>
+		<key>title</key>
+		<string>Display settings</string>
+		<key>groups</key>
+		<array>
+			<dict>
+				<key>title</key>
+				<string>Image quality</string>
+				<key>footer</key>
+				<string>Fixed fps, min-max or min:preferred:max.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>Scale</string>
+						<key>title</key>
+						<string>Output scale</string>
+						<key>kind</key>
+						<string>slider</string>
+						<key>default</key>
+						<real>0.28</real>
+						<key>min</key>
+						<real>0.1</real>
+						<key>max</key>
+						<real>1.0</real>
+						<key>format</key>
+						<string>%.2f</string>
+						<key>integer</key>
+						<false/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>FrameRateSpec</string>
+						<key>title</key>
+						<string>Frame rate</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>placeholder</key>
+						<string>e.g. 60 or 30-60 or 30:60:120</string>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string>Display orientation</string>
+				<key>footer</key>
+				<string>Scaling affects bandwidth and CPU; the offset corrects device orientation.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>OrientationSync</string>
+						<key>title</key>
+						<string>Follow device orientation</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>OrientationPadFix</string>
+						<key>title</key>
+						<string>Orientation offset</string>
+						<key>kind</key>
+						<string>choice</string>
+						<key>default</key>
+						<integer>0</integer>
+						<key>choiceTitles</key>
+						<array>
+							<string>Disabled</string>
+							<string>90° Clockwise</string>
+							<string>180°</string>
+							<string>270° Clockwise</string>
+						</array>
+						<key>choiceValues</key>
+						<array>
+							<integer>0</integer>
+							<integer>1</integer>
+							<integer>2</integer>
+							<integer>3</integer>
+						</array>
+					</dict>
+				</array>
+			</dict>
+		</array>
+	</dict>
+	<key>input</key>
+	<dict>
+		<key>title</key>
+		<string>Input settings</string>
+		<key>groups</key>
+		<array>
+			<dict>
+				<key>title</key>
+				<string>Mouse &amp; scrolling</string>
+				<key>footer</key>
+				<string></string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>NaturalScroll</string>
+						<key>title</key>
+						<string>Natural scrolling</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<false/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>ServerCursor</string>
+						<key>title</key>
+						<string>Server-side cursor</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<false/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>WheelStepPx</string>
+						<key>title</key>
+						<string>Scroll step</string>
+						<key>kind</key>
+						<string>number</string>
+						<key>default</key>
+						<real>48.0</real>
+						<key>min</key>
+						<real>0.0</real>
+						<key>max</key>
+						<real>1000.0</real>
+						<key>format</key>
+						<string>%.0f px</string>
+						<key>integer</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>WheelTuning</string>
+						<key>title</key>
+						<string>Advanced scroll parameters</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>placeholder</key>
+						<string>step=48,coalesce=0.03,...</string>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string>Keyboard</string>
+				<key>footer</key>
+				<string></string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>ModifierMap</string>
+						<key>title</key>
+						<string>Modifier key mapping</string>
+						<key>kind</key>
+						<string>choice</string>
+						<key>default</key>
+						<string>std</string>
+						<key>choiceTitles</key>
+						<array>
+							<string>Standard</string>
+							<string>Alt as Command</string>
+						</array>
+						<key>choiceValues</key>
+						<array>
+							<string>std</string>
+							<string>altcmd</string>
+						</array>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string>Touch assistance</string>
+				<key>footer</key>
+				<string></string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>AutoAssistEnabled</string>
+						<key>title</key>
+						<string>Automatically enable AssistiveTouch</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<false/>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string>Debugging</string>
+				<key>footer</key>
+				<string>Enable logging only for debugging.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>KeyLogging</string>
+						<key>title</key>
+						<string>Keyboard event log</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<false/>
+					</dict>
+				</array>
+			</dict>
+		</array>
+	</dict>
+	<key>connections</key>
+	<dict>
+		<key>title</key>
+		<string>Connections &amp; notifications</string>
+		<key>groups</key>
+		<array>
+			<dict>
+				<key>title</key>
+				<string>Device &amp; discovery</string>
+				<key>footer</key>
+				<string></string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>DesktopName</string>
+						<key>title</key>
+						<string>Device name</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>default</key>
+						<string>TrollVNC</string>
+						<key>placeholder</key>
+						<string>Shown to VNC clients</string>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>BonjourEnabled</string>
+						<key>title</key>
+						<string>Bonjour discovery</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<true/>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string>Connection notifications</string>
+				<key>footer</key>
+				<string>Keepalive is active while clients are connected. 0 disables it.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>SingleNotifEnabled</string>
+						<key>title</key>
+						<string>Silence Notifications</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>ClientNotifsEnabled</string>
+						<key>title</key>
+						<string>Connect/Disconnect Notifications</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>KeepAliveSec</string>
+						<key>title</key>
+						<string>Connection keepalive</string>
+						<key>kind</key>
+						<string>slider</string>
+						<key>default</key>
+						<real>0.0</real>
+						<key>min</key>
+						<real>0.0</real>
+						<key>max</key>
+						<real>300.0</real>
+						<key>format</key>
+						<string>%.0f s</string>
+						<key>integer</key>
+						<true/>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string>Reverse Connection</string>
+				<key>footer</key>
+				<string>Reverse connections retain local VNC and ZXTouch services.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>ReverseMode</string>
+						<key>title</key>
+						<string>Mode</string>
+						<key>kind</key>
+						<string>choice</string>
+						<key>default</key>
+						<string>none</string>
+						<key>choiceTitles</key>
+						<array>
+							<string>None</string>
+							<string>Viewer</string>
+							<string>UltraVNC Repeater</string>
+						</array>
+						<key>choiceValues</key>
+						<array>
+							<string>none</string>
+							<string>viewer</string>
+							<string>repeater</string>
+						</array>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>ReverseSocket</string>
+						<key>title</key>
+						<string>Server</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>placeholder</key>
+						<string>server:port</string>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>ReverseRepeaterID</string>
+						<key>title</key>
+						<string>Repeater ID</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>placeholder</key>
+						<string>0</string>
+					</dict>
+				</array>
+			</dict>
+		</array>
+	</dict>
+	<key>performance</key>
+	<dict>
+		<key>title</key>
+		<string>Performance tuning</string>
+		<key>groups</key>
+		<array>
+			<dict>
+				<key>title</key>
+				<string>Advanced parameters</string>
+				<key>footer</key>
+				<string>Changes affect CPU, bandwidth and latency.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>DeferWindowSec</string>
+						<key>title</key>
+						<string>Update coalescing window</string>
+						<key>kind</key>
+						<string>number</string>
+						<key>default</key>
+						<real>0.015</real>
+						<key>min</key>
+						<real>0.0</real>
+						<key>max</key>
+						<real>0.5</real>
+						<key>format</key>
+						<string>%.3f s</string>
+						<key>integer</key>
+						<false/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>MaxInflight</string>
+						<key>title</key>
+						<string>Maximum concurrent encodes</string>
+						<key>kind</key>
+						<string>number</string>
+						<key>default</key>
+						<integer>2</integer>
+						<key>min</key>
+						<real>0.0</real>
+						<key>max</key>
+						<real>8.0</real>
+						<key>format</key>
+						<string>%.0f</string>
+						<key>integer</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>TileSize</string>
+						<key>title</key>
+						<string>Tile size</string>
+						<key>kind</key>
+						<string>number</string>
+						<key>default</key>
+						<integer>32</integer>
+						<key>min</key>
+						<real>8.0</real>
+						<key>max</key>
+						<real>128.0</real>
+						<key>format</key>
+						<string>%.0f px</string>
+						<key>integer</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>FullscreenThresholdPercent</string>
+						<key>title</key>
+						<string>Full-screen update threshold</string>
+						<key>kind</key>
+						<string>number</string>
+						<key>default</key>
+						<integer>0</integer>
+						<key>min</key>
+						<real>0.0</real>
+						<key>max</key>
+						<real>100.0</real>
+						<key>format</key>
+						<string>%.0f%%</string>
+						<key>integer</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>MaxRects</string>
+						<key>title</key>
+						<string>Maximum rectangles</string>
+						<key>kind</key>
+						<string>number</string>
+						<key>default</key>
+						<integer>256</integer>
+						<key>min</key>
+						<real>1.0</real>
+						<key>max</key>
+						<real>4096.0</real>
+						<key>format</key>
+						<string>%.0f</string>
+						<key>integer</key>
+						<true/>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>AsyncSwap</string>
+						<key>title</key>
+						<string>Non-blocking buffer swap</string>
+						<key>kind</key>
+						<string>switch</string>
+						<key>default</key>
+						<false/>
+					</dict>
+				</array>
+			</dict>
+		</array>
+	</dict>
+	<key>web</key>
+	<dict>
+		<key>title</key>
+		<string>VNC Web &amp; TLS</string>
+		<key>groups</key>
+		<array>
+			<dict>
+				<key>title</key>
+				<string>VNC Web client</string>
+				<key>footer</key>
+				<string>Port 0 disables the existing VNC Web client.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>HttpPort</string>
+						<key>title</key>
+						<string>HTTP Port</string>
+						<key>kind</key>
+						<string>port</string>
+						<key>default</key>
+						<integer>0</integer>
+						<key>placeholder</key>
+						<string>0</string>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>HttpDir</string>
+						<key>title</key>
+						<string>Web assets directory</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>placeholder</key>
+						<string>/absolute/path</string>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string>TLS files</string>
+				<key>footer</key>
+				<string></string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>key</key>
+						<string>SslCertFile</string>
+						<key>title</key>
+						<string>Certificate file</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>placeholder</key>
+						<string>/path/to/cert.pem</string>
+					</dict>
+					<dict>
+						<key>key</key>
+						<string>SslKeyFile</string>
+						<key>title</key>
+						<string>Private key file</string>
+						<key>kind</key>
+						<string>text</string>
+						<key>placeholder</key>
+						<string>/path/to/key.pem</string>
+					</dict>
+				</array>
+			</dict>
+			<dict>
+				<key>title</key>
+				<string></string>
+				<key>footer</key>
+				<string>This page configures the existing VNC Web feature.</string>
+				<key>rows</key>
+				<array>
+					<dict>
+						<key>kind</key>
+						<string>action</string>
+						<key>title</key>
+						<string>Generate certificate…</string>
+						<key>action</key>
+						<string>generateKeys</string>
+						<key>symbol</key>
+						<string>doc.badge.plus</string>
+					</dict>
+					<dict>
+						<key>kind</key>
+						<string>action</string>
+						<key>title</key>
+						<string>Export certificate…</string>
+						<key>action</key>
+						<string>exportCertificate</string>
+						<key>symbol</key>
+						<string>square.and.arrow.up</string>
+					</dict>
+				</array>
+			</dict>
+		</array>
+	</dict>
+</dict>
+</plist>

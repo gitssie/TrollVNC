@@ -3929,7 +3929,10 @@ void tvCtlHandleConnection(int cfd, struct sockaddr_in caddr) {
     if (cmd.length == 0) {
         resp = [@"ERR Empty\n" dataUsingEncoding:NSUTF8StringEncoding];
     } else if ([cmd isEqualToString:@"status"]) {
-        resp = gServiceStatusJSON ?: [@"{}\n" dataUsingEncoding:NSUTF8StringEncoding];
+        NSMutableDictionary *status = [[NSJSONSerialization JSONObjectWithData:gServiceStatusJSON options:0 error:nil] mutableCopy];
+        status[@"ClientCount"] = @(gClientCount);
+        NSMutableData *json = [[NSJSONSerialization dataWithJSONObject:status ?: @{} options:0 error:nil] mutableCopy];
+        [json appendBytes:"\n" length:1]; resp = json;
     } else if ([cmd isEqualToString:@"count"]) {
         NSString *s = [NSString stringWithFormat:@"%d\n", gClientCount];
         resp = [s dataUsingEncoding:NSUTF8StringEncoding];
