@@ -252,7 +252,7 @@ static rfbBool tvFileMessage(rfbClientPtr cl, void *data, const rfbClientToServe
         char *payload = NULL;
         char *error = NULL;
         int result = tvPhotoPoll(path, &payload, &error);
-        tvFileReply(cl, op, result == 0 ? 0 : (result == 1 ? 2 : 1),
+        tvFileReply(cl, op, result == 0 ? 0 : (result == 1 ? 2 : (result == -2 ? 3 : 1)),
                     (unsigned char *)&id, result == 0 ? payload : error);
         free(payload);
         free(error);

@@ -118,7 +118,7 @@ static BOOL tvEmptySecureField(id element) {
 NSDictionary *tvScreenUnlockState(NSString **error) {
     BOOL locked, passcode;
     if (!tvReadLock(&locked, &passcode)) { *error = @"Cannot read screen lock state"; return nil; }
-    BOOL ready = NO, empty = NO;
+    BOOL ready = NO, empty = NO, keypadAbsent = NO;
     NSString *reason = locked ? @"等待密码输入界面" : @"已解锁";
     if (locked && passcode && [tvAX respondsToSelector:@selector(primaryApp)]) {
         @try {
@@ -132,12 +132,14 @@ NSDictionary *tvScreenUnlockState(NSString **error) {
                 NSArray *elements = [app respondsToSelector:@selector(explorerElements)] ? [app explorerElements] : nil;
                 if (![elements isKindOfClass:NSArray.class] || elements.count > 512) elements = @[];
                 BOOL secure = NO, enabled = NO;
+                NSUInteger inspected = 0;
                 NSMutableSet *keys = [NSMutableSet new];
                 for (id element in elements) {
                     if (![element respondsToSelector:@selector(traits)] || ![element respondsToSelector:@selector(frame)]) continue;
                     unsigned long long traits = [element traits];
                     CGRect frame = [element frame];
                     if (CGRectIsEmpty(frame) || !isfinite(frame.origin.x) || !isfinite(frame.origin.y)) continue;
+                    inspected++;
                     if (traits & 0x1000000ULL) {
                         secure = YES;
                         enabled = !(traits & (0x100ULL | 0x2000000ULL | 0x8000000000000ULL));
@@ -153,12 +155,23 @@ NSDictionary *tvScreenUnlockState(NSString **error) {
                     }
                 }
                 ready = secure && enabled && keys.count == 10;
+                keypadAbsent = inspected > 0 && !secure && keys.count == 0;
                 reason = ready ? (empty ? @"可以输入密码" : @"密码框已有输入，请先清空") : @"等待可用的密码键盘";
             }
         } @catch (NSException *exception) { (void)exception; reason = @"密码界面检测暂不可用"; }
     }
     return @{@"locked":@(locked), @"passcode_required":@(passcode), @"input_ready":@(ready),
-        @"input_empty":@(empty), @"reason":reason};
+        @"input_empty":@(empty), @"keypad_absent":@(keypadAbsent), @"reason":reason};
+}
+
+static BOOL tvNeedsPasscodePresentation(BOOL requireAbsentKeypad) {
+    NSString *error = nil;
+    NSDictionary *state = tvScreenUnlockState(&error);
+    BOOL blanked;
+    return [state[@"locked"] boolValue] && [state[@"passcode_required"] boolValue] &&
+        ![state[@"input_ready"] boolValue] &&
+        (!requireAbsentKeypad || [state[@"keypad_absent"] boolValue]) &&
+        tvReadBlanked(&blanked) && !blanked;
 }
 
 NSDictionary *tvScreenUnlockPrepare(NSString **error) {
@@ -174,13 +187,19 @@ NSDictionary *tvScreenUnlockPrepare(NSString **error) {
         if (blanked) [[STHIDEventGenerator sharedGenerator] powerPress];
         // Wake before swiping. A power press when already lit would switch it off.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 800 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-            NSString *error = nil;
-            NSDictionary *current = tvScreenUnlockState(&error);
-            BOOL blanked;
-            if ([current[@"locked"] boolValue] && [current[@"passcode_required"] boolValue] &&
-                ![current[@"input_ready"] boolValue] && tvReadBlanked(&blanked) && !blanked) {
+            if (tvNeedsPasscodePresentation(NO)) {
                 dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
                     [[STHIDEventGenerator sharedGenerator] swipeUpToPasscode];
+                    // Home-button devices may ignore the swipe on the lock screen.
+                    // Check the keypad after the gesture settles before pressing Home.
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC),
+                                   dispatch_get_main_queue(), ^{
+                        if (tvNeedsPasscodePresentation(YES)) {
+                            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+                                [[STHIDEventGenerator sharedGenerator] menuPress];
+                            });
+                        }
+                    });
                 });
             }
         });

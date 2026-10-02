@@ -12,7 +12,8 @@ extern "C" {
 int tvPhotoStart(unsigned char op, const char *root, const char *value,
                  const char *expected_sha256, char *token, size_t token_capacity,
                  char *error, size_t error_capacity);
-// Returns 1 while running, 0 with JSON payload, -1 with an error. Caller frees
+// Returns 1 while running, 0 with JSON payload, -1 with an error, or -2 when
+// the user cancels the Photos deletion prompt. Caller frees
 // returned strings with free(). Jobs remain queryable briefly after completion.
 int tvPhotoPoll(const char *token, char **payload, char **error);
 int tvPhotoCleanupExport(const char *remote_path);

@@ -14,6 +14,7 @@
 @property(nonatomic, copy) NSString *result;
 @property(nonatomic, copy) NSString *error;
 @property(nonatomic, assign) BOOL finished;
+@property(nonatomic, assign) BOOL cancelled;
 @property(nonatomic, strong) NSDate *created;
 @end
 @implementation TVPhotoJob
@@ -362,7 +363,7 @@ static NSString *tvExport(NSString *assetId, NSString **error) {
     });
 }
 
-static NSString *tvDelete(NSString *requestText, NSString **error) {
+static NSString *tvDelete(NSString *requestText, NSString **error, BOOL *cancelled) {
     if (!tvAuthorized(error))
         return nil;
     NSArray<NSString *> *ids = @[requestText];
@@ -409,6 +410,13 @@ static NSString *tvDelete(NSString *requestText, NSString **error) {
         return nil;
     }
     if (!success) {
+        *cancelled = changeError &&
+            (([changeError.domain isEqualToString:PHPhotosErrorDomain] &&
+              changeError.code == PHPhotosErrorUserCancelled) ||
+             ([changeError.domain isEqualToString:NSCocoaErrorDomain] &&
+              changeError.code == NSUserCancelledError));
+        if (*cancelled)
+            return nil;
         *error = changeError.localizedDescription ?: @"Photos did not delete the image";
         return nil;
     }
@@ -454,6 +462,7 @@ int tvPhotoStart(unsigned char op, const char *root, const char *value,
         @autoreleasepool {
             NSString *failure = nil;
             NSString *result = nil;
+            BOOL cancelled = NO;
             if (op == 4)
                 result = tvImport(remoteRoot.fileSystemRepresentation, input, expected, &failure);
             else if (op == 5)
@@ -461,10 +470,11 @@ int tvPhotoStart(unsigned char op, const char *root, const char *value,
             else if (op == 6)
                 result = tvExport(input, &failure);
             else
-                result = tvDelete(input, &failure);
+                result = tvDelete(input, &failure, &cancelled);
             @synchronized(job) {
                 job.result = result;
-                job.error = failure ?: (result ? nil : @"Photos operation failed");
+                job.error = cancelled ? nil : (failure ?: (result ? nil : @"Photos operation failed"));
+                job.cancelled = cancelled;
                 job.finished = YES;
             }
         }
@@ -486,6 +496,10 @@ int tvPhotoPoll(const char *token, char **payload, char **error) {
     @synchronized(job) {
         if (!job.finished)
             return 1;
+        if (job.cancelled) {
+            *error = strdup("Photo deletion cancelled");
+            return -2;
+        }
         if (job.error) {
             *error = strdup(job.error.UTF8String);
             return -1;
