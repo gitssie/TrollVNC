@@ -5,17 +5,17 @@ Codename: trollvnc
 Architectures: iphoneos-arm64e
 Components: main
 Description: TrollVNC for Dopamine RootHide
-Date: Thu, 01 Oct 2026 15:52:14 GMT
+Date: Fri, 02 Oct 2026 04:29:48 GMT
 Acquire-By-Hash: no
 MD5Sum:
- 74db14a7a39cbe813815cc0ae7d2e5fb              744 Packages
- a74db4e3068c239dd004707322e04a8e              477 Packages.gz
- 00fa36838ace5c8450c52c5338b6cf03              540 Packages.xz
+ 78441c2a68c07c78d908bc6183c2ab0d              744 Packages
+ af96db99501679aa7ee81d198d79b6b7              475 Packages.gz
+ 71d77ad3db550e902f4e1c4ae5f55b68              540 Packages.xz
 SHA1:
- 220c6d7a178f35267d27387c535b2d1406e4cafc              744 Packages
- d34f320b487a8f6d69255656ab45e7836923aa5f              477 Packages.gz
- b0102449489030092c8fe4076f0a06c1aa2a8fd3              540 Packages.xz
+ 48da0de71487d47348ac366f2a257052cb523761              744 Packages
+ 1f24076dcd31e95b3ebd8589237d8fe0411b8118              475 Packages.gz
+ f08ad0eb5475deb4bee2407d2ec49f102380aa66              540 Packages.xz
 SHA256:
- a7bd59d0836825d988827a94d0737273dd8abadb9514aba55ee957ea2e7d2f9c              744 Packages
- 3d9404d97b12d56fa52a0024466bf6160daa834785bc93a6124095f95d32f127              477 Packages.gz
- 5ea8fad2b25e7e6ba08ee5f39dda06d8a00db83ba7717cc0fa24709509f5a727              540 Packages.xz
+ 73563d7f61743ed4e02f436b61decd1d6b00f920f0451a998003e6630affa764              744 Packages
+ 2917568cb3000e7d192b77c5bae6f9766cd84978cedef006b7d7edbaff1a1749              475 Packages.gz
+ eddc29d3ad0fbace892347d1d9a6724e25c102ab9e64124a4a25196b19f38ce8              540 Packages.xz
