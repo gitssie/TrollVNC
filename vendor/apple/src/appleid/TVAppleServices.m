@@ -8,6 +8,7 @@
 #import "TVAppleNameSettings.h"
 #import "TVAppleStateAggregation.h"
 #import "TVAppleSignInWithApple.h"
+#import "TVAppleICloudDevices.h"
 
 static dispatch_queue_t Worker(void) {
     static dispatch_queue_t queue;
@@ -72,6 +73,23 @@ static NSArray *SignOutTargets(NSDictionary *state, NSString *appleID, BOOL iClo
             error=TVAppleError(TVAppleErrorUnsupported,@"Email settings backend is unavailable.");
         else settings=[(id<TVAppleEmailSettingsBackend>)self->_backend emailSettingsForAppleID:normalized error:&error];
         dispatch_async(self->_callbacks,^{reply(settings,error);});
+    }});
+}
+- (void)enqueueICloudDevices:(NSString *)appleID mutation:(BOOL)mutation completion:(TVAppleCompletion)completion{
+    NSString *target=[appleID copy];TVAppleCompletion reply=[completion copy];
+    dispatch_async(Worker(),^{@autoreleasepool{
+        NSError *error=nil;NSDictionary *result=nil;NSString *normalized=Normalize(target);
+        if(!normalized.length||normalized.length>320||[normalized rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location!=NSNotFound)
+            error=TVAppleError(TVAppleErrorInvalidRequest,@"A valid Apple ID is required.");
+        else if(mutation&&uncertainMutation)error=TVAppleError(TVAppleErrorOutcomeUnknown,@"A previous mutation has an uncertain outcome; inspect state before further writes.");
+        else if(![self->_backend conformsToProtocol:@protocol(TVAppleICloudDevicesBackend)])error=TVAppleError(TVAppleErrorUnsupported,@"Native iCloud devices backend is unavailable.");
+        else{
+            id<TVAppleICloudDevicesBackend> backend=(id)self->_backend;
+            result=mutation?[backend removeOtherICloudDevicesForAppleID:normalized error:&error]:[backend iCloudDevicesForAppleID:normalized error:&error];
+            if(!result&&!error)error=TVAppleError(mutation?TVAppleErrorOutcomeUnknown:TVAppleErrorBackendRead,@"Native device operation returned no confirmed result.");
+            if(mutation&&[error.domain isEqual:TVAppleErrorDomain]&&error.code==TVAppleErrorOutcomeUnknown)uncertainMutation=YES;
+        }
+        dispatch_async(self->_callbacks,^{reply(result,error);});
     }});
 }
 - (void)enqueueSignInWithApple:(NSString *)appleID bundleID:(NSString *)bundleID mutation:(BOOL)mutation completion:(TVAppleCompletion)completion{

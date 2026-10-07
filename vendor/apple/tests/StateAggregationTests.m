@@ -2,17 +2,19 @@
 #import "TVAppleEmailSettings.h"
 #import "TVAppleNameSettings.h"
 #import "TVAppleSignInWithApple.h"
+#import "TVAppleICloudDevices.h"
 #include <assert.h>
 static NSDictionary *Record(NSString *key,NSString *domain,NSString *appleID,BOOL selected){
     return @{@"identifier":key,@"domain":domain,@"apple_id":appleID,@"selected":@(selected),@"primary":@([domain isEqual:@"icloud"]),@"authenticated":@YES};
 }
-@interface AggregateBackend:NSObject<TVAppleBackend,TVAppleEmailSettingsBackend,TVAppleNameSettingsBackend,TVAppleSignInWithAppleBackend>
+@interface AggregateBackend:NSObject<TVAppleBackend,TVAppleEmailSettingsBackend,TVAppleNameSettingsBackend,TVAppleSignInWithAppleBackend,TVAppleICloudDevicesBackend>
 @property NSArray *accounts,*finalAccounts;
-@property NSUInteger reads,names,emails,siwaReads;
-@property BOOL nameFailure,emailFailure,readFailure,finalReadFailure,noName,wrongProfile,findMy,siwaFailure;
+@property NSUInteger reads,names,emails,siwaReads,deviceReads;
+@property BOOL nameFailure,emailFailure,readFailure,finalReadFailure,noName,wrongProfile,findMy,siwaFailure,deviceFailure,noDevices,wrongDevices;
 @end
 @implementation AggregateBackend
 - (BOOL)conformsToProtocol:(Protocol *)protocol{
+    if(protocol==@protocol(TVAppleICloudDevicesBackend)&&self.noDevices)return NO;
     if(protocol==@protocol(TVAppleNameSettingsBackend)&&self.noName)return NO;
     return [super conformsToProtocol:protocol];
 }
@@ -36,18 +38,22 @@ static NSDictionary *Record(NSString *key,NSString *domain,NSString *appleID,BOO
     if(self.siwaFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture");return nil;}
     return @{@"apple_id":appleID,@"bundle_ids":@[@"com.example.target"],@"apps":@[]};
 }
+- (NSDictionary *)iCloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{self.deviceReads++;if(self.deviceFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture");return nil;}return @{@"apple_id":self.wrongDevices?@"other@example.com":appleID,@"devices":@[@{@"current_device":@YES}]};}
+- (NSDictionary *)removeOtherICloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{(void)appleID;(void)error;assert(NO);return nil;}
 - (NSDictionary *)stopUsingAppleIDForBundleID:(NSString *)bundleID appleID:(NSString *)appleID error:(NSError **)error{(void)bundleID;(void)appleID;(void)error;assert(NO);return nil;}
 - (NSDictionary *)setFirstName:(NSString *)first lastName:(NSString *)last appleID:(NSString *)appleID error:(NSError **)error{(void)first;(void)last;(void)appleID;(void)error;assert(NO);return nil;}
 - (id)prepareAccount:(NSDictionary *)account policy:(TVAppleLocalDataPolicy)policy error:(NSError **)error{(void)account;(void)policy;(void)error;assert(NO);return nil;}
 - (BOOL)removePreparedAccount:(id)prepared error:(NSError **)error{(void)prepared;(void)error;assert(NO);return NO;}
 @end
 int main(void){@autoreleasepool{
-    for(NSString *scenario in @[@"success",@"siwa_failure",@"find_my_enabled",@"signed_out",@"media_only",@"identity_only",@"name_failure",@"email_failure",@"unsupported",@"wrong_profile",@"ambiguous",@"different_cloud",@"changed",@"read_failure",@"final_read_failure"]){
+    for(NSString *scenario in @[@"success",@"device_failure",@"device_unsupported",@"device_wrong",@"siwa_failure",@"find_my_enabled",@"signed_out",@"media_only",@"identity_only",@"name_failure",@"email_failure",@"unsupported",@"wrong_profile",@"ambiguous",@"different_cloud",@"changed",@"read_failure",@"final_read_failure"]){
         AggregateBackend *backend=[AggregateBackend new];
         NSDictionary *phone=Record(@"idms",@"identity",@"phone@example.com",YES),*cloud=Record(@"cloud",@"icloud",@"phone@example.com",YES),
             *media=Record(@"media",@"media",@"store@example.com",YES),*old=Record(@"history",@"media",@"old@example.com",NO);
         backend.accounts=@[phone,cloud,media,old];
         backend.findMy=[scenario isEqual:@"find_my_enabled"];
+        backend.noDevices=[scenario isEqual:@"device_unsupported"];backend.wrongDevices=[scenario isEqual:@"device_wrong"];
+        backend.deviceFailure=[scenario isEqual:@"device_failure"];
         backend.siwaFailure=[scenario isEqual:@"siwa_failure"];
         if([scenario isEqual:@"signed_out"])backend.accounts=@[old];
         if([scenario isEqual:@"media_only"])backend.accounts=@[media,old];
@@ -62,6 +68,9 @@ int main(void){@autoreleasepool{
         if([scenario isEqual:@"read_failure"])backend.readFailure=YES;
         if([scenario isEqual:@"final_read_failure"])backend.finalReadFailure=YES;
         NSError *error=nil;NSDictionary *state=TVAppleAggregateState(backend,&error);
+        if([scenario isEqual:@"success"])assert([state[@"icloud"][@"devices"][@"status"]isEqual:@"available"]&&backend.deviceReads==1);
+        if([scenario isEqual:@"device_failure"]||[scenario isEqual:@"device_unsupported"]||[scenario isEqual:@"device_wrong"]||[scenario isEqual:@"changed"])assert([state[@"icloud"][@"devices"][@"status"]isEqual:@"error"]);
+        if([scenario isEqual:@"identity_only"])assert([state[@"icloud"][@"devices"][@"status"]isEqual:@"not_signed_in"]&&backend.deviceReads==0);
         if(backend.readFailure||backend.finalReadFailure){assert(!state&&error.code==TVAppleErrorBackendRead);continue;}
         assert(state&&!error&&[NSJSONSerialization isValidJSONObject:state]);
         assert(!state[@"find_my_enabled"]);

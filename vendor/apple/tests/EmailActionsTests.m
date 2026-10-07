@@ -69,10 +69,11 @@
 // Exercise production name pipeline, substituting only native transport and identity.
 @interface NameTransport : TVAppleNativeSettingsSession
 @property id personal,form;
-@property BOOL posted,mismatch,readFailure,identityChanged;
-@property NSUInteger posts;
+@property BOOL posted,mismatch,readFailure,identityChanged,refreshFailure;
+@property NSUInteger posts,refreshes;
 @end
 @implementation NameTransport
+- (BOOL)refreshName:(NSDictionary *)name appleID:(NSString *)appleID error:(NSError **)error{(void)name;(void)appleID;self.refreshes++;if(self.refreshFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture refresh failure");return NO;}return YES;}
 - (BOOL)beginSettingsOperation:(NSString *)appleID error:(NSError **)error{(void)appleID;(void)error;return YES;}
 - (void)finishSettingsOperation{}
 - (BOOL)identityMatches:(NSError **)error{
@@ -157,8 +158,10 @@ int main(void){@autoreleasepool{
     nameLink.attributes=@{@"class":@"link",@"url":@"/appleid/settings/account/manage/name",@"httpMethod":@"GET"};
     personalSection.rows=@[nameLink];personalTable.sections=@[personalSection];personalPage.tableViewOM=personalTable;personal.allPages=@[personalPage];
     NameTransport *transport=[NameTransport new];transport.personal=personal;transport.form=model;error=nil;
-    NSDictionary *saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];assert(saved&&!error&&transport.posts==1&&![saved[@"already_configured"]boolValue]);
-    saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];assert(saved&&[saved[@"already_configured"]boolValue]&&transport.posts==1);
+    NSDictionary *saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];assert(saved&&!error&&transport.posts==1&&transport.refreshes==1&&![saved[@"already_configured"]boolValue]);
+    saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];assert(saved&&[saved[@"already_configured"]boolValue]&&transport.posts==1&&transport.refreshes==2);
+    transport.refreshFailure=YES;error=nil;assert(![transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error]&&error.code==TVAppleErrorOutcomeUnknown&&transport.posts==1);
+    personal.clientInfo=model.clientInfo;transport=[NameTransport new];transport.personal=personal;transport.form=model;transport.refreshFailure=YES;error=nil;assert(![transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error]&&error.code==TVAppleErrorOutcomeUnknown&&transport.posts==1);
     for(NSNumber *scenario in @[@0,@1,@2]){
         transport=[NameTransport new];transport.personal=personal;transport.form=model;transport.mismatch=scenario.intValue!=2;transport.readFailure=scenario.intValue==1;transport.identityChanged=scenario.intValue==2;personal.clientInfo=model.clientInfo;error=nil;
         assert(![transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error]&&error.code==TVAppleErrorOutcomeUnknown&&transport.posts==1);

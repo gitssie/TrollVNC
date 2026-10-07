@@ -103,3 +103,9 @@ typedef void (^TVAppleCodeCompletion)(NSString * _Nullable code, NSError * _Null
 - (void)stopUsingAppleIDForBundleID:(NSString *)bundleID appleID:(NSString *)appleID completion:(TVAppleCompletion)completion;
 @end
 NS_ASSUME_NONNULL_END
+
+// iCloud companion device management. Always preserves the native current device.
+@interface TVAppleServices (ICloudDevices)
+- (void)queryICloudDevices:(NSString * _Nonnull)appleID completion:(TVAppleCompletion _Nonnull)completion;
+- (void)removeOtherICloudDevices:(NSString * _Nonnull)appleID completion:(TVAppleCompletion _Nonnull)completion;
+@end

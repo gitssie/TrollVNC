@@ -120,3 +120,7 @@ SCP固定包装 `vendor/apple/tests/device-scp.sh`：`rtk proxy bash vendor/appl
 
 
 Sign in with Apple授权工具：vendor/apple公共querySignInWithAppleApps / stopUsingAppleIDForBundleID:appleID，queryState新增apple_settings.sign_in_with_apple/apps/bundle_ids。原生Settings授权列表及确认按钮POST后fresh确认目标消失；不退出整机、不替代成停止email转发/本地cache删除。工具apple-siwa.m经builder构建、device-scp.sh上传、device-ssh.sh运行，stdin query/apple_id 或stop/apple_id/bundle_id。读取原生GET/POST query会话参数，不输出token/URL；schema与边界见模块AGENTS.md。聚合apple-state外层等待现300秒。
+
+iCloud伴随设备功能：vendor/apple的queryICloudDevices/removeOtherICloudDevices，代码src/icloud/TVAppleICloudDevices.m。移除所有非本机设备，不写死iMac；原生Settings详情isCurrentDevice必须唯一真值，本机保留，每台native POST后fresh验证，unknown停止不重试。queryState新增icloud.devices，apple-state外层等待现600秒；CLI apple-icloud-devices.m stdin query/remove_others/apple_id。接口、schema与实际验证见模块AGENTS.md/docs/validation.md。
+
+姓名设置必须刷新AuthKit：仅Settings服务端保存会留下主idms旧姓名，使Apple登录弹窗显示旧名。正式setName现保存后调用原生fetchUserInformationForAltDSID，再验证cached getUserInformation与主iCloud/idms的given/family name一致；同名无POST也刷新。不手改账户properties，不以updateUserInformation探针当刷新成功。身份变化/缓存不一致/超时返回unknown，详见模块AGENTS.md和NameRefreshTests。

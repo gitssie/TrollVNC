@@ -137,3 +137,5 @@ Find My 必须事先关闭，原生 findMyActivationAction=2 保持关闭。已�
 `querySignInWithAppleApps:completion:` 返回原生服务端授权应用的apps与bundle_ids；queryState也包含apple_settings.sign_in_with_apple。`stopUsingAppleIDForBundleID:appleID:completion:` 对明确指定的bundle ID停止使用Apple ID；保存后重新读服务端列表确认目标消失，已经消失则幂等。原生确认按钮、postback、签名与loader执行撤销；不操作UI、不仅删除本地缓存。要求匹配的主iCloud和手机身份，原生表单变化会拒绝而非猜测。
 
 工具 `tests/apple-siwa.m` 通过stdin JSON接收query/apple_id，或stop/apple_id/bundle_id；使用相同device builder、device-scp.sh与device-ssh.sh。SCP脚本默认上传，--download下载，--recursive传目录；换机修改顶部DEVICE_*。实际验证情况见docs/validation.md。
+
+`queryICloudDevices:completion:` 查询账号关联设备，`removeOtherICloudDevices:completion:` 移除所有非本机设备、保留唯一原生current device。代码位于src/icloud，queryState归入icloud.devices，不通过SearchParty移除。工具tests/apple-icloud-devices.m接收stdin action=query/remove_others与apple_id；接口及验证边界见docs。

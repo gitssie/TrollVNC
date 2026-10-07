@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
             }
             dispatch_semaphore_signal(done);
         }];
-        NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 300;
+        NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 600;
         while (dispatch_semaphore_wait(done, DISPATCH_TIME_NOW)) {
             if (NSProcessInfo.processInfo.systemUptime >= deadline) return 2;
             [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];

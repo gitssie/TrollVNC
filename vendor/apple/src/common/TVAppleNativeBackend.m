@@ -9,6 +9,7 @@
 #import "TVAppleEmailActions.h"
 #import "TVAppleNameSettings.h"
 #import "TVAppleSignInWithApple.h"
+#import "TVAppleICloudDevices.h"
 #import <dlfcn.h>
 
 static NSString *const CloudType = @"com.apple.account.AppleAccount";
@@ -49,7 +50,7 @@ static BOOL Entitled(NSString *key) {
     dlclose(handle);
     return entitled;
 }
-@interface TVAppleNativeBackend : NSObject <TVAppleBackend, TVAppleStoreLoginBackend, TVAppleFindMyBackend, TVAppleICloudBackend, TVAppleEmailSettingsBackend, TVAppleEmailActionsBackend, TVAppleNameSettingsBackend, TVAppleSignInWithAppleBackend>
+@interface TVAppleNativeBackend : NSObject <TVAppleBackend, TVAppleStoreLoginBackend, TVAppleFindMyBackend, TVAppleICloudBackend, TVAppleEmailSettingsBackend, TVAppleEmailActionsBackend, TVAppleNameSettingsBackend, TVAppleSignInWithAppleBackend, TVAppleICloudDevicesBackend>
 @property TVAppleNativeSettingsSession *settingsSession;
 @end
 @implementation TVAppleNativeBackend
@@ -59,6 +60,8 @@ static BOOL Entitled(NSString *key) {
     }
     if(!self.settingsSession)self.settingsSession=[TVAppleNativeSettingsSession new];return self.settingsSession;
 }
+- (NSDictionary *)iCloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{return [[self settingsSessionWithError:error]queryICloudDevices:appleID error:error];}
+- (NSDictionary *)removeOtherICloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{return [[self settingsSessionWithError:error]removeOtherICloudDevices:appleID error:error];}
 - (NSDictionary *)signInWithAppleAppsForAppleID:(NSString *)appleID error:(NSError **)error{
     return [[self settingsSessionWithError:error]querySignInWithAppleApps:appleID error:error];
 }

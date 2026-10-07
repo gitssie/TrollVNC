@@ -7,6 +7,7 @@ APPLE_MODULE_FILES := $(APPLE_MODULE_ROOT)/src/common/TVAppleErrors.m \
     $(APPLE_MODULE_ROOT)/src/appleid/TVAppleEmailActions.m \
     $(APPLE_MODULE_ROOT)/src/appleid/TVAppleNameSettings.m \
     $(APPLE_MODULE_ROOT)/src/appleid/TVAppleSignInWithApple.m \
+    $(APPLE_MODULE_ROOT)/src/icloud/TVAppleICloudDevices.m \
     $(APPLE_MODULE_ROOT)/src/appleid/TVAppleStateAggregation.m \
     $(APPLE_MODULE_ROOT)/src/icloud/TVAppleDataclassPolicy.m \
     $(APPLE_MODULE_ROOT)/src/icloud/TVAppleICloudSignOut.m \

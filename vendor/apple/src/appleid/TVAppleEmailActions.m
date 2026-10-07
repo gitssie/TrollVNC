@@ -1,5 +1,6 @@
 #import "TVAppleEmailActions.h"
 #import "TVAppleSignInWithApple.h"
+#import "TVAppleICloudDevices.h"
 #import <dlfcn.h>
 #import <objc/runtime.h>
 
@@ -116,7 +117,7 @@ NSMutableURLRequest *TVAppleRelayForwardingRequest(id form,NSString *email,NSURL
 - (void)loader:(id)loader loadResourcesForObjectModel:(id)model completion:(void(^)(BOOL,NSError *))completion{
     (void)loader;
     @synchronized(self){
-        if(!self.closed){TVAppleCaptureSIWAConfirmation(loader,model);if(!self.model)self.model=model;self.rejected=self.rejected||[model primaryAlert]!=nil;}
+        if(!self.closed){TVAppleCaptureSIWAConfirmation(loader,model);TVAppleCaptureDeviceConfirmation(loader,model);if(!self.model)self.model=model;self.rejected=self.rejected||[model primaryAlert]!=nil;}
     }
     // Read an alert as a rejected response. Do not present a Settings alert or
     // wait for a UIKit button in a Foundation service process.

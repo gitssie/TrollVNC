@@ -110,6 +110,7 @@ rtk proxy bash vendor/apple/tests/build_device_probe.sh /tmp/apple-login apple-l
 - `apple-state` 默认只读；`--self-test` 用不存在的目标做幂等空操作。`apple-login` 会真实登录。
 - 有效性记录写到 `docs/validation.md`，说明是否走过 bootstrap，还是利用已经建立的信任直接 Store 成功。
 - 当前验证边界：受信任设备接口对照测试后，Store 登录及目标媒体账户认证已在真机确认；正式适配的请求签名、回调和响应转交有主机回归覆盖，但尚未在全新未建立信任的设备上完整复测 bootstrap。后续不得把这两项合并宣称已验证。
+- 后续新账号切换已验证正式login-v5 trusted_device挑战→外部提供验证码→succeeded/two_factor_bootstrap=true（identity/media）；icloud-enable-v4无需新验证码即可succeeded，独立aggregate确认三域均为新账号、Find My=false。此证据覆盖当前已有信任的越狱设备更换账号，不等于全新未建立信任设备或SMS流程验证；见validation最新记录。
 - 密码、验证码、取码 URL、Apple 认证令牌和原生 error userInfo 不进仓库、不输出日志。临时配置用私有目录和 0600 文件，读取/测试后删除。
 - 调试只记录必要的 selector、类型、状态码、字段结构，不打印认证请求 body/headers 的真实内容。调试代码标记唯一前缀，完成后清理。
 - 所有本地 shell 命令遵循上级 RTK 规则；SSH/SCP 使用 BatchMode，文件操作使用非交互 flags。
@@ -239,3 +240,17 @@ rtk proxy bash vendor/apple/tests/build_device_probe.sh /tmp/apple-login apple-l
 - 新列表确认目标不在且身份不变才succeeded；已经不在且列表读成功则already_stopped、不POST。提交后未知响应/目标仍在/新列表失败/身份变均unknown栅栏，不重试。只停止应用授权，不退出设备Apple ID、改全局forward或保证App现有session即时退出。
 - 工具apple-siwa.m（stdin action=query/apple_id，或stop/apple_id/bundle_id），300秒外层期限；聚合apple-state亦改300秒覆盖三种profile读取。主机SignInWithAppleTests直接测试native资源捕获、完整列表/空列表/schema、精确target/confirmation/routes/native query、撤销/fresh失败/identity/timeout/幂等/fence；aggregate验证新增分项失败与前后身份变化丢弃三种profile。
 - AuthKit AKAppleIDAuthenticationController.revokeAuthorizationForApplicationWithClientID线索经固定GitHub反编译指向AuthorizationStoreManager本地store。不能把本地cache删除当Stop using Apple ID服务端撤销。来源仍EthanArbuckle固定e26ed4563f78871c59d2d96856756a65d62517e5；iOS18线索需iOS15运行时确认。本实现以iOS15实际native Settings表单为准。
+
+## AuthKit 姓名刷新
+
+姓名修改补充：Settings服务端和iCloud已是新名时，AuthKit主idms仍可能保存旧first/last，导致Apple登录弹窗显示旧名。setName成功判据现增加原生fetchUserInformationForAltDSID刷新，再验证getUserInformation缓存及AKAccountManager主idms/iCloud givenName/familyName均一致、两域identifier/username不变。原生fresh fetch在此iOS15设备自动同步缓存；cached get自身不刷新。不要手写账户properties，也不要把updateUserInformationForAltDSID作为刷新（探针在缓存已同步后返回NO/error=nil，没有被用于生产成功路径）。同名already_configured也执行刷新，避免提前return留下旧缓存。刷新失败/超时/身份变化为unknown共享写栅栏，30秒总期限，迟到/重复回调关闭。tests/NameRefreshTests覆盖真实helper的fresh→cache、两身份验证与失败边界。
+
+## iCloud 关联设备清理
+
+- 代码 src/icloud/TVAppleICloudDevices.m，公共 queryICloudDevices / removeOtherICloudDevices；queryState 放入 icloud.devices（分项status/data/error），不放apple_settings或顶层。账号关联设备与Find My设备不同；SearchParty仅用于已有健康检查/恢复。
+- 原生 AKURLBag.sharedBag.trustedDevicesURL 是 /appleid/account/manage/security/devices；详情clientInfo中deviceId为32位小写hex，isCurrentDevice/deviceFmipEnabled为严格true/false字符串。唯一current_device=true才可清理，保留本机；公共仅返回device_id/name/model/current_device/find_my_enabled，不返回serial/machineId/原始clientInfo/URL。
+- Remove from Account行url=#removeDevice+deviceId、disabled=false；同ID alert含唯一destructive=true POST button及另一个无httpMethod/url的取消button。同源HTTPS、精确/devices/<id>/delete，native postback保留serverInfo、签名/loader执行。资源回调只捕获原生XML确认的url/httpMethod/destructive，不保存整XML。
+- 批量先预检所有初始非本机目标，再逐台fresh详情/本机标记/身份→POST→fresh列表确认目标消失、本机ID保持。未知结果立即停止且共享写栅栏，removed_device_ids报告已确认部分，不盲目重试。最终仅剩本机才succeeded；无其他设备则already_removed=true不POST。执行期间新增其他设备不无限追删，最终验证失败需fresh检查。
+- 工具tests/apple-icloud-devices.m stdin action=query或remove_others/apple_id，使用device builder和SSH/SCP，外层3600秒；apple-state聚合等待600秒。测试ICloudDevicesTests覆盖本机保护、原生确认、精确target/route、批量/部分失败/幂等/共享写栅栏；aggregate验证设备分项失败、身份变化、无iCloud不查询。
+- 旧AAURLConfiguration.getDeviceListURL是/setup/account/getDevices，AATrustedDeviceListRequest探针未取得可用response，不能将nil当空列表。AuthKit.fetchDeviceListWithContext可作只读线索；清理以Settings详情和确认表单为准，不硬编码iMac或其他设备名称。
+- 真机正式cazer-apple-icloud-devices-v3已清理此账号所有非本机设备（本次1台iMac），succeeded后仅剩本机；重复调用already_removed=true、不POST。独立aggregate-v6确认icloud.devices.available仅本机、Find My=false、三域仍登录。主机多目标/部分失败/停止后续POST及共享栅栏回归通过，独立审查无剩余P1/P2；实际多设备批量、其他OS仍未实测。

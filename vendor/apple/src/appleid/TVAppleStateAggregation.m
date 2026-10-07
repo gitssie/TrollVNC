@@ -2,6 +2,7 @@
 #import "TVAppleEmailSettings.h"
 #import "TVAppleNameSettings.h"
 #import "TVAppleSignInWithApple.h"
+#import "TVAppleICloudDevices.h"
 
 static NSDictionary *SectionError(TVAppleErrorCode code){
     // Do not export native error descriptions/userInfo or arbitrary error domains.
@@ -50,8 +51,8 @@ NSDictionary *TVAppleAggregateState(id<TVAppleBackend> backend,NSError **error){
     NSDictionary *before=[backend snapshot:error];
     if(!before||*error){if(!*error)*error=TVAppleError(TVAppleErrorBackendRead,@"Account state is unavailable.");return nil;}
     BOOL conflict=NO;NSString *target=SettingsTarget(before,&conflict);
-    NSDictionary *name=NoProfile(),*email=NoProfile(),*siwa=NoProfile();
-    if(conflict){name=SectionError(TVAppleErrorConflict);email=SectionError(TVAppleErrorConflict);siwa=SectionError(TVAppleErrorConflict);}
+    NSDictionary *name=NoProfile(),*email=NoProfile(),*siwa=NoProfile(),*devices=NoProfile();
+    if(conflict){devices=SectionError(TVAppleErrorConflict);name=SectionError(TVAppleErrorConflict);email=SectionError(TVAppleErrorConflict);siwa=SectionError(TVAppleErrorConflict);}
     else if(target){
         NSError *readError=nil;NSDictionary *data=nil;
         if([backend conformsToProtocol:@protocol(TVAppleNameSettingsBackend)]){
@@ -69,16 +70,24 @@ NSDictionary *TVAppleAggregateState(id<TVAppleBackend> backend,NSError **error){
             siwa=ProfileResult(data,readError,target);
         }else siwa=SectionError(TVAppleErrorUnsupported);
     }
+    if(!conflict&&Selected(before,@"icloud").count==1){
+        NSError *deviceError=nil;NSDictionary *data=nil;
+        if([backend conformsToProtocol:@protocol(TVAppleICloudDevicesBackend)]){
+            data=[(id<TVAppleICloudDevicesBackend>)backend iCloudDevicesForAppleID:target error:&deviceError];
+            devices=ProfileResult(data,deviceError,target);
+        }else devices=SectionError(TVAppleErrorUnsupported);
+    }
     // Recheck after server reads. Never combine an old profile with a new identity.
     NSDictionary *after=[backend snapshot:error];
     if(!after||*error){if(!*error)*error=TVAppleError(TVAppleErrorBackendRead,@"Final account state is unavailable.");return nil;}
     BOOL consistent=[IdentitySignature(before)isEqual:IdentitySignature(after)];
     BOOL finalConflict=NO;NSString *finalTarget=SettingsTarget(after,&finalConflict);
-    if(!consistent){name=SectionError(TVAppleErrorConflict);email=SectionError(TVAppleErrorConflict);siwa=SectionError(TVAppleErrorConflict);}
+    if(!consistent){devices=SectionError(TVAppleErrorConflict);name=SectionError(TVAppleErrorConflict);email=SectionError(TVAppleErrorConflict);siwa=SectionError(TVAppleErrorConflict);}
     NSMutableDictionary *result=[after mutableCopy];
     result[@"app_store"]=DomainSummary(Selected(after,@"media"));
     NSMutableDictionary *cloud=[DomainSummary(Selected(after,@"icloud"))mutableCopy];
     cloud[@"find_my_enabled"]=after[@"find_my_enabled"];
+    cloud[@"devices"]=devices;
     result[@"icloud"]=cloud;
     [result removeObjectForKey:@"find_my_enabled"];
     result[@"identity"]=DomainSummary(Selected(after,@"identity"));

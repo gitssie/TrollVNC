@@ -12,6 +12,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     "$MODULE_ROOT/src/appleid/TVAppleEmailActions.m" \
     "$MODULE_ROOT/src/appleid/TVAppleNameSettings.m" \
     "$MODULE_ROOT/src/appleid/TVAppleSignInWithApple.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudDevices.m" \
     "$MODULE_ROOT/src/appleid/TVAppleStateAggregation.m" \
     "$MODULE_ROOT/src/icloud/TVAppleDataclassPolicy.m" \
     "$MODULE_ROOT/src/icloud/TVAppleICloudSignOut.m" \
@@ -52,6 +53,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     "$MODULE_ROOT/src/appleid/TVAppleEmailActions.m" \
     "$MODULE_ROOT/src/appleid/TVAppleNameSettings.m" \
     "$MODULE_ROOT/src/appleid/TVAppleSignInWithApple.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudDevices.m" \
     "$MODULE_ROOT/src/appleid/TVAppleStateAggregation.m" \
     "$MODULE_ROOT/src/icloud/TVAppleDataclassPolicy.m" \
     "$MODULE_ROOT/src/icloud/TVAppleICloudSignOut.m" \
@@ -79,6 +81,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     "$MODULE_ROOT/src/appleid/TVAppleEmailActions.m" \
     "$MODULE_ROOT/src/appleid/TVAppleNameSettings.m" \
     "$MODULE_ROOT/src/appleid/TVAppleSignInWithApple.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudDevices.m" \
     "$MODULE_ROOT/src/appleid/TVAppleStateAggregation.m" \
     "$MODULE_ROOT/src/icloud/TVAppleDataclassPolicy.m" \
     "$MODULE_ROOT/src/icloud/TVAppleICloudSignOut.m" \
@@ -89,3 +92,45 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     "$MODULE_ROOT/src/appstore/TVAppleManualCodeProvider.m" \
     "$MODULE_ROOT/tests/SignInWithAppleTests.m" -o "$TEST_DIR/siwa"
 "$TEST_DIR/siwa"
+
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
+    -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
+    "$MODULE_ROOT/src/common/TVAppleErrors.m" \
+    "$MODULE_ROOT/src/common/TVAppleNativeBackend.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleServices.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleEmailSettings.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleEmailActions.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleNameSettings.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleSignInWithApple.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudDevices.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleStateAggregation.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleDataclassPolicy.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudSignOut.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudEnablement.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleSearchParty.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleFindMy.m" \
+    "$MODULE_ROOT/src/appstore/TVAppleStoreAuthentication.m" \
+    "$MODULE_ROOT/src/appstore/TVAppleManualCodeProvider.m" \
+    "$MODULE_ROOT/tests/ICloudDevicesTests.m" -o "$TEST_DIR/icloud-devices"
+"$TEST_DIR/icloud-devices"
+
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
+    -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
+    "$MODULE_ROOT/src/common/TVAppleErrors.m" \
+    "$MODULE_ROOT/src/common/TVAppleNativeBackend.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleServices.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleEmailSettings.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleEmailActions.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleNameSettings.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleSignInWithApple.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudDevices.m" \
+    "$MODULE_ROOT/src/appleid/TVAppleStateAggregation.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleDataclassPolicy.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudSignOut.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleICloudEnablement.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleSearchParty.m" \
+    "$MODULE_ROOT/src/icloud/TVAppleFindMy.m" \
+    "$MODULE_ROOT/src/appstore/TVAppleStoreAuthentication.m" \
+    "$MODULE_ROOT/src/appstore/TVAppleManualCodeProvider.m" \
+    "$MODULE_ROOT/tests/NameRefreshTests.m" -o "$TEST_DIR/name-refresh"
+"$TEST_DIR/name-refresh"
