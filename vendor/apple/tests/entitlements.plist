@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>platform-application</key><true/>
+    <key>com.apple.private.security.no-container</key><true/>
+    <key>com.apple.private.accounts.allaccounts</key><true/>
+    <key>com.apple.itunesstored.private</key><true/>
+    <key>com.apple.authkit.client.private</key><true/>
+    <key>com.apple.authkit.client.internal</key><true/>
+    <!-- Match upstream's native anisette client signing. Our module does not
+         implement password/keychain storage; Apple frameworks own attestation. -->
+    <!-- Native AppleAccount/FindMyDevice diagnostic clients, observed in Settings. -->
+    <key>com.apple.cdp.statemachine</key><true/>
+    <key>com.apple.managedconfiguration.profiled-access</key><true/>
+    <!-- Settings uses this for native MobileKeyBag passcode verification. -->
+    <key>com.apple.keystore.device</key><true/>
+    <key>abs-client</key><string>143531244</string>
+    <!-- Read-only SearchParty liveness preflight before iCloud deletion. -->
+    <key>com.apple.icloud.searchpartyd.beaconmanager</key><true/>
+    <key>com.apple.icloud.findmydeviced.access</key><true/>
+    <key>com.apple.accounts.appleaccount.fullaccess</key><true/>
+    <key>adi-client</key><string>409835401</string>
+    <key>keychain-access-groups</key><array><string>apple</string></array>
+</dict></plist>
