@@ -14,5 +14,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable id)get:(NSString *)link error:(NSError **)error;
 - (nullable id)load:(NSMutableURLRequest *)request mutation:(BOOL)mutation error:(NSError **)error;
 - (NSURL *)origin;
+- (nullable NSDictionary *)freshEmailSettings:(NSString *)appleID error:(NSError **)error;
 @end
 NS_ASSUME_NONNULL_END

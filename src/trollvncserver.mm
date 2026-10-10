@@ -37,6 +37,7 @@
 #import <pthread.h>
 #import <rfb/keysym.h>
 #import <rfb/rfb.h>
+#import "TryClientSendLocks.h"
 #import <string>
 #import <sys/socket.h>
 #import <sys/sysctl.h>
@@ -45,7 +46,6 @@
 
 #import "BulletinManager.h"
 #import "ClipboardManager.h"
-#import "ClipboardText.h"
 #import "Control.h"
 #import "FBSOrientationObserver.h"
 #import "FileManagement.h"
@@ -101,15 +101,15 @@ static BOOL gIsDaemonMode = NO; // set when launched with -daemon
 
 static double gScale = 0.28; // 0 < scale <= 1.0, 1.0 = no scaling
 // Preferred frame rate range (0 = unspecified)
-static int gFpsMin = 0;
-static int gFpsPref = 0;
-static int gFpsMax = 0;
-static double gDeferWindowSec = 0.015;      // Coalescing window; 0 disables deferral
-static int gMaxInflightUpdates = 2;         // Max concurrent client encodes; drop frames if >= this
+static int gFpsMin = 15;
+static int gFpsPref = 15;
+static int gFpsMax = 15;
+static double gDeferWindowSec = 0.0;      // Coalescing window; 0 disables deferral
+static int gMaxInflightUpdates = 1;         // Max concurrent client encodes; drop frames if >= this
 static int gTileSize = 32;                  // Tile size for dirty detection (pixels)
-static int gFullscreenThresholdPercent = 0; // If changed tiles exceed this %, update full screen
+static int gFullscreenThresholdPercent = 80; // If changed tiles exceed this %, update full screen
 static int gMaxRectsLimit = 256;            // Max rects before falling back to bbox/fullscreen
-static BOOL gAsyncSwapEnabled = NO;         // Enable non-blocking swap (may cause tearing)
+static BOOL gAsyncSwapEnabled = NO; // Legacy preference; publication is always safe and non-blocking
 
 // Wheel scroll coalescing state (async, non-blocking)
 static double gWheelStepPx = 48.0;        // base pixels per wheel tick (lower = slower)
@@ -297,8 +297,8 @@ static void printUsageAndExit(const char *prog) {
     fprintf(stderr, "  -t size    Tile size (8..128, default: %d)\n", gTileSize);
     fprintf(stderr, "  -P pct     Fullscreen fallback threshold (0..100; 0=disable dirty detection, default: %d)\n",
             gFullscreenThresholdPercent);
-    fprintf(stderr, "  -R max     Max dirty rects before bbox (default: %d)\n", gMaxRectsLimit);
-    fprintf(stderr, "  -a         Non-blocking swap (may cause tearing)\n\n");
+    fprintf(stderr, "  -R max     Max dirty rects before fullscreen (default: %d)\n", gMaxRectsLimit);
+    fprintf(stderr, "  -a         Compatibility flag; swaps are always non-blocking and safe\n\n");
 
     fprintf(stderr, "Scroll/Input:\n");
     fprintf(stderr, "  -W px      Wheel step in pixels (0=disable, default: %.0f)\n", gWheelStepPx);
@@ -1546,15 +1546,6 @@ static int gBytesPerPixel = 4; // ARGB/BGRA 32-bit
 static void *gFrontBuffer = NULL; // Exposed to VNC clients via gScreen->frameBuffer
 static void *gBackBuffer = NULL;  // We render into this and then swap
 
-// Hash algorithm selection (auto: prefer CRC32 on ARM with hardware support)
-#if DEBUG
-#if defined(__aarch64__) || defined(__ARM_FEATURE_CRC32)
-static const BOOL cUseCRC32Hash = YES;
-#else
-static const BOOL cUseCRC32Hash = NO;
-#endif
-#endif
-
 typedef struct {
     int x, y, w, h;
 } DirtyRect;
@@ -1629,7 +1620,6 @@ static int gTilesY = 0;
 static size_t gTileCount = 0;
 static uint64_t *gPrevHash = NULL;
 static uint64_t *gCurrHash = NULL;
-static uint8_t *gPendingDirty = NULL; // per-tile pending dirty mask
 static BOOL gHasPending = NO;
 
 static void initializeTilingOrReset(void) {
@@ -1641,14 +1631,8 @@ static void initializeTilingOrReset(void) {
         free(gPrevHash);
         free(gCurrHash);
 
-        if (gPendingDirty) {
-            free(gPendingDirty);
-            gPendingDirty = NULL;
-        }
-
         gPrevHash = (uint64_t *)malloc(tileCount * sizeof(uint64_t));
         gCurrHash = (uint64_t *)malloc(tileCount * sizeof(uint64_t));
-        gPendingDirty = (uint8_t *)malloc(tileCount);
 
         if (!gPrevHash || !gCurrHash) {
             TVPrintError("Out of memory for tile hashes");
@@ -1664,8 +1648,6 @@ static void initializeTilingOrReset(void) {
         gTilesY = tilesY;
         gTileCount = tileCount;
 
-        if (gPendingDirty)
-            memset(gPendingDirty, 0, gTileCount);
     } else {
         for (size_t i = 0; i < gTileCount; ++i) {
             gCurrHash[i] = hash_basis();
@@ -1688,17 +1670,6 @@ NS_INLINE void resetCurrTileHashes(void) {
     }
 }
 
-// Accumulate pending dirty tiles for time-based coalescing
-NS_INLINE void accumulatePendingDirty(void) {
-    if (!gPendingDirty)
-        return;
-
-    for (size_t i = 0; i < gTileCount; ++i) {
-        if (gCurrHash[i] != gPrevHash[i])
-            gPendingDirty[i] = 1;
-    }
-}
-
 NS_INLINE void hashTiledFromBuffer(const uint8_t *buf, int width, int height, size_t bpr) {
     resetCurrTileHashes();
     for (int y = 0; y < height; ++y) {
@@ -1716,106 +1687,6 @@ NS_INLINE void hashTiledFromBuffer(const uint8_t *buf, int width, int height, si
             gCurrHash[tileIndex] = hash_update(gCurrHash[tileIndex], buf + (size_t)y * bpr + offset, length);
         }
     }
-}
-
-// Sparse sampling hash: sample a subset of pixels per tile to reduce bandwidth.
-NS_INLINE void hashTiledFromBufferSparse(const uint8_t *buf, int width, int height, size_t bpr, int sx, int sy) {
-    if (sx < 1)
-        sx = 1;
-    if (sy < 1)
-        sy = 1;
-    resetCurrTileHashes();
-    for (int y = 0; y < height; y += sy) {
-        int ty = y / gTileSize;
-        for (int tx = 0; tx < gTilesX; ++tx) {
-            int startX = tx * gTileSize;
-            if (startX >= width)
-                break;
-            int endX = startX + gTileSize;
-            if (endX > width)
-                endX = width;
-            size_t tileIndex = (size_t)ty * (size_t)gTilesX + (size_t)tx;
-            for (int x = startX; x < endX; x += sx) {
-                const uint8_t *p = buf + (size_t)y * bpr + (size_t)x * (size_t)gBytesPerPixel;
-                gCurrHash[tileIndex] = hash_update(gCurrHash[tileIndex], p, (size_t)gBytesPerPixel);
-            }
-            // Ensure last column contributes even if not aligned to stride
-            int lastX = endX - 1;
-            if (lastX >= startX && ((endX - startX - 1) % sx) != 0) {
-                const uint8_t *p = buf + (size_t)y * bpr + (size_t)lastX * (size_t)gBytesPerPixel;
-                gCurrHash[tileIndex] = hash_update(gCurrHash[tileIndex], p, (size_t)gBytesPerPixel);
-            }
-        }
-    }
-    // Also sample the last row if height-1 isn't covered by the stride
-    int lastY = height - 1;
-    if (lastY >= 0 && ((height - 1) % sy) != 0) {
-        int ty = lastY / gTileSize;
-        for (int tx = 0; tx < gTilesX; ++tx) {
-            int startX = tx * gTileSize;
-            if (startX >= width)
-                break;
-            int endX = startX + gTileSize;
-            if (endX > width)
-                endX = width;
-            size_t tileIndex = (size_t)ty * (size_t)gTilesX + (size_t)tx;
-            for (int x = startX; x < endX; x += sx) {
-                const uint8_t *p = buf + (size_t)lastY * bpr + (size_t)x * (size_t)gBytesPerPixel;
-                gCurrHash[tileIndex] = hash_update(gCurrHash[tileIndex], p, (size_t)gBytesPerPixel);
-            }
-            int lastX = endX - 1;
-            if (lastX >= startX && ((endX - startX - 1) % sx) != 0) {
-                const uint8_t *p = buf + (size_t)lastY * bpr + (size_t)lastX * (size_t)gBytesPerPixel;
-                gCurrHash[tileIndex] = hash_update(gCurrHash[tileIndex], p, (size_t)gBytesPerPixel);
-            }
-        }
-    }
-}
-
-// Parallel full hash over tiles: split by tile rows to reduce wall clock at flush.
-NS_INLINE void hashTiledFromBufferParallel(const uint8_t *buf, int width, int height, size_t bpr, int threads) {
-    if (threads <= 1) {
-        hashTiledFromBuffer(buf, width, height, bpr);
-        return;
-    }
-    resetCurrTileHashes();
-    // Split by tile row bands
-    int tilesY = gTilesY;
-    if (tilesY <= 0)
-        return;
-    int bands = threads;
-    if (bands > tilesY)
-        bands = tilesY;
-    dispatch_group_t grp = dispatch_group_create();
-    for (int band = 0; band < bands; ++band) {
-        dispatch_group_async(grp, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
-            for (int ty = band; ty < tilesY; ty += bands) {
-                int startY = ty * gTileSize;
-                int endY = startY + gTileSize;
-                if (startY >= height)
-                    break;
-                if (endY > height)
-                    endY = height;
-                for (int y = startY; y < endY; ++y) {
-                    for (int tx = 0; tx < gTilesX; ++tx) {
-                        int startX = tx * gTileSize;
-                        if (startX >= width)
-                            break;
-                        int endX = startX + gTileSize;
-                        if (endX > width)
-                            endX = width;
-                        size_t offset = (size_t)startX * (size_t)gBytesPerPixel;
-                        size_t length = (size_t)(endX - startX) * (size_t)gBytesPerPixel;
-                        size_t tileIndex = (size_t)ty * (size_t)gTilesX + (size_t)tx;
-                        // Each tileIndex is updated by a single band (fixed ty), no race across bands.
-                        gCurrHash[tileIndex] =
-                            hash_update(gCurrHash[tileIndex], buf + (size_t)y * bpr + offset, length);
-                    }
-                }
-            }
-        });
-    }
-    dispatch_group_wait(grp, DISPATCH_TIME_FOREVER);
 }
 
 // Build dirty rectangles from tile hash diffs. Returns number of rects written, up to maxRects.
@@ -1899,56 +1770,9 @@ static int buildDirtyRects(DirtyRect *rects, int maxRects, int *outChangedTiles)
     return rectCount;
 }
 
-// Build rects from pending mask by temporarily mapping to hashes
-static int buildRectsFromPending(DirtyRect *rects, int maxRects) {
-    if (!gPendingDirty)
-        return 0;
-
-    // Temporarily mark curr!=prev for pending tiles
-    // Save originals
-    // For efficiency, we only synthesize gCurrHash markers without touching buffers
-    size_t changed = 0;
-    for (size_t i = 0; i < gTileCount; ++i) {
-        if (gPendingDirty[i]) {
-            if (gCurrHash[i] == gPrevHash[i])
-                gCurrHash[i] ^= 0x1ULL;
-            changed++;
-        }
-    }
-
-    int dummyTiles = 0;
-    int cnt = buildDirtyRects(rects, maxRects, &dummyTiles);
-
-    // Restore hashes for tiles we toggled
-    for (size_t i = 0; i < gTileCount; ++i) {
-        if (gPendingDirty[i]) {
-            if (gCurrHash[i] == gPrevHash[i])
-                gCurrHash[i] ^= 0x1ULL; // unlikely path
-            else if ((gCurrHash[i] ^ 0x1ULL) == gPrevHash[i])
-                gCurrHash[i] ^= 0x1ULL;
-        }
-    }
-
-    (void)changed;
-    return cnt;
-}
-
 NS_INLINE void markRectsModified(DirtyRect *rects, int rectCount) {
     for (int i = 0; i < rectCount; ++i) {
         rfbMarkRectAsModified(gScreen, rects[i].x, rects[i].y, rects[i].x + rects[i].w, rects[i].y + rects[i].h);
-    }
-}
-
-NS_INLINE void copyRectsFromBackToFront(DirtyRect *rects, int rectCount) {
-    size_t fbBPR = (size_t)gWidth * (size_t)gBytesPerPixel;
-    for (int i = 0; i < rectCount; ++i) {
-        int x = rects[i].x, y = rects[i].y, w = rects[i].w, h = rects[i].h;
-        size_t rowBytes = (size_t)w * (size_t)gBytesPerPixel;
-        for (int r = 0; r < h; ++r) {
-            uint8_t *dst = (uint8_t *)gFrontBuffer + (size_t)(y + r) * fbBPR + (size_t)x * gBytesPerPixel;
-            uint8_t *src = (uint8_t *)gBackBuffer + (size_t)(y + r) * fbBPR + (size_t)x * gBytesPerPixel;
-            memcpy(dst, src, rowBytes);
-        }
     }
 }
 
@@ -1980,15 +1804,8 @@ static int setDesktopSizeHook(int width, int height, int numScreens, rfbExtDeskt
 
 #pragma mark - Display Tiling Constants
 
-// Hashing performance controls
-static const int cHashStrideX = 4;              // sparse sampling stride X (>=1; 1 = full scan)
-static const int cHashStrideY = 4;              // sparse sampling stride Y (>=1; 1 = full scan)
-static const BOOL cSparseHashDuringDefer = YES; // use sparse hashing while within defer window
-// Skip vImage scaling when src/dst size difference is small; copy with pad/crop instead
-static const int cNoScalePadThresholdPx = 8; // if both |dW| and |dH| <= this, do pad/crop copy
-
-// Flush-time hashing optimization
-static const BOOL cParallelHashOnFlush = YES; // use parallel hashing at flush to reduce wall time
+// Skip vImage scaling when src/dst size difference is small.
+static const int cNoScalePadThresholdPx = 8;
 
 #pragma mark - Frame Handlers
 
@@ -2075,8 +1892,6 @@ NS_INLINE void maybeResizeFramebufferForRotation(int rotQ) {
     // Re-init tiling/hash state for new geometry
     initializeTilingOrReset();
     // Clear pending dirty flags to avoid carrying over old-geometry state into the new geometry
-    if (gPendingDirty)
-        memset(gPendingDirty, 0, gTileCount);
 
     gHasPending = NO;
     TVLog(@"Resize: framebuffer changed to %dx%d (rotQ=%d, scale=%.3f)", gWidth, gHeight, rotQ, gScale);
@@ -2179,60 +1994,21 @@ NS_INLINE void swapBuffers(void) {
     gScreen->frameBuffer = (char *)gFrontBuffer;
 }
 
-// Try to acquire all clients' sendMutex without blocking.
-// Returns 1 on success and fills locked[] with acquired mutexes (count in *lockedCount),
-// otherwise returns 0 and releases any partial locks.
-static int tryLockAllClients(pthread_mutex_t **locked, size_t *lockedCount, size_t capacity) {
-    *lockedCount = 0;
-    rfbClientIteratorPtr it = rfbGetClientIterator(gScreen);
-    rfbClientPtr cl;
-
-    int ok = 1;
-    while ((cl = rfbClientIteratorNext(it))) {
-        if (*lockedCount >= capacity) {
-            ok = 0;
-            break;
-        }
-        pthread_mutex_t *m = &cl->sendMutex;
-        if (pthread_mutex_trylock(m) == 0) {
-            locked[(*lockedCount)++] = m;
-        } else {
-            ok = 0;
-            break;
-        }
+// Never overwrite a framebuffer while an encoder is reading it, and never
+// wait for network sends on the capture/main thread. Retry the latest screen
+// even if CoreAnimation reports no further changes after a skipped publish.
+static bool publishFramebuffer(DirtyRect *rects, int rectCount, bool fullScreen) {
+    TryClientSendLocks locks(gScreen);
+    if (!locks) {
+        [[ScreenCapturer sharedCapturer] forceNextFrameUpdate];
+        return false;
     }
-
-    rfbReleaseClientIterator(it);
-
-    if (!ok) {
-        // release any that were acquired
-        for (size_t i = 0; i < *lockedCount; ++i) {
-            pthread_mutex_unlock(locked[i]);
-        }
-        *lockedCount = 0;
-        return 0;
-    }
-
-    return 1;
-}
-
-// Blocking lock helpers (original behavior): lock all clients, then unlock all.
-NS_INLINE void lockAllClientsBlocking(void) {
-    rfbClientIteratorPtr it = rfbGetClientIterator(gScreen);
-    rfbClientPtr cl;
-    while ((cl = rfbClientIteratorNext(it))) {
-        pthread_mutex_lock(&cl->sendMutex);
-    }
-    rfbReleaseClientIterator(it);
-}
-
-NS_INLINE void unlockAllClientsBlocking(void) {
-    rfbClientIteratorPtr it = rfbGetClientIterator(gScreen);
-    rfbClientPtr cl;
-    while ((cl = rfbClientIteratorNext(it))) {
-        pthread_mutex_unlock(&cl->sendMutex);
-    }
-    rfbReleaseClientIterator(it);
+    swapBuffers();
+    if (fullScreen)
+        rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
+    else
+        markRectsModified(rects, rectCount);
+    return true;
 }
 
 static void handleFramebuffer(CMSampleBufferRef sampleBuffer) {
@@ -2250,6 +2026,9 @@ static void handleFramebuffer(CMSampleBufferRef sampleBuffer) {
 
     // Busy-drop: if encoders are busy and limit reached, skip this frame (disabled when -Q 0)
     if (gMaxInflightUpdates > 0 && gInflight.load(std::memory_order_relaxed) >= gMaxInflightUpdates) {
+        // The sender can start between the pre-capture gate and this check.
+        // updateDisplay has already consumed the screen's dirty count.
+        [[ScreenCapturer sharedCapturer] forceNextFrameUpdate];
         // When busy dropping, skip all hashing/dirty work.
         TVLogVerbose(@"drop frame due to inflight=%d >= limit=%d", gInflight.load(std::memory_order_relaxed),
                      gMaxInflightUpdates);
@@ -2428,13 +2207,13 @@ static void handleFramebuffer(CMSampleBufferRef sampleBuffer) {
             CFAbsoluteTime __tv_tScale0 = CFAbsoluteTimeGetCurrent();
 #endif
 
-            if (ensureScaleTemp(stage.width, stage.height, dstBuf.width, dstBuf.height, kvImageHighQualityResampling) !=
+            if (ensureScaleTemp(stage.width, stage.height, dstBuf.width, dstBuf.height, kvImageNoFlags) !=
                 0) {
                 CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
                 return;
             }
 
-            vImage_Error err = vImageScale_ARGB8888(&stage, &dstBuf, gScaleTemp, kvImageHighQualityResampling);
+            vImage_Error err = vImageScale_ARGB8888(&stage, &dstBuf, gScaleTemp, kvImageNoFlags);
             if (err != kvImageNoError) {
                 static BOOL sLoggedVImageErrOnce = NO;
                 if (!sLoggedVImageErrOnce) {
@@ -2470,52 +2249,10 @@ static void handleFramebuffer(CMSampleBufferRef sampleBuffer) {
     // to avoid mixing hashes/pending dirties from the previous orientation.
     if (rotationChanged) {
         // Clear pending mask/state
-        if (gPendingDirty)
-            memset(gPendingDirty, 0, gTileCount);
         gHasPending = NO;
 
-#if DEBUG
-        CFAbsoluteTime __tv_tSwap0 = CFAbsoluteTimeGetCurrent();
-#endif
-
-        if (gAsyncSwapEnabled) {
-            pthread_mutex_t *locked[64];
-            size_t lockedCount = 0;
-            if (tryLockAllClients(locked, &lockedCount, sizeof(locked) / sizeof(locked[0]))) {
-                swapBuffers();
-                for (size_t i = 0; i < lockedCount; ++i)
-                    pthread_mutex_unlock(locked[i]);
-                rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-
-#if DEBUG
-                CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-                TVLogVerbose(@"rotationChanged async-swap+mark fullscreen took %.3f ms",
-                             (__tv_tSwap1 - __tv_tSwap0) * 1000.0);
-#endif
-
-            } else {
-                copyWithStrideTight((uint8_t *)gFrontBuffer, (uint8_t *)gBackBuffer, gWidth, gHeight,
-                                    (size_t)gWidth * (size_t)gBytesPerPixel);
-                rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-
-#if DEBUG
-                CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-                TVLogVerbose(@"rotationChanged copy(fullscreen)+mark took %.3f ms",
-                             (__tv_tSwap1 - __tv_tSwap0) * 1000.0);
-#endif
-            }
-        } else {
-            lockAllClientsBlocking();
-            swapBuffers();
-            rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-            unlockAllClientsBlocking();
-
-#if DEBUG
-            CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-            TVLogVerbose(@"rotationChanged blocking-swap+mark fullscreen took %.3f ms",
-                         (__tv_tSwap1 - __tv_tSwap0) * 1000.0);
-#endif
-        }
+        if (!publishFramebuffer(nullptr, 0, true))
+            return;
 
         // Skip dirty detection for this frame after rotation; return early
         sLastRotQ = rotQ;
@@ -2539,49 +2276,8 @@ static void handleFramebuffer(CMSampleBufferRef sampleBuffer) {
     // If dirty detection is disabled, perform a full-screen update
     if (dirtyDisabled) {
 
-#if DEBUG
-        CFAbsoluteTime __tv_tSwap0 = CFAbsoluteTimeGetCurrent();
-#endif
-
-        if (gAsyncSwapEnabled) {
-            pthread_mutex_t *locked[64];
-            size_t lockedCount = 0;
-            if (tryLockAllClients(locked, &lockedCount, sizeof(locked) / sizeof(locked[0]))) {
-                swapBuffers();
-                for (size_t i = 0; i < lockedCount; ++i)
-                    pthread_mutex_unlock(locked[i]);
-                rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-
-#if DEBUG
-                CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-                TVLogVerbose(@"dirtyDisabled async-swap+mark fullscreen took %.3f ms",
-                             (__tv_tSwap1 - __tv_tSwap0) * 1000.0);
-#endif
-
-            } else {
-                // Whole screen copy fallback (tight -> tight)
-                copyWithStrideTight((uint8_t *)gFrontBuffer, (uint8_t *)gBackBuffer, gWidth, gHeight,
-                                    (size_t)gWidth * (size_t)gBytesPerPixel);
-                rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-
-#if DEBUG
-                CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-                TVLogVerbose(@"dirtyDisabled copy(fullscreen)+mark took %.3f ms", (__tv_tSwap1 - __tv_tSwap0) * 1000.0);
-#endif
-            }
-        } else {
-            // Blocking swap to avoid tearing
-            lockAllClientsBlocking();
-            swapBuffers();
-            rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-            unlockAllClientsBlocking();
-
-#if DEBUG
-            CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-            TVLogVerbose(@"dirtyDisabled blocking-swap+mark fullscreen took %.3f ms",
-                         (__tv_tSwap1 - __tv_tSwap0) * 1000.0);
-#endif
-        }
+        if (!publishFramebuffer(nullptr, 0, true))
+            return;
 
 #if DEBUG
         CFAbsoluteTime __tv_tEnd = CFAbsoluteTimeGetCurrent();
@@ -2593,244 +2289,54 @@ static void handleFramebuffer(CMSampleBufferRef sampleBuffer) {
         return;
     }
 
-    // Build dirty rectangles with deferred coalescing window (enabled)
-    // Lightweight hashing to update pending and decide whether to flush.
-
+    // Compare identical full-hash inputs with the last successfully published
+    // frame. At the scaled output resolution this is a single cheap scan.
 #if DEBUG
     CFAbsoluteTime __tv_tHash0 = CFAbsoluteTimeGetCurrent();
 #endif
-
-    if (cSparseHashDuringDefer && gDeferWindowSec > 0) {
-        hashTiledFromBufferSparse((const uint8_t *)gBackBuffer, gWidth, gHeight,
-                                  (size_t)gWidth * (size_t)gBytesPerPixel, cHashStrideX, cHashStrideY);
-    } else {
-        resetCurrTileHashes();
-        hashTiledFromBuffer((const uint8_t *)gBackBuffer, gWidth, gHeight, (size_t)gWidth * (size_t)gBytesPerPixel);
-    }
-
+    hashTiledFromBuffer((const uint8_t *)gBackBuffer, gWidth, gHeight,
+                        (size_t)gWidth * (size_t)gBytesPerPixel);
 #if DEBUG
-    CFAbsoluteTime __tv_tHash1 = CFAbsoluteTimeGetCurrent();
-    CFTimeInterval __tv_msHash = (__tv_tHash1 - __tv_tHash0) * 1000.0;
-    TVLogVerbose(@"tile hashing took %.3f ms (tiles=%zu, tileSize=%d)%@%@", __tv_msHash, gTileCount, gTileSize,
-                 (cSparseHashDuringDefer && gDeferWindowSec > 0) ? @" [sparse]" : @"",
-                 cUseCRC32Hash ? @" [crc32]" : @" [fnv]");
+    CFTimeInterval __tv_msHash = (CFAbsoluteTimeGetCurrent() - __tv_tHash0) * 1000.0;
+    CFAbsoluteTime __tv_tRects0 = CFAbsoluteTimeGetCurrent();
 #endif
-
     enum { kRectBuf = 1024 };
     DirtyRect rects[kRectBuf];
     int changedTiles = 0;
-
-    // Accumulate pending dirty tiles
-
-#if DEBUG
-    CFAbsoluteTime __tv_tPend0 = CFAbsoluteTimeGetCurrent();
-#endif
-
-    accumulatePendingDirty();
-
-#if DEBUG
-    CFAbsoluteTime __tv_tPend1 = CFAbsoluteTimeGetCurrent();
-    CFTimeInterval __tv_msPend = (__tv_tPend1 - __tv_tPend0) * 1000.0;
-    TVLogVerbose(@"accumulate pending took %.3f ms (hasPending=%@)", __tv_msPend, gHasPending ? @"YES" : @"NO");
-#endif
-
-    // Decide whether to flush now
-    BOOL shouldFlush = YES;
+    int rectCount = buildDirtyRects(rects, MIN(gMaxRectsLimit, kRectBuf), &changedTiles);
+    if (rectCount == 0) {
+        gHasPending = NO;
+        return; // Nothing changed: do not encode or transmit an empty/full frame.
+    }
     static CFAbsoluteTime sDeferStartTime = 0;
     if (gDeferWindowSec > 0) {
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
         if (!gHasPending) {
             gHasPending = YES;
-            sDeferStartTime = CFAbsoluteTimeGetCurrent();
-            shouldFlush = NO; // start window, wait for more
-        } else {
-            CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-            shouldFlush = ((now - sDeferStartTime) >= gDeferWindowSec);
-            TVLogVerbose(@"defer window elapsed=%.3f ms (threshold=%.3f ms) -> %@", (now - sDeferStartTime) * 1000.0,
-                         gDeferWindowSec * 1000.0, shouldFlush ? @"FLUSH" : @"WAIT");
+            sDeferStartTime = now;
+        }
+        if (now - sDeferStartTime < gDeferWindowSec) {
+            [[ScreenCapturer sharedCapturer] forceNextFrameUpdate];
+            return;
         }
     }
-
-    int rectCount = 0;
-    int changedPct = 0;
+    int changedPct = gTileCount ? (int)(changedTiles * 100 / gTileCount) : 100;
     BOOL fullScreen = NO;
 
-    if (!shouldFlush) {
-        // Still deferring: do not notify clients yet; keep previous full-hash baseline.
-
-#if DEBUG
-        CFAbsoluteTime __tv_tEnd = CFAbsoluteTimeGetCurrent();
-        TVLogVerbose(@"deferred (no flush) summary rotQ=%d lock=%.3fms resize=%.3fms rotate=%.3fms scale/copy=%.3fms "
-                     @"hash=%.3fms total=%.3fms",
-                     rotQ, __tv_msLock, __tv_msResize, __tv_msRotate, __tv_msScaleOrCopy, __tv_msHash,
-                     (__tv_tEnd - __tv_tStart) * 1000.0);
-#endif
-
-        return;
-    }
-
-    // At flush: recompute full hashes for precise rects
-    {
-
-#if DEBUG
-        CFAbsoluteTime __tv_tHashFull0 = CFAbsoluteTimeGetCurrent();
-#endif
-
-        if (cParallelHashOnFlush) {
-            // Use number of logical CPUs as thread hint (capped)
-            int threads = (int)[[NSProcessInfo processInfo] processorCount];
-            if (threads < 2)
-                threads = 2;
-            if (threads > 8)
-                threads = 8;
-            hashTiledFromBufferParallel((const uint8_t *)gBackBuffer, gWidth, gHeight,
-                                        (size_t)gWidth * (size_t)gBytesPerPixel, threads);
-        } else {
-            resetCurrTileHashes();
-            hashTiledFromBuffer((const uint8_t *)gBackBuffer, gWidth, gHeight, (size_t)gWidth * (size_t)gBytesPerPixel);
-        }
-
-#if DEBUG
-        CFAbsoluteTime __tv_tHashFull1 = CFAbsoluteTimeGetCurrent();
-        __tv_msHash = (__tv_tHashFull1 - __tv_tHashFull0) * 1000.0;
-        TVLogVerbose(@"tile hashing (flush full)%@ took %.3f ms (tiles=%zu, tileSize=%d)%@",
-                     cParallelHashOnFlush ? @" [parallel]" : @"", __tv_msHash, gTileCount, gTileSize,
-                     cUseCRC32Hash ? @" [crc32]" : @" [fnv]");
-#endif
-    }
-
-// Promote pending tiles into rects
-#if DEBUG
-    CFAbsoluteTime __tv_tRects0 = CFAbsoluteTimeGetCurrent();
-#endif
-
-    rectCount = buildRectsFromPending(rects, MIN(gMaxRectsLimit, kRectBuf));
-
-    // If anything from this frame is also new dirty not in pending, ensure included
-    int extraTiles = 0;
-    if (rectCount == 0) {
-        rectCount = buildDirtyRects(rects, MIN(gMaxRectsLimit, kRectBuf), &changedTiles);
-    } else {
-        // Merge current frame dirties by re-running with hashes, bounded
-        DirtyRect rectsNow[kRectBuf];
-        int nowCount = buildDirtyRects(rectsNow, MIN(gMaxRectsLimit, kRectBuf), &extraTiles);
-
-        // Simple append then vertical merge will compact later in pipeline
-        int space = kRectBuf - rectCount;
-        int take = nowCount < space ? nowCount : space;
-        if (take > 0)
-            memcpy(&rects[rectCount], rectsNow, (size_t)take * sizeof(DirtyRect));
-        rectCount += take;
-    }
-
-    int totalTiles = (int)gTileCount;
-    int totalChanged = changedTiles + extraTiles;
-    changedPct = (totalTiles > 0) ? (totalChanged * 100 / totalTiles) : 100;
-
-    if (rectCount >= gMaxRectsLimit) {
-        // Collapse to bounding box
-        int minX = gWidth, minY = gHeight, maxX = 0, maxY = 0;
-        for (int i = 0; i < rectCount; ++i) {
-            if (rects[i].w <= 0 || rects[i].h <= 0)
-                continue;
-            if (rects[i].x < minX)
-                minX = rects[i].x;
-            if (rects[i].y < minY)
-                minY = rects[i].y;
-            if (rects[i].x + rects[i].w > maxX)
-                maxX = rects[i].x + rects[i].w;
-            if (rects[i].y + rects[i].h > maxY)
-                maxY = rects[i].y + rects[i].h;
-        }
-
-        rects[0] = (DirtyRect){minX, minY, maxX - minX, maxY - minY};
-        rectCount = 1;
-
-        TVLogVerbose(@"rects exceeded limit -> collapse to bbox");
-    }
-
-    fullScreen = (changedPct >= gFullscreenThresholdPercent) || rectCount == 0;
+    fullScreen = changedPct >= gFullscreenThresholdPercent || rectCount >= gMaxRectsLimit;
 
 #if DEBUG
     CFAbsoluteTime __tv_tRects1 = CFAbsoluteTimeGetCurrent();
     CFTimeInterval __tv_msRects = (__tv_tRects1 - __tv_tRects0) * 1000.0;
-    TVLogVerbose(@"build rects took %.3f ms (rects=%d, changedTiles=%d, extraTiles=%d, changedPct=%d%%, fsThresh=%d%%, "
+    TVLogVerbose(@"build rects took %.3f ms (rects=%d, changedTiles=%d, changedPct=%d%%, fsThresh=%d%%, "
                  @"fullscreen=%@)",
-                 __tv_msRects, rectCount, changedTiles, extraTiles, changedPct, gFullscreenThresholdPercent,
+                 __tv_msRects, rectCount, changedTiles, changedPct, gFullscreenThresholdPercent,
                  fullScreen ? @"YES" : @"NO");
 #endif
 
-    // Clear pending
-    if (gPendingDirty)
-        memset(gPendingDirty, 0, gTileCount);
-
+    if (!publishFramebuffer(rects, rectCount, fullScreen))
+        return; // Leave hash baseline unchanged so the next capture retries damage.
     gHasPending = NO;
-
-#if DEBUG
-    CFAbsoluteTime __tv_tSwap0 = CFAbsoluteTimeGetCurrent();
-#endif
-
-    if (gAsyncSwapEnabled) {
-        // Try non-blocking swap with fallback to single-buffer copy.
-        pthread_mutex_t *locked[64];
-        size_t lockedCount = 0;
-
-        if (tryLockAllClients(locked, &lockedCount, sizeof(locked) / sizeof(locked[0]))) {
-            swapBuffers();
-            for (size_t i = 0; i < lockedCount; ++i)
-                pthread_mutex_unlock(locked[i]);
-            if (fullScreen) {
-                rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-            } else {
-                markRectsModified(rects, rectCount);
-            }
-
-#if DEBUG
-            CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-            TVLogVerbose(@"async-swap+mark took %.3f ms (%@)", (__tv_tSwap1 - __tv_tSwap0) * 1000.0,
-                         fullScreen ? @"fullscreen" : @"partial");
-#endif
-
-        } else {
-            if (fullScreen) {
-                // Whole screen copy fallback (tight -> tight)
-                copyWithStrideTight((uint8_t *)gFrontBuffer, (uint8_t *)gBackBuffer, gWidth, gHeight,
-                                    (size_t)gWidth * (size_t)gBytesPerPixel);
-                rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-
-#if DEBUG
-                CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-                TVLogVerbose(@"async path copy(fullscreen)+mark took %.3f ms", (__tv_tSwap1 - __tv_tSwap0) * 1000.0);
-#endif
-
-            } else {
-                // Only copy dirty regions from back to front to reduce tearing and bandwidth
-                copyRectsFromBackToFront(rects, rectCount);
-                markRectsModified(rects, rectCount);
-
-#if DEBUG
-                CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-                TVLogVerbose(@"async path copy(dirty %d rects)+mark took %.3f ms", rectCount,
-                             (__tv_tSwap1 - __tv_tSwap0) * 1000.0);
-#endif
-            }
-        }
-    } else {
-        // Original blocking behavior to avoid tearing.
-        lockAllClientsBlocking();
-        swapBuffers();
-        if (fullScreen) {
-            rfbMarkRectAsModified(gScreen, 0, 0, gWidth, gHeight);
-        } else {
-            markRectsModified(rects, rectCount);
-        }
-        unlockAllClientsBlocking();
-
-#if DEBUG
-        CFAbsoluteTime __tv_tSwap1 = CFAbsoluteTimeGetCurrent();
-        TVLogVerbose(@"blocking-swap+mark took %.3f ms (%@)", (__tv_tSwap1 - __tv_tSwap0) * 1000.0,
-                     fullScreen ? @"fullscreen" : @"partial");
-#endif
-    }
 
     // Prepare for next frame: current hashes become previous
     swapTileHashes();
@@ -4184,60 +3690,6 @@ static enum rfbNewClientAction newClientHook(rfbClientPtr cl) {
 
 #pragma mark - Clipboard Extension
 
-static std::atomic<int> gClipboardSuppressSend(0); // >0 means suppress sending clipboard to clients
-
-static void setXCutTextLatin1(char *str, int len, rfbClientPtr cl) {
-    (void)cl;
-    if (!str || len < 0)
-        len = 0;
-
-    TVLog(@"Clipboard: received client cut text (Latin-1) len=%d", len);
-    NSData *data = [NSData dataWithBytes:str length:(NSUInteger)len];
-    NSString *s = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
-    if (!s)
-        s = @"";
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        gClipboardSuppressSend.fetch_add(1, std::memory_order_relaxed);
-
-        TVLog(@"Clipboard: applying client text to UIPasteboard (Latin-1), suppression now=%d",
-              gClipboardSuppressSend.load(std::memory_order_relaxed));
-        [[ClipboardManager sharedManager] setStringFromRemote:s];
-
-        gClipboardSuppressSend.fetch_sub(1, std::memory_order_relaxed);
-    });
-}
-
-static void setXCutTextUTF8(char *str, int len, rfbClientPtr cl) {
-    (void)cl;
-    if (!str || len < 0)
-        len = 0;
-
-    // Keep Extended Clipboard's wire terminator out of UIPasteboard text.
-    len = tvClipboardUTF8TextLength(str, len);
-
-    TVLog(@"Clipboard: received client cut text (UTF-8) len=%d", len);
-
-    NSData *data = [NSData dataWithBytes:str length:(NSUInteger)len];
-    NSString *s = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    if (!s) {
-        // Fallback try Latin-1 if UTF-8 decode fails
-        s = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
-        if (!s)
-            s = @"";
-    }
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        gClipboardSuppressSend.fetch_add(1, std::memory_order_relaxed);
-
-        TVLog(@"Clipboard: applying client text to UIPasteboard (UTF-8), suppression now=%d",
-              gClipboardSuppressSend.load(std::memory_order_relaxed));
-        [[ClipboardManager sharedManager] setStringFromRemote:s];
-
-        gClipboardSuppressSend.fetch_sub(1, std::memory_order_relaxed);
-    });
-}
-
 static void sendClipboardToClients(NSString *_Nullable text) {
     if (!gScreen) {
         TVLog(@"Clipboard: screen not initialized; skipping send");
@@ -4252,11 +3704,6 @@ static void sendClipboardToClients(NSString *_Nullable text) {
     if (gClientCount <= 0) {
         TVLog(@"Clipboard: no connected clients; skipping send");
         return;
-    }
-
-    if (gClipboardSuppressSend.load(std::memory_order_relaxed) > 0) {
-        TVLog(@"Clipboard: send suppressed (local set echo avoidance)");
-        return; // suppressed (likely local set)
     }
 
     char *utf8 = NULL;
@@ -4402,9 +3849,6 @@ static void prepareClipboardManager(void) {
     // server->client sync; start/stop tied to client presence
     if (gClipboardEnabled) {
         [[ClipboardManager sharedManager] setOnChange:^(NSString *_Nullable text) {
-            // If we’re in suppression (coming from client->server), do nothing
-            if (gClipboardSuppressSend.load(std::memory_order_relaxed) > 0)
-                return;
             sendClipboardToClients(text);
         }];
     } else {
@@ -4413,6 +3857,10 @@ static void prepareClipboardManager(void) {
 }
 
 static void prepareScreenCapturer(void) {
+    [ScreenCapturer sharedCapturer].captureReadinessHandler = ^BOOL {
+        return gMaxInflightUpdates == 0 ||
+               gInflight.load(std::memory_order_relaxed) < gMaxInflightUpdates;
+    };
     // Apply preferred frame rate (if provided)
     if (gFpsMin > 0 || gFpsPref > 0 || gFpsMax > 0) {
         TVLog(@"Applying preferred FPS to ScreenCapturer: min=%d pref=%d max=%d", gFpsMin, gFpsPref, gFpsMax);
@@ -4664,14 +4112,9 @@ static void setupRfbClassicAuthentication(void) {
 }
 
 static void setupRfbCutTextHandlers(void) {
-    // client->server sync
-    if (gClipboardEnabled) {
-        gScreen->setXCutText = setXCutTextLatin1;
-        gScreen->setXCutTextUTF8 = setXCutTextUTF8;
-        TVLog(@"Clipboard: client->server handlers registered (enabled)");
-    } else {
-        TVLog(@"Clipboard: client->server handlers not registered (disabled)");
-    }
+    // Phone clipboard writes are authorized exclusively through ZXTouch.
+    gScreen->setXCutText = NULL;
+    gScreen->setXCutTextUTF8 = NULL;
 }
 
 static void setupRfbServerSideCursor(void) {
@@ -5149,7 +4592,7 @@ int main(int argc, const char *argv[]) {
             setupRfbCutTextHandlers();
             setupRfbServerSideCursor();
             setupRfbHttpServer();
-            tvRegisterAppManagement(gScreen);
+            tvRegisterAppManagement(gScreen, gZXTouchPort);
             setupRfbFileTransferExtension();
             prepareBulletinManager();
             prepareClipboardManager();

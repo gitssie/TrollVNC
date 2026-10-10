@@ -38,18 +38,30 @@
 @property NSUInteger requests;
 @property TVAppleCodeCompletion reply;
 @property dispatch_semaphore_t requested;
+@property NSString *method;
 @end
 @implementation DeferredProvider
 - (instancetype)init { if ((self = [super init])) _requested = dispatch_semaphore_create(0); return self; }
 - (void)prepareForAuthentication:(void (^)(NSError *))completion { completion(nil); }
 - (void)requestCodeForChallenge:(NSDictionary *)challenge completion:(TVAppleCodeCompletion)completion {
-    (void)challenge;
+    self.method = challenge[@"verification_method"];
     @synchronized (self) { _requests++; _reply = [completion copy]; }
     dispatch_semaphore_signal(_requested);
 }
 @end
 static void Wait(dispatch_semaphore_t signal) {
     assert(!dispatch_semaphore_wait(signal, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)));
+}
+static void NativeSMS(id context, SEL selector, id dictionary, long long status, id configuration,
+                      void (^completion)(NSHTTPURLResponse *, NSDictionary *, NSError *)) {
+    (void)selector; (void)configuration;
+    assert([dictionary[@"hsa2Account"] boolValue] && (status == 200 || status == 201));
+    // Test stand-in for Apple's original SMS implementation. The adapter must
+    // delegate to it rather than constructing a trusted-device verification.
+    assert([CodePrompt(context, NULL, NO, [NSObject new]) isEqual:@"000123"]);
+    NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:[NSURL URLWithString:@"https://gsa.apple.com/auth/verify/phone/securitycode"]
+        statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{}];
+    completion(response, @{}, nil);
 }
 int main(void) {
     @autoreleasepool {
@@ -118,6 +130,36 @@ int main(void) {
         NSDictionary *body = [NSJSONSerialization JSONObjectWithData:context.verifiedRequest.HTTPBody options:0 error:NULL];
         assert(([body isEqual:@{ @"securityCode":@{ @"code":@"000123" } }]));
         puts("PASS native_trusted_device_request");
+        // Observed iOS15 HTTP423 carries the same HSA2 challenge, not a rejection.
+        context = [TestContext new]; context.utility = [TestUtility new];
+        context.response = verifiedContext.response;
+        provider = [DeferredProvider new]; state = [TVAppleChallengeState new]; state.provider = provider;
+        objc_setAssociatedObject(context, &ChallengeKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        done = dispatch_semaphore_create(0);
+        TrustedDeviceUI(context, NULL, @{ @"hsa2Account":@YES, @"securityCode":@{ @"length":@6 } }, 423, configuration,
+            ^(NSHTTPURLResponse *response, NSDictionary *body, NSError *error) {
+                assert(!error && !body && response.statusCode == 204); dispatch_semaphore_signal(done);
+            });
+        Wait(provider.requested); provider.reply(@"000123", nil); Wait(done);
+        assert(context.verifiedRequest && provider.requests == 1);
+        puts("PASS native_trusted_device_http423");
+        for (NSNumber *smsStatus in @[@423, @201]) {
+        context = [TestContext new]; provider = [DeferredProvider new];
+        state = [TVAppleChallengeState new]; state.provider = provider; state.useSMS = YES;
+        objc_setAssociatedObject(context, &ChallengeKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        SEL smsSelector = NSSelectorFromString(@"_handleServerUISMSVerificationWithResponseDictionary:statusCode:configuration:completion:");
+        OriginalPrompts = @{NSStringFromSelector(smsSelector):[NSValue valueWithPointer:(void *)NativeSMS]};
+        done = dispatch_semaphore_create(0);
+        TrustedDeviceUI(context, smsSelector, @{@"hsa2Account":@YES,@"securityCode":@{}}, smsStatus.longLongValue, configuration,
+            ^(NSHTTPURLResponse *response, NSDictionary *body, NSError *error) {
+                assert(!error && body && [response.URL.path isEqual:@"/auth/verify/phone/securitycode"]);
+                dispatch_semaphore_signal(done);
+            });
+        Wait(provider.requested); assert([provider.method isEqual:@"sms"]);
+        provider.reply(@"000123", nil); Wait(done);
+        assert(!context.verifiedRequest && provider.requests == 1);
+        puts("PASS native_sms_continuation_and_code_kind");
+        }
         // Unknown account responses cannot request a code or send a request.
         context = [TestContext new]; provider = [DeferredProvider new];
         state = [TVAppleChallengeState new]; state.provider = provider;

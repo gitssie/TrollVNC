@@ -1,4 +1,5 @@
 #import "PhotoLibrary.h"
+#import "PhotoTaskName.h"
 
 #import <CommonCrypto/CommonDigest.h>
 #import <Foundation/Foundation.h>
@@ -16,6 +17,8 @@
 @property(nonatomic, assign) BOOL finished;
 @property(nonatomic, assign) BOOL cancelled;
 @property(nonatomic, strong) NSDate *created;
+@property(nonatomic, copy) NSString *checksum;
+@property(nonatomic, assign) BOOL durable;
 @end
 @implementation TVPhotoJob
 @end
@@ -29,6 +32,39 @@ static void tvPhotoInit(void) {
         tvJobs = [NSMutableDictionary dictionary];
         tvPhotoQueue = dispatch_queue_create("com.82flex.trollvnc.photos", DISPATCH_QUEUE_SERIAL);
     });
+}
+
+// A durable receipt is written before PhotoKit runs. An interrupted task stays
+// unknown and is never replayed merely because a VNC client reconnected.
+static NSString *tvReceiptPath(NSString *identifier) {
+    if (![[NSUUID alloc] initWithUUIDString:identifier]) return nil;
+    NSString *base = @"/var/mobile/Library/Caches/com.82flex.trollvnc.photo-tasks";
+    if (access("/rootfs/var/mobile/Library/Caches", F_OK) == 0) base = [@"/rootfs" stringByAppendingString:base];
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:base withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil]) return nil;
+    return [base stringByAppendingPathComponent:[identifier stringByAppendingString:@".json"]];
+}
+static BOOL tvSaveReceipt(NSString *identifier, TVPhotoJob *job) {
+    NSString *path = tvReceiptPath(identifier);
+    if (!path) return NO;
+    NSDictionary *value = @{@"checksum":job.checksum ?: @"", @"finished":@(job.finished), @"result":job.result ?: NSNull.null, @"error":job.error ?: NSNull.null};
+    NSData *data = [NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
+    BOOL ok = [data writeToFile:path options:NSDataWritingAtomic error:nil];
+    if (ok) [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:path error:nil];
+    return ok;
+}
+static TVPhotoJob *tvLoadReceipt(NSString *identifier) {
+    NSString *path = tvReceiptPath(identifier);
+    NSData *data = path ? [NSData dataWithContentsOfFile:path] : nil;
+    if (!data || data.length > 65536) return nil;
+    NSDictionary *value = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![value isKindOfClass:NSDictionary.class] || ![value[@"checksum"] isKindOfClass:NSString.class]) return nil;
+    TVPhotoJob *job = [TVPhotoJob new]; job.created = [NSDate date]; job.durable = YES; job.checksum = value[@"checksum"]; job.finished = YES;
+    if ([value[@"finished"] boolValue]) {
+        if ([value[@"result"] isKindOfClass:NSString.class]) job.result = value[@"result"];
+        if ([value[@"error"] isKindOfClass:NSString.class]) job.error = value[@"error"];
+    }
+    if (!job.result && !job.error) job.error = @"Photo import result unknown; inspect Photos before retrying";
+    return job;
 }
 
 static NSString *tvJSON(id object) {
@@ -121,7 +157,8 @@ static NSString *tvThumbnailPreview(UIImage *image) {
     return @"";
 }
 
-static NSString *tvImport(const char *root, NSString *path, NSString *expected, NSString **error) {
+static NSString *tvImport(const char *root, NSString *path, NSString *expected, NSString **error, BOOL *mayHaveCommitted) {
+    *mayHaveCommitted = NO;
     if (!tvAuthorized(error))
         return nil;
     if (!tvImageExtension(path)) {
@@ -144,13 +181,8 @@ static NSString *tvImport(const char *root, NSString *path, NSString *expected, 
     NSString *realFolder = [tvIncomingReal() stringByAppendingPathComponent:folderName];
     NSString *systemFolder = [@"/private/var/mobile/Media/DCIM/.MISC/Incoming" stringByAppendingPathComponent:folderName];
     NSString *fileName = path.lastPathComponent;
-    NSString *uploadPrefix = @"rv-upload-";
-    NSUInteger suffixAt = uploadPrefix.length + 36;
-    if ([fileName hasPrefix:uploadPrefix] && fileName.length > suffixAt + 2 &&
-        [[fileName substringWithRange:NSMakeRange(suffixAt, 2)] isEqualToString:@"--"] &&
-        [[NSUUID alloc] initWithUUIDString:[fileName substringWithRange:NSMakeRange(uploadPrefix.length, 36)]]) {
-        fileName = [fileName substringFromIndex:suffixAt + 2];
-    }
+    NSString *originalName = tvPhotoUploadOriginalName(fileName, NULL);
+    if (originalName) fileName = originalName;
     NSString *realFile = [realFolder stringByAppendingPathComponent:fileName];
     NSString *systemFile = [systemFolder stringByAppendingPathComponent:fileName];
     if (mkdir(realFolder.fileSystemRepresentation, 0700) < 0) {
@@ -198,6 +230,7 @@ static NSString *tvImport(const char *root, NSString *path, NSString *expected, 
         __block BOOL success = NO;
         __block NSError *changeError = nil;
         __block NSString *assetId = nil;
+        *mayHaveCommitted = YES;
         [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
             PHAssetChangeRequest *request = [PHAssetChangeRequest
                 creationRequestForAssetFromImageAtFileURL:[NSURL fileURLWithPath:systemFile]];
@@ -209,12 +242,18 @@ static NSString *tvImport(const char *root, NSString *path, NSString *expected, 
         }];
         if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC)) != 0) {
             *error = @"Photos import timed out";
-        } else if (!success || !assetId.length) {
+        } else if (!success) {
+            *mayHaveCommitted = NO;
             *error = changeError.localizedDescription ?: @"Photos rejected the image";
-        } else if ([PHAsset fetchAssetsWithLocalIdentifiers:@[assetId] options:nil].count != 1) {
-            *error = @"Imported photo could not be verified";
+        } else if (!assetId.length) {
+            *error = @"Photo import result unknown: committed without an asset ID";
         } else {
-            result = tvJSON(@{@"assetId": assetId});
+            // performChanges completed: the asset has been committed. A delayed
+            // fetch must not turn that commit into a retryable failure.
+            BOOL verified = NO;
+            @try { verified = [PHAsset fetchAssetsWithLocalIdentifiers:@[assetId] options:nil].count == 1; }
+            @catch (NSException *exception) { verified = NO; }
+            result = tvJSON(@{@"assetId": assetId, @"verified":@(verified)});
         }
     }
     unlink(realFile.fileSystemRepresentation);
@@ -442,18 +481,34 @@ int tvPhotoStart(unsigned char op, const char *root, const char *value,
         return -1;
     }
     NSString *identifier = NSUUID.UUID.UUIDString;
+    BOOL durable = NO;
+    NSString *prefix = @"/Media/DCIM/.MISC/Incoming/";
+    if (op == 4 && expected.length == 64 && [input hasPrefix:prefix]) {
+        NSString *candidate = nil;
+        if (tvPhotoUploadOriginalName([input substringFromIndex:prefix.length], &candidate)) {
+            identifier = candidate; durable = YES;
+        }
+    }
     TVPhotoJob *job = [TVPhotoJob new];
-    job.created = [NSDate date];
+    job.created = [NSDate date]; job.durable = durable; job.checksum = expected;
     @synchronized(tvJobs) {
+        if (durable) {
+            TVPhotoJob *previous = tvJobs[identifier] ?: tvLoadReceipt(identifier);
+            if (previous) {
+                if (![previous.checksum isEqualToString:expected]) {snprintf(error,error_capacity,"Photo task checksum changed");return -1;}
+                tvJobs[identifier] = previous; snprintf(token,token_capacity,"%s",identifier.UTF8String);return 0;
+            }
+        }
         for (NSString *key in tvJobs.allKeys) {
             TVPhotoJob *old = tvJobs[key];
-            if ([old.created timeIntervalSinceNow] < -600)
+            if (old.finished && [old.created timeIntervalSinceNow] < -600)
                 [tvJobs removeObjectForKey:key];
         }
         if (tvJobs.count >= 64) {
             snprintf(error, error_capacity, "Photos queue is full");
             return -1;
         }
+        if (durable && !tvSaveReceipt(identifier,job)) {snprintf(error,error_capacity,"Cannot persist photo task receipt");return -1;}
         tvJobs[identifier] = job;
     }
     snprintf(token, token_capacity, "%s", identifier.UTF8String);
@@ -463,9 +518,12 @@ int tvPhotoStart(unsigned char op, const char *root, const char *value,
             NSString *failure = nil;
             NSString *result = nil;
             BOOL cancelled = NO;
-            if (op == 4)
-                result = tvImport(remoteRoot.fileSystemRepresentation, input, expected, &failure);
-            else if (op == 5)
+            if (op == 4) {
+                BOOL mayHaveCommitted = NO;
+                result = tvImport(remoteRoot.fileSystemRepresentation, input, expected, &failure, &mayHaveCommitted);
+                if (!result && !mayHaveCommitted)
+                    failure = [@"Photo import not committed: " stringByAppendingString:failure ?: @"Photos rejected the image"];
+            } else if (op == 5)
                 result = tvList(input, &failure);
             else if (op == 6)
                 result = tvExport(input, &failure);
@@ -476,6 +534,9 @@ int tvPhotoStart(unsigned char op, const char *root, const char *value,
                 job.error = cancelled ? nil : (failure ?: (result ? nil : @"Photos operation failed"));
                 job.cancelled = cancelled;
                 job.finished = YES;
+                if (job.durable && !tvSaveReceipt(identifier,job)) {
+                    job.result = nil; job.error = @"Photo import result unknown: could not persist receipt";
+                }
             }
         }
     });
@@ -487,7 +548,8 @@ int tvPhotoPoll(const char *token, char **payload, char **error) {
     NSString *identifier = token ? [NSString stringWithUTF8String:token] : nil;
     TVPhotoJob *job = nil;
     @synchronized(tvJobs) {
-        job = tvJobs[identifier];
+        job = tvJobs[identifier] ?: tvLoadReceipt(identifier);
+        if (job) tvJobs[identifier] = job;
     }
     if (!job) {
         *error = strdup("Photos job not found");
@@ -517,15 +579,7 @@ int tvPhotoCleanupExport(const char *remote_path) {
         return -1;
     }
     NSString *name = [path substringFromIndex:prefix.length];
-    BOOL generated = [name hasPrefix:@"rv-export-"] || [name hasPrefix:@"rv-upload-"];
-    NSUInteger suffixAt = 10 + 36;
-    NSString *suffix = name.length > suffixAt ? [name substringFromIndex:suffixAt] : @"";
-    BOOL validSuffix = ([suffix hasPrefix:@"."] && tvImageExtension(name)) ||
-                       ([suffix hasPrefix:@"--"] && suffix.length > 2 && tvImageExtension(name));
-    if (!generated || name.length <= suffixAt ||
-        ![[NSUUID alloc] initWithUUIDString:[name substringWithRange:NSMakeRange(10, 36)]] ||
-        !validSuffix || [name containsString:@"/"] || [name containsString:@"\\"] ||
-        strlen(name.fileSystemRepresentation) > NAME_MAX) {
+    if (!tvPhotoGeneratedNameCanCleanup(name)) {
         errno = EINVAL;
         return -1;
     }

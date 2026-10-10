@@ -30,6 +30,7 @@
 #import "IOSurfaceSPI.h"
 #import "Logging.h"
 #import "ScreenCapturer.h"
+#include "CaptureFrameState.h"
 #import "UIScreen+Private.h"
 
 #ifdef __cplusplus
@@ -51,6 +52,7 @@ void CARenderServerRenderDisplay(kern_return_t a, CFStringRef b, IOSurfaceRef su
     NSInteger mMinFps;
     NSInteger mPreferredFps;
     NSInteger mMaxFps;
+    CaptureFrameState mFrameState;
     // Stats configuration (effective in DEBUG only)
     NSTimeInterval mStatsWindowSeconds; // average FPS logging window
     double mInstFpsAlpha;               // EMA smoothing factor for instantaneous FPS
@@ -199,8 +201,6 @@ void CARenderServerRenderDisplay(kern_return_t a, CFStringRef b, IOSurfaceRef su
 
 #pragma mark - Rendering
 
-static CFIndex sDirtyFrameCount = 0;
-
 - (BOOL)renderDisplayToScreenSurface:(IOSurfaceRef)dstSurface {
 #if TARGET_OS_SIMULATOR
     CARenderServerRenderDisplay(0, CFSTR("LCD"), dstSurface, 0, 0);
@@ -222,7 +222,7 @@ static CFIndex sDirtyFrameCount = 0;
     });
 
     CFIndex dirtyFrameCount = CARenderServerGetDirtyFrameCount(NULL);
-    if (dirtyFrameCount == sDirtyFrameCount) {
+    if (!mFrameState.shouldCapture(dirtyFrameCount)) {
         return NO; // No change
     }
 
@@ -230,7 +230,7 @@ static CFIndex sDirtyFrameCount = 0;
     CARenderServerRenderDisplay(0 /* Main Display */, CFSTR("LCD"), srcSurface, 0, 0);
     IOSurfaceAcceleratorTransferSurface(accelerator, srcSurface, dstSurface, NULL, NULL, NULL, NULL);
 
-    sDirtyFrameCount = dirtyFrameCount;
+    mFrameState.didCapture(dirtyFrameCount);
     return YES;
 #endif
 }
@@ -302,16 +302,12 @@ static CFIndex sDirtyFrameCount = 0;
 }
 
 - (void)startCaptureWithFrameHandler:(void (^)(CMSampleBufferRef _Nonnull))frameHandler {
-    // Store/replace handler
-    mFrameHandler = [frameHandler copy];
-
-    if (mDisplayLink) {
-        // Already running; nothing else to do
-        return;
-    }
-
     // Create display link on main run loop
     void (^startBlock)(void) = ^{
+        mFrameHandler = [frameHandler copy];
+        mFrameState.retry(); // A reconnect needs the current static screen.
+        if (mDisplayLink)
+            return;
         mDisplayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(onDisplayLink:)];
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 150000
@@ -425,13 +421,21 @@ static CFIndex sDirtyFrameCount = 0;
 }
 
 - (void)forceNextFrameUpdate {
-    sDirtyFrameCount = 0; // Force next frame to be treated as dirty
+    if ([NSThread isMainThread]) {
+        mFrameState.retry();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            mFrameState.retry();
+        });
+    }
 }
 
 #pragma mark - Private Methods
 
 - (void)onDisplayLink:(CADisplayLink *)link {
     if (!mFrameHandler)
+        return;
+    if (self.captureReadinessHandler && !self.captureReadinessHandler())
         return;
 
     // Update the screen contents into our IOSurface

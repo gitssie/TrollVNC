@@ -149,3 +149,27 @@ Build `tests/apple-siwa.m` with the normal builder and run through device-ssh.sh
 `removeOtherICloudDevices:completion:` removes all devices whose fresh native marker is false, preserving the unique current device. It takes no device name or hardcoded target. Matching primary iCloud and phone identity are required. It preflights the initial targets, refreshes details before each native Remove from Account confirmation POST, preserves native postback/signing, and verifies target absence and unchanged current-device identity after each write. Unknown results stop further writes and activate the shared fence; confirmed partial removals are returned as removed_device_ids. Success returns `{outcome: succeeded, already_removed, removed_device_ids, settings: <fresh query>}` and requires only the original current device to remain. New devices appearing during execution cause final verification failure rather than an unbounded deletion loop.
 
 `queryState.icloud.devices` is a section with status/data/error. Without selected primary iCloud it is not_signed_in; query failures do not discard other profiles, and changed account identity discards earlier device data. The standalone `apple-icloud-devices.m` accepts stdin action=query or remove_others plus apple_id. Its outer deadline is 3600 seconds for serial multi-device work; the aggregate state runner now waits 600 seconds.
+
+2026-10-10 重新绑定初始化：用户主动再次beginAddingContactEmail时，服务串行核对当前账户，清空旧原生challenge/model及认证/签名会话，重新准备原生认证环境并fresh读取reachable_emails；目标已经验证则返回succeeded/already_verified，未绑定才发新请求与新challenge。只允许同一Apple ID的邮箱begin/verify未知结果通过新begin恢复，且新begin成功后才解除邮箱专属unknown标记；其它写操作未知结果不因此解锁。task31允许同账户替换旧邮箱挑战，旧challenge立即不可提交；busy仍拒绝并发，结果历史继续保留。RV提供独立「重新发送绑定」命令，保持原资料并刷新新邮件基线，旧验证码不自动重放。只读取码按钮仍不发新邮件。主机回归/编译与真机绑定验收区分，新恢复流程尚未进行真机账户写入验证。
+
+Email verification recovery: after an OutcomeUnknown result from the submitted native verification transport, the module performs a separate fresh AuthKit server read. Success requires the requested email in reachable_emails and unchanged session identity. Missing email, unreadable state or changed identity remains unknown. The verification POST is never replayed.
+
+
+## 2026-10-10 / 3.2-314：撤销跨功能写栅栏
+
+本节覆盖此前关于 shared Worker、unknown 写栅栏以及全局 busy 的设计约定。用户明确要求一次操作失败不阻止其它功能。
+
+- Services 删除静态 uncertainMutation；每次结果只由该请求的返回/错误决定，unknown 不拒绝后续写入，也不要求重启模块。
+- 原生工作队列可并发；name/email/authorizations/devices 使用各自 SettingsSession。task31按具体功能维护当前请求与验证码 provider；仅同一原生会话尚在执行时返回 busy，完成（含错误）释放。账户身份预检 queryAccountState 不查询网络 profile，不被登录挑战或邮箱操作占用。
+- 新 signOutAppStore 只退出选中的 media 账户，保留 iCloud、identity、历史媒体记录。媒体退出不依赖 Find My；原有云账户身份、设备及数据策略检查继续有效。
+- 真机捕获的 Native Invalid Email alert 仅在 parser succeeded、HTTP200、无普通 page 且确切 title/message 匹配时返回 InvalidRequest/code3。未知原生提示仍返回 unknown；不将 HTTP200 当绑定成功。当前用户指定目标被 Apple 返回 not available，与之前已绑定目标不同，不能用旧地址的查询说明当前目标已绑定。
+- 本机使用314正式包已完成安装；原生并发与原始错误分支检查、RV面板隔离检查通过。账户写操作不会因为结果未知自动重放。
+
+314正式服务后续fresh绑定已返回requires_email_verification，等待时queryAccountState仍正常完成；没有提交验证码。此前Invalid Email是更早请求的诊断，不能作为当前绑定状态。
+
+
+## 2026-10-10 / 3.2-315：接口成功直接完成
+
+用户明确要求以 Apple 原生修改接口的成功响应决定结果，覆盖历史文档中成功后 fresh 复核、缓存同步及超时后查询恢复的完成判据。姓名、邮箱验证、转发邮箱、SIWA 撤销、设备移除，以及 Services 层 Store/iCloud 登录退出、Find My 关闭不再因成功后的查询失败或缓存陈旧返回 code 6。成功写入返回 outcome=succeeded；不输出伪造的查询 settings/state，不重发写入。原生响应必须完整、无错误及拒绝提示；HTTP 200 本身不代表原生操作成功，超时仍保留原始错误。身份、输入、服务器提供的请求路由和下一个设备写入前的预检继续保留。
+
+RV 通过独立 queryAccountState 更新登录/退出菜单，Store 与 iCloud 分别判断，状态刷新不改写原操作结果。本次没有再次提交真机改名。

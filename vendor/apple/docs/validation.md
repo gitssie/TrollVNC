@@ -200,3 +200,59 @@ Final name-settings v4 builds/signs and is installed with a shared-deadline guar
 ## Relay destination on the switched account
 
 Formal email-actions v5 added the requested contact destination to the newly selected account, received a fresh externally supplied email verification code in the same process, and confirmed reachable_emails contained the destination. The subsequent global Sign in with Apple forwarding save returned succeeded/already_configured=false. An independent follow-up native AuthKit query confirmed forwarding_email matched the requested verified destination. The user subsequently confirmed receipt of the forwarded message after initially reporting no delivery. This is user-observed delivery, not an automated mailbox test; the cause of the delay was not established and no AuthKit forwarding-cache fix was needed. No code is retained.
+
+2026-10-10 验证提交后的 RemoteUI 超时恢复：真机312的fresh queryEmail确认此前用户提供的Outlook目标已经在reachable_emails中；TrollVNC内queryName与独立原生个人信息读取均正常完成，未证明加载器普遍阻塞。旧verifyChallenge在load返回unknown后立即退出，跳过fresh服务端确认。313改为仅在已提交验证码POST返回模块OutcomeUnknown时继续独立TVAppleNativeEmailSettings读取，并验证session身份未变；目标确实在fresh reachable_emails且读取无错误才返回succeeded。缺失目标、读失败或身份变化保留unknown，不重放POST、不把HTTP200当成功。回归覆盖同一真实verifyChallenge调用链：HTTP200/no terminal/model + 服务端已绑定、未绑定、读失败、身份变化；首次旧代码复现失败，修复后通过。真机已验证当前绑定状态；新提交导致的超时分支尚未在真机重放。
+
+同轮真机312经真实task31重新begin之前先fresh确认目标已在reachable_emails中，调用返回completed/error=null/outcome=succeeded/already_verified=true；没有发送新验证邮件，邮箱专属unknown恢复路径已实际返回成功。313的POST超时后fresh恢复分支为主机生产调用链回归，未在真机重新制造验证码POST超时。313本地源索引HTTP检查通过；独立审查无重要问题。
+
+
+## 2026-10-10 / 3.2-314：撤销跨功能写栅栏
+
+本节覆盖此前关于 shared Worker、unknown 写栅栏以及全局 busy 的设计约定。用户明确要求一次操作失败不阻止其它功能。
+
+- Services 删除静态 uncertainMutation；每次结果只由该请求的返回/错误决定，unknown 不拒绝后续写入，也不要求重启模块。
+- 原生工作队列可并发；name/email/authorizations/devices 使用各自 SettingsSession。task31按具体功能维护当前请求与验证码 provider；仅同一原生会话尚在执行时返回 busy，完成（含错误）释放。账户身份预检 queryAccountState 不查询网络 profile，不被登录挑战或邮箱操作占用。
+- 新 signOutAppStore 只退出选中的 media 账户，保留 iCloud、identity、历史媒体记录。媒体退出不依赖 Find My；原有云账户身份、设备及数据策略检查继续有效。
+- 真机捕获的 Native Invalid Email alert 仅在 parser succeeded、HTTP200、无普通 page 且确切 title/message 匹配时返回 InvalidRequest/code3。未知原生提示仍返回 unknown；不将 HTTP200 当绑定成功。当前用户指定目标被 Apple 返回 not available，与之前已绑定目标不同，不能用旧地址的查询说明当前目标已绑定。
+- 本机使用314正式包已完成安装；原生并发与原始错误分支检查、RV面板隔离检查通过。账户写操作不会因为结果未知自动重放。
+
+314安装后：正式task31的queryAccountState完成；并发queryName与queryEmail都获running，queryName最终completed/无error，queryEmail本次原生fresh查询超时code5。超时没有阻止账户/姓名读取。重复建立USB SSH通道的诊断曾出现banner/转发超时，切换固定SSH端口转发后协议健康检查正常；不要将其当作新增账户操作已成功。
+
+随后314正式服务再次明确初始化当前绑定请求，返回requires_email_verification（无error），期间独立queryAccountState completed/无error；本次没有取码或提交验证码，不能报告已绑定成功。前述Invalid Email仅描述较早请求的原生响应，当前阶段已改变。
+
+
+## 2026-10-10 / 3.2-315：接口成功直接完成
+
+用户明确要求以 Apple 原生修改接口的成功响应决定结果，覆盖历史文档中成功后 fresh 复核、缓存同步及超时后查询恢复的完成判据。姓名、邮箱验证、转发邮箱、SIWA 撤销、设备移除，以及 Services 层 Store/iCloud 登录退出、Find My 关闭不再因成功后的查询失败或缓存陈旧返回 code 6。成功写入返回 outcome=succeeded；不输出伪造的查询 settings/state，不重发写入。原生响应必须完整、无错误及拒绝提示；HTTP 200 本身不代表原生操作成功，超时仍保留原始错误。身份、输入、服务器提供的请求路由和下一个设备写入前的预检继续保留。
+
+RV 通过独立 queryAccountState 更新登录/退出菜单，Store 与 iCloud 分别判断，状态刷新不改写原操作结果。本次没有再次提交真机改名。
+
+## 2026-10-10：原生 App Store Review / None 美国账单
+
+真机 iOS15.8.8：AuthKit → Store Review → 原生预转换认证 → native FairPlay/SAP priming → 美国账单校验 HTTP200/status0/无字段错误 → 最终 createAccountSrv context=convert HTTP200/status0 → 后续 Store 认证成功且没有 Review。全过程未通过 UI 点击或显示页面完成。详细成功流程及引用见 [native-store-review.md](native-store-review.md)。当前为 private 接口和探针，未部署新正式包；整理后的失败处理回归与首次成功测试分别记载，不把它们等同于第二账号的完整真机回归。
+
+### 2026-10-10 ZXTouch Store Review 登录分支
+
+正式 NativeBackend/Services 登录现支持自动首次 Review；task31 signInAppStore 参数保持 apple_id/password。主机全模块回归通过，新增 StoreSignInTests 覆盖普通登录不取地址、六字段映射、失败停止、只提交一次、后续 Store 登录失败/未知保留 review_completed。StoreReviewAuthenticationTests 调用真实 production prepare 适配，确认 type4预转换 context 保留。ZXTouch适配器和真实TCP Python回归通过，arm64 socket探针编译链接签名通过。
+
+iOS15.8.8 真机已运行只读取址探针 apple-store-billing.m：Foundation NSURLSession 直接 POST 地址工具成功，六个 Apple 账单字段齐全，电话拆分正确。没有使用主机Python获取该次地址。此测试不修改账户。先前 Review/None 保存与后续登录是真机原生探针成功；新ZXTouch自动Review组合分支尚未以第二个未开通账户做完整真机转换，未打包安装到运行中的daemon。后续安装后应通过同一operation_id验收，不重放已完成转换。
+
+2026-10-10 后续已完成另一未开通账号的 ZXTouch 真机完整验收：signOutAppStore → signInAppStore/SMS submit_code → iOS自动取址 → native Review/None转换 → 后续 Store 登录 succeeded/review_completed=true。独立轻量账户查询确认新 media selected/authenticated=true，原 iCloud 保留、Find My=false。预转换 type3仅在原生code10/context/合法Review路由齐全时使用新的 response继续；不强制type4。selected media才阻碍 Store 切换。回归新增真实prepare type3保留context、完整编排continuation及不同云/身份账户保持的用例。服务为独立loopback ZXTouch探针，未替换正式daemon包；成功调用流程及引用见 native-store-review.md。不要记录凭据、原始响应或失败试验作为正确流程。
+
+### 2026-10-10 后续三账号真机批次
+
+使用同一源码构建的独立ZXTouch原生服务，按顺序切换三账号；各次轻量账户查询完成，原iCloud账户保留、Find My=false。实际结果：
+
+| 测试账号 | 结果 | 已确认阶段 |
+| --- | --- | --- |
+| budsengeriqd@hotmail.com | 失败，AuthKit -7014 | code challenges=0，未产生验证码挑战，没有媒体登录 |
+| murlbodegmb@hotmail.com | 成功 | SMS新码单独submit_code、iOS自动取址、Review/None保存、authenticated=true/review_completed=true；独立查询media selected/authenticated=true |
+| hoytzemlakyye@hotmail.com | 失败，AuthKit -7014 | code challenges=0，未产生验证码挑战，没有媒体登录 |
+
+失败发生在AuthKit认证而非Review最终提交；仅凭-7014尚不能判断账号限制、原生响应分支或网络根因。没有把未知原因写成已确认知识，没有重放账单转换。三账号批次为1成功/2认证异常，不宣称全部成功。最后失败后当前媒体域未登录。临时listener已关闭，正式daemon未替换。测试连接启动前等待READY，避免将USB转发TCP连接成功误当作手机listener已就绪。
+
+2026-10-10 按用户要求追加第四账号 hectorrathkix@hotmail.com：ZXTouch请求已执行并完成，AuthKit返回-7014/code challenges=0，没有验证码provider挑战、没有进入Review；轻量查询确认媒体账户未登录，原iCloud保留、Find My=false。该批次累计四账号1成功/3认证异常；不能据此判断-7014的根因，未重放转换或替换正式daemon。
+
+2026-10-10 网络对照：同一真机相邻测试 hectorrathkix 与已成功 murlbodegmb，仅原生AuthKit认证、不提交Store转换。hector约5.6秒返回AKAuthenticationError/-7014且无验证码挑战，murl完成SMS并约10.9秒认证成功。两次认证前后共12次gsa/idmsa无凭据GET探测均取得HTTP响应且无NSURL网络错误；401/403/404仅作为连通证据，不当作账号认证结果。既有失败时段日志显示ServerUI续接返回-7014，另有HTTP200响应。证据不支持当前DNS/TLS/连接/超时故障；具体账号后续交互分支仍未确认。诊断现在保留原生错误domain/code链，不记录native userInfo或认证材料。
+
+2026-10-10 按用户要求追加第五账号 milodoyleimm@hotmail.com：同一ZXTouch原生登录分支完成SMS挑战与外部新码submit_code，iOS自动获取Sacramento/CA/95814账单地址，None付款方式，原生Review保存后Store认证成功；返回outcome=succeeded/authenticated=true/review_completed=true/error=null。独立queryAccountState确认该media selected/authenticated=true，原iCloud保留、Find My=false。该批次累计五账号2成功/3认证异常；本次成功不改变此前-7014根因尚未确认的结论。未替换正式daemon。

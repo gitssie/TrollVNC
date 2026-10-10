@@ -11,19 +11,22 @@
 @property dispatch_semaphore_t signal;
 @property NSDictionary *value;
 @property BOOL resolved;
+@property BOOL closed;
 - (void)resolve:(NSDictionary *)value;
+- (void)close;
 - (BOOL)wait:(NSTimeInterval)timeout;
 @end
 @implementation TVAppleAuthTicket
 - (instancetype)init { if ((self = [super init])) _signal = dispatch_semaphore_create(0); return self; }
 - (void)resolve:(NSDictionary *)value {
-    @synchronized (self) { if (_resolved) return; _resolved = YES; _value = value; }
+    @synchronized (self) { if (_closed || _resolved) return; _resolved = YES; _value = value; }
     dispatch_semaphore_signal(_signal);
 }
+- (void)close { @synchronized(self) { _closed = YES; _value = nil; } dispatch_semaphore_signal(_signal); }
 - (BOOL)wait:(NSTimeInterval)timeout {
     NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + timeout;
     while (YES) {
-        @synchronized (self) { if (_resolved) return YES; }
+        @synchronized (self) { if (_closed) return NO; if (_resolved) return YES; }
         dispatch_semaphore_wait(_signal, dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC));
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate date]];
         if (NSProcessInfo.processInfo.systemUptime >= deadline) return NO;
@@ -37,7 +40,10 @@ static BOOL Require(id object, NSArray<NSString *> *selectors, NSError **error) 
     }
     return YES;
 }
-TVAppleStoreAttempt TVAppleNativeStoreLogin(NSString *appleID, NSString *password, NSError **error) {
+static TVAppleStoreAttempt NativeStoreLogin(NSString *appleID, NSString *password, BOOL credentialIsPET, BOOL prepareConversion,
+    NSDictionary **reviewResponse, id *reviewContext, NSError **error) {
+    if (reviewResponse) *reviewResponse = nil;
+    if (reviewContext) *reviewContext = nil;
     Class requestClass = NSClassFromString(@"SSAuthenticateRequest");
     Class baseClass = NSClassFromString(@"SSAuthenticationContext");
     if (!Require(requestClass, @[@"_isAuthkitEntitled"], error) || ![requestClass _isAuthkitEntitled]) {
@@ -51,29 +57,58 @@ TVAppleStoreAttempt TVAppleNativeStoreLogin(NSString *appleID, NSString *passwor
     if (!Require(context, @[@"setAccountName:", @"setPassword:", @"setInitialPassword:", @"setPromptStyle:",
         @"setCanSetActiveAccount:", @"setCanCreateNewAccount:", @"setAllowsSilentAuthentication:", @"setAllowsRetry:",
         @"setShouldSuppressDialogs:", @"setShouldCreateNewSession:"], error)) return TVAppleStoreAttemptFailed;
-    [context setAccountName:appleID]; [context setPassword:password]; [context setInitialPassword:password];
+    [context setAccountName:appleID]; [context setPassword:credentialIsPET ? nil : password];
+    if (prepareConversion) {
+        SEL selector = NSSelectorFromString(@"setShouldIgnoreAccountConversion:");
+        NSMethodSignature *signature = [context methodSignatureForSelector:selector];
+        if (!signature || signature.numberOfArguments != 3 || strcmp(signature.methodReturnType, "v") ||
+            strcmp([signature getArgumentTypeAtIndex:2], @encode(BOOL))) {
+            *error = TVAppleError(TVAppleErrorUnsupported, @"Native pre-conversion authentication is unavailable.");
+            return TVAppleStoreAttemptFailed;
+        }
+        ((void (*)(id, SEL, BOOL))[context methodForSelector:selector])(context, selector, YES);
+    }
+    // The inspected iOS15 runtime warns that initialPassword aliases the PET
+    // setter. Review receives a raw password, never populate that slot with it.
+    // Keep the established login entry's behavior until independently verified.
+    if (credentialIsPET || !reviewResponse) [context setInitialPassword:password];
     [context setPromptStyle:1]; [context setCanSetActiveAccount:YES]; [context setCanCreateNewAccount:YES];
     [context setAllowsSilentAuthentication:YES]; [context setAllowsRetry:NO];
-    [context setShouldSuppressDialogs:NO]; [context setShouldCreateNewSession:YES];
+    [context setShouldSuppressDialogs:prepareConversion || reviewResponse != NULL]; [context setShouldCreateNewSession:YES];
     id request = [requestClass alloc];
     if (!Require(request, @[@"initWithAuthenticationContext:", @"startWithAuthenticateResponseBlock:"], error)) return TVAppleStoreAttemptFailed;
     request = [request initWithAuthenticationContext:context];
     if (!request) { *error = TVAppleError(TVAppleErrorUnsupported, @"Authentication request could not be created."); return TVAppleStoreAttemptFailed; }
     TVAppleAuthTicket *ticket = [TVAppleAuthTicket new];
+    BOOL captureReview = reviewResponse != NULL;
     [request startWithAuthenticateResponseBlock:^(id response, NSError *failure) {
         if (![response respondsToSelector:@selector(authenticateResponseType)] || ![response respondsToSelector:@selector(error)]) {
             [ticket resolve:@{ @"type":@(-1) }]; return;
         }
         NSError *nativeError = [response error] ?: failure;
-        [ticket resolve:@{ @"type":@([response authenticateResponseType]), @"domain":nativeError.domain ?: @"",
-                           @"code":@(nativeError.code), @"has_error":@(nativeError != nil) }];
+        NSMutableDictionary *reply = [@{ @"type":@([response authenticateResponseType]), @"domain":nativeError.domain ?: @"",
+                           @"code":@(nativeError.code), @"has_error":@(nativeError != nil) } mutableCopy];
+        if (captureReview && ([response authenticateResponseType] == 3 || prepareConversion) &&
+            [response respondsToSelector:NSSelectorFromString(@"responseDictionary")]) {
+            id dictionary = [response responseDictionary];
+            if ([dictionary isKindOfClass:NSDictionary.class]) reply[@"review_response"] = dictionary;
+        }
+        [ticket resolve:reply];
     }];
     if (![ticket wait:120]) {
+        [ticket close]; [context setPassword:nil]; [context setInitialPassword:nil];
         *error = TVAppleError(TVAppleErrorOutcomeUnknown, @"App Store authentication timed out; do not replay automatically."); return TVAppleStoreAttemptUnknown;
     }
-    [context setPassword:nil]; [context setInitialPassword:nil];
     NSDictionary *reply = ticket.value;
     NSInteger type = [reply[@"type"] integerValue];
+    // A private Review continuation still needs its native credential context.
+    // It is never returned by the public login method or written to disk.
+    BOOL retainContext = reviewResponse && (type == 3 || (prepareConversion && type == 4 && ![reply[@"has_error"] boolValue]));
+    if (!retainContext) { [context setPassword:nil]; [context setInitialPassword:nil]; }
+    if (retainContext) {
+        if (reviewResponse) *reviewResponse = reply[@"review_response"];
+        if (reviewContext) *reviewContext = context;
+    }
     if (type < 0 || type > 4 || (type == 4 && [reply[@"has_error"] boolValue])) {
         *error = TVAppleError(TVAppleErrorOutcomeUnknown, @"The Store returned an uninterpretable authentication result."); return TVAppleStoreAttemptUnknown;
     }
@@ -86,6 +121,21 @@ TVAppleStoreAttempt TVAppleNativeStoreLogin(NSString *appleID, NSString *passwor
         type == 3 ? @"The account requires review by Apple." : @"App Store authentication failed.");
     return TVAppleStoreAttemptFailed;
 }
+TVAppleStoreAttempt TVAppleNativeStoreLogin(NSString *appleID, NSString *password, NSError **error) {
+    return NativeStoreLogin(appleID, password, NO, NO, NULL, NULL, error);
+}
+TVAppleStoreAttempt TVAppleNativeStoreLoginForReview(NSString *appleID, NSString *password,
+    NSDictionary **response, id *context, NSError **error) {
+    return NativeStoreLogin(appleID, password, NO, NO, response, context, error);
+}
+TVAppleStoreAttempt TVAppleNativeStoreLoginForReviewWithPET(NSString *appleID, NSString *pet,
+    NSDictionary **response, id *context, NSError **error) {
+    return NativeStoreLogin(appleID, pet, YES, NO, response, context, error);
+}
+TVAppleStoreAttempt TVAppleNativeStoreReviewAuthentication(NSString *appleID, NSString *nativeCredential,
+    NSDictionary **response, id *context, NSError **error) {
+    return NativeStoreLogin(appleID, nativeCredential, YES, YES, response, context, error);
+}
 
 @interface TVAppleChallengeState : NSObject
 @property id<TVAppleVerificationCodeProvider> provider;
@@ -95,6 +145,8 @@ TVAppleStoreAttempt TVAppleNativeStoreLogin(NSString *appleID, NSString *passwor
 @property NSString *suppliedCode;
 @property TVAppleAuthTicket *codeTicket;
 @property BOOL closed;
+@property BOOL useSMS;
+@property BOOL smsActive;
 @end
 @implementation TVAppleChallengeState
 @end
@@ -129,7 +181,7 @@ static id FetchCode(TVAppleChallengeState *state) {
     }
     if (start) @synchronized (state) {
         if (state.closed) { [ticket resolve:@{ @"failed":@YES }]; return nil; }
-        [state.provider requestCodeForChallenge:@{ @"kind":@"apple_two_factor", @"verification_method":@"trusted_device", @"attempt":@1 }
+        [state.provider requestCodeForChallenge:@{ @"kind":@"apple_two_factor", @"verification_method":state.useSMS ? @"sms" : @"trusted_device", @"attempt":@1 }
         completion:^(NSString *code, NSError *failure) {
             BOOL valid = [code isKindOfClass:NSString.class] && code.length == 6 &&
                 [code rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet]].location == NSNotFound;
@@ -142,6 +194,7 @@ static id FetchCode(TVAppleChallengeState *state) {
         }];
     }
     if (![ticket wait:120]) {
+        [ticket close];
         @synchronized (state) { state.failure = TVAppleError(TVAppleErrorVerificationCode, @"The verification challenge timed out."); }
         return nil;
     }
@@ -209,9 +262,11 @@ static id NoTerminalPromptWithObject(id context, SEL selector, id argument) {
 }
 static NSString *ErrorMetadata(NSError *error) {
     NSMutableArray *codes = [NSMutableArray new];
+    NSMutableArray *domains = [NSMutableArray new];
     NSMutableOrderedSet *flags = [NSMutableOrderedSet new];
     for (NSUInteger i = 0; error && i < 4; i++) {
         [codes addObject:@(error.code).stringValue];
+        [domains addObject:error.domain ?: @""];
         NSString *description = error.localizedDescription.lowercaseString;
         for (NSString *word in @[@"context", @"class", @"decode", @"xpc", @"unsupported", @"restricted", @"locked", @"disabled", @"server", @"service", @"security", @"password", @"trusted", @"phone", @"verify", @"invalid"]) {
             if ([description containsString:word]) [flags addObject:word];
@@ -219,7 +274,7 @@ static NSString *ErrorMetadata(NSError *error) {
         id underlying = error.userInfo[NSUnderlyingErrorKey];
         error = [underlying isKindOfClass:NSError.class] ? underlying : nil;
     }
-    return [NSString stringWithFormat:@"codes %@; flags %@", [codes componentsJoinedByString:@","], [flags.array componentsJoinedByString:@","]];
+    return [NSString stringWithFormat:@"codes %@; domains %@; flags %@", [codes componentsJoinedByString:@","], [domains componentsJoinedByString:@","], [flags.array componentsJoinedByString:@","]];
 }
 static BOOL Shape(Method method, const char *result, NSArray<NSString *> *arguments);
 static BOOL NativeReplyShape(id block) {
@@ -253,12 +308,53 @@ static void TrustedDeviceUI(id context, SEL selector, NSDictionary *dictionary, 
         @synchronized (state) { state.failure = TVAppleError(TVAppleErrorUnsupported, @"Unsupported ServerUI completion ABI."); }
         return;
     }
+    if (state.useSMS) {
+        if (![dictionary isKindOfClass:NSDictionary.class] || ((status < 200 || status >= 300) && status != 423) ||
+            ![dictionary[@"securityCode"] isKindOfClass:NSDictionary.class] ||
+            ![dictionary[@"hsa2Account"] isKindOfClass:NSNumber.class] || ![dictionary[@"hsa2Account"] boolValue]) {
+            NSDictionary *payload = [dictionary isKindOfClass:NSDictionary.class] ? dictionary : @{};
+            NSString *message = [NSString stringWithFormat:@"Unsupported SMS account response (HTTP %lld; securityCode dictionary=%d; hsa2Account number=%d, enabled=%d).", status,
+                [payload[@"securityCode"] isKindOfClass:NSDictionary.class],
+                [payload[@"hsa2Account"] isKindOfClass:NSNumber.class],
+                [payload[@"hsa2Account"] isKindOfClass:NSNumber.class] && [payload[@"hsa2Account"] boolValue]];
+            NSError *failure = TVAppleError(TVAppleErrorAccountNeedsReview, message);
+            @synchronized(state) { state.failure = failure; }
+            completion(nil, nil, failure); return;
+        }
+        @synchronized(state) {
+            if (state.closed || state.failure || state.smsActive) {
+                NSError *failure = state.failure ?: TVAppleError(TVAppleErrorVerificationCode, @"SMS authentication already finished or requested another challenge.");
+                state.failure = failure; completion(nil, nil, failure); return;
+            }
+            // Apple's SMS continuation subsequently enters CodePrompt, which
+            // owns the actual code-request count. Do not count that prompt twice.
+            state.smsActive = YES;
+        }
+        void (*original)(id, SEL, id, long long, id, id) =
+            (void *)OriginalPrompts[NSStringFromSelector(selector)].pointerValue;
+        if (!original) {
+            NSError *failure = TVAppleError(TVAppleErrorUnsupported, @"Native SMS authentication continuation is unavailable.");
+            @synchronized(state) { state.failure = failure; }
+            completion(nil, nil, failure); return;
+        }
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+            // In Apple's command-line implementation the 2xx branch sends a
+            // fresh phone code; the 423 branch assumes a code was already sent.
+            // Explicit SMS continuation must enter the send branch after a
+            // trusted-device challenge. This is an internal branch argument,
+            // not a fabricated HTTP response; Apple owns the PUT and response.
+            original(context, selector, dictionary, status == 423 ? 200 : status, configuration, completion);
+        });
+        return;
+    }
     NSError *failure = nil;
     @synchronized (state) {
         if (state.closed || state.failure || ++state.promptRequests > 1)
             failure = state.failure ?: TVAppleError(TVAppleErrorVerificationCode, @"The verification challenge is unavailable or was requested again.");
     }
-    if (![dictionary isKindOfClass:NSDictionary.class] || status != 200 ||
+    // AuthKit's iOS15 ServerUI challenge also arrives as HTTP423. Only accept
+    // that status with the same explicit HSA2/securityCode challenge structure.
+    if (![dictionary isKindOfClass:NSDictionary.class] || (status != 200 && status != 423) ||
         ![dictionary[@"securityCode"] isKindOfClass:NSDictionary.class] ||
         ![dictionary[@"hsa2Account"] isKindOfClass:NSNumber.class] || ![dictionary[@"hsa2Account"] boolValue])
         failure = TVAppleError(TVAppleErrorAccountNeedsReview, @"Unsupported two-factor account response.");
@@ -349,7 +445,8 @@ static Class ServiceContextClass(void) {
     });
     return supportedClass;
 }
-NSDictionary *TVAppleNativeAuthenticate(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider, BOOL requireChallenge, NSError **error) {
+static NSDictionary *NativeAuthenticate(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider,
+    BOOL requireChallenge, BOOL useSMS, NSError **error) {
     if (!dlopen("/System/Library/PrivateFrameworks/AuthKit.framework/AuthKit", RTLD_NOW)) {
         *error = TVAppleError(TVAppleErrorUnsupported, @"AuthKit framework is unavailable."); return nil;
     }
@@ -365,6 +462,7 @@ NSDictionary *TVAppleNativeAuthenticate(NSString *appleID, NSString *password, i
     }
     }
     TVAppleChallengeState *state = [TVAppleChallengeState new]; state.provider = provider;
+    state.useSMS = useSMS;
     objc_setAssociatedObject(context, &ChallengeKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSString *reason = [@"Apple module account sign-in " stringByAppendingString:NSUUID.UUID.UUIDString];
     [context setUsername:appleID]; [context _setPassword:password]; [context setReason:reason];
@@ -408,6 +506,12 @@ NSDictionary *TVAppleNativeAuthenticate(NSString *appleID, NSString *password, i
         }
     }
     return ticket.value[@"native_results"];
+}
+NSDictionary *TVAppleNativeAuthenticate(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider, BOOL requireChallenge, NSError **error) {
+    return NativeAuthenticate(appleID, password, provider, requireChallenge, NO, error);
+}
+NSDictionary *TVAppleNativeAuthenticateSMS(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider, NSError **error) {
+    return NativeAuthenticate(appleID, password, provider, NO, YES, error);
 }
 
 BOOL TVAppleNativeEstablishTrust(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider, NSError **error) {

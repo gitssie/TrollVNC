@@ -115,13 +115,10 @@ static NSDictionary *Result(NSArray *records,NSString *target){NSMutableArray *p
         if(!matched)continue;
         NSMutableURLRequest *request=TVAppleDeviceRemovalRequest(matched[@"model"],target[@"device_id"],[self origin],error);if(!request){if(!removed.count)return nil;goto unknown;}
         if(![self load:request mutation:YES error:error])goto unknown;
-        records=[self readDeviceRecords:error];if(!records||![TVAppleCurrentDeviceID([records valueForKey:@"info"],error)isEqual:current])goto unknown;
-        for(NSDictionary *record in records)if([record[@"info"][@"device_id"]isEqual:target[@"device_id"]])goto unknown;
         [removed addObject:target[@"device_id"]];
     }
-    records=[self readDeviceRecords:error];if(!records||records.count!=1||![TVAppleCurrentDeviceID([records valueForKey:@"info"],error)isEqual:current])goto unknown;
-    *error=nil;return @{@"outcome":@"succeeded",@"already_removed":@(targets.count==0),@"removed_device_ids":removed,@"settings":Result(records,appleID)};
-unknown:*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Non-current device removal was not confirmed; inspect fresh device state before further writes.");return @{@"outcome":@"unknown",@"removed_device_ids":removed};
+    *error=nil;return @{@"outcome":@"succeeded",@"already_removed":@(targets.count==0),@"removed_device_ids":removed};
+unknown:*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Non-current device removal did not complete.");return @{@"outcome":@"unknown",@"removed_device_ids":removed};
 }
 @end
 @implementation TVAppleServices(ICloudDevices)

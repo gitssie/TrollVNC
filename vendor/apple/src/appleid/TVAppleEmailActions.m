@@ -29,6 +29,10 @@
 - (id)attributes;
 - (id)allPages;
 - (id)primaryAlert;
+- (NSString *)title;
+- (NSString *)message;
+- (id)uiObjectModel;
+- (BOOL)succeeded;
 - (void)setPrimaryAlert:(id)alert;
 - (void)setSourceURL:(NSURL *)url;
 - (NSURL *)sourceURL;
@@ -113,7 +117,7 @@ NSMutableURLRequest *TVAppleRelayForwardingRequest(id form,NSString *email,NSURL
 }
 
 @implementation TVAppleEmailLoad
-- (BOOL)complete{@synchronized(self){return self.failure!=nil||(self.finished&&self.model!=nil);}}
+- (BOOL)complete{@synchronized(self){return self.nativeAlertError!=nil||self.failure!=nil||(self.finished&&self.model!=nil);}}
 - (void)loader:(id)loader loadResourcesForObjectModel:(id)model completion:(void(^)(BOOL,NSError *))completion{
     (void)loader;
     @synchronized(self){
@@ -144,11 +148,44 @@ NSMutableURLRequest *TVAppleRelayForwardingRequest(id form,NSString *email,NSURL
 }
 @end
 
+// Alert-only responses wait for a UIKit button before the loader delegate sees
+// a model. Observe the already parsed native result without presenting that UI.
+void TVAppleObserveEmailParserAlert(id loader,TVAppleEmailLoad *load,BOOL mutation){
+    @synchronized(load){
+        if(load.closed||load.status!=200||load.nativeAlertError)return;
+        if(!NSThread.isMainThread){
+            if(load.parserProbePending)return;
+            load.parserProbePending=YES;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                @synchronized(load){load.parserProbePending=NO;}
+                TVAppleObserveEmailParserAlert(loader,load,mutation);
+            });
+            return;
+        }
+    }
+    Ivar ivar=class_getInstanceVariable([loader class],"_parser");
+    id parser=ivar?object_getIvar(loader,ivar):nil;
+    if(!HasAll(parser,@[@"succeeded",@"uiObjectModel"])||![parser succeeded])return;
+    id model=[parser uiObjectModel];
+    if(!HasAll(model,@[@"allPages",@"primaryAlert"]))return;
+    id pages=[model allPages],alert=[model primaryAlert];
+    if(![pages isKindOfClass:NSArray.class]||[pages count]||!alert)return;
+    NSString *title=HasAll(alert,@[@"title"])?[alert title]:nil;
+    NSString *message=HasAll(alert,@[@"message"])?[alert message]:nil;
+    NSError *error=nil;
+    // Exact native rejection observed on iOS15; do not infer from HTTP 200.
+    if([title isEqual:@"Invalid Email"]&&[message isEqual:@"This email address is not available. Choose a different address."])
+        error=TVAppleError(TVAppleErrorInvalidRequest,@"Apple rejected this email address: it is not available. Choose a different address.");
+    else error=TVAppleError(mutation?TVAppleErrorOutcomeUnknown:TVAppleErrorBackendRead,@"Apple returned a native alert instead of completing the email action; inspect the current account state.");
+    @synchronized(load){if(!load.closed){load.rejected=YES;load.nativeAlertError=error;}}
+}
+
 id TVAppleFinishEmailLoad(TVAppleEmailLoad *load,BOOL terminalObserved,BOOL mutation,NSError **error){
-    id model=nil;BOOL rejected=NO,failed=NO,finished=NO;NSInteger status=0;
-    @synchronized(load){load.closed=YES;model=load.model;rejected=load.rejected;failed=load.failure!=nil;finished=load.finished;status=load.status;load.model=nil;}
+    id model=nil;NSError *nativeAlertError=nil;BOOL rejected=NO,failed=NO,finished=NO;NSInteger status=0;
+    @synchronized(load){load.closed=YES;nativeAlertError=load.nativeAlertError;model=load.model;rejected=load.rejected;failed=load.failure!=nil;finished=load.finished;status=load.status;load.model=nil;}
+    if(nativeAlertError){*error=nativeAlertError;return nil;}
     if(!terminalObserved||!finished||!model||status!=200||failed){
-        *error=TVAppleError(mutation?TVAppleErrorOutcomeUnknown:TVAppleErrorBackendRead,@"Native email response did not complete.");return nil;
+        *error=TVAppleError(mutation?TVAppleErrorOutcomeUnknown:TVAppleErrorBackendRead,[NSString stringWithFormat:@"Native email response did not complete (HTTP %ld, terminal=%d, finished=%d, model=%d, transport_failed=%d).", (long)status, terminalObserved, finished, model!=nil, failed]);return nil;
     }
     if(rejected){*error=TVAppleError(mutation?TVAppleErrorOutcomeUnknown:TVAppleErrorBackendRead,@"Apple returned a native alert; email outcome needs a fresh server query.");return nil;}
     return model;
@@ -242,7 +279,7 @@ id TVAppleFinishEmailLoad(TVAppleEmailLoad *load,BOOL terminalObserved,BOOL muta
     id<TVAppleEmailLoader> loader=[NSClassFromString(@"RUILoader")new];TVAppleEmailLoad *observer=[TVAppleEmailLoad new];
     [loader setDelegate:observer];[loader loadXMLUIWithRequest:request];
     NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+40;BOOL done=NO;
-    do{done=[observer complete];if(done||NSProcessInfo.processInfo.systemUptime>=deadline)break;
+    do{TVAppleObserveEmailParserAlert(loader,observer,mutation);done=[observer complete];if(done||NSProcessInfo.processInfo.systemUptime>=deadline)break;
         [[NSRunLoop currentRunLoop]runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]];}while(YES);
     id model=TVAppleFinishEmailLoad(observer,done,mutation,error);
     [loader cancel];[loader setDelegate:nil];
@@ -254,8 +291,16 @@ id TVAppleFinishEmailLoad(TVAppleEmailLoad *load,BOOL terminalObserved,BOOL muta
     request.HTTPMethod=@"GET";request.HTTPBody=nil;request.cachePolicy=NSURLRequestReloadIgnoringLocalCacheData;return [self load:request mutation:NO error:error];
 }
 - (NSDictionary *)beginEmailUnlocked:(NSString *)email appleID:(NSString *)appleID error:(NSError **)error{
-    if(self.challenge&&NSProcessInfo.processInfo.systemUptime<self.expires){*error=TVAppleError(TVAppleErrorConflict,@"An email verification challenge is already pending.");return nil;}
-    [self clearPending];if(![self prepare:appleID error:error])return nil;
+    if(self.challenge && ![self.target isEqual:appleID]) {
+        *error=TVAppleError(TVAppleErrorConflict,@"The pending email challenge belongs to another phone account.");return nil;
+    }
+    // Each explicitly requested binding owns a new challenge and signing environment.
+    [self clearPending];[self releaseAuthentication];
+    if(![self prepare:appleID error:error])return nil;
+    NSDictionary *fresh=TVAppleNativeEmailSettings(appleID,error);
+    if(!fresh || *error || ![self identityMatches:error])return nil;
+    for(NSString *address in fresh[@"reachable_emails"])if([address.lowercaseString isEqual:email.lowercaseString])
+        return @{@"outcome":@"succeeded",@"already_verified":@YES,@"email":email,@"settings":fresh};
     id personal=[self load:[self.initial mutableCopy]mutation:NO error:error];if(!personal)return nil;
     NSString *path=@"/appleid/settings/account/manage/email/alternate/add";
     if(!HasAll(personal,@[@"inlineScript"])||[[personal inlineScript]rangeOfString:path].location==NSNotFound){
@@ -280,6 +325,9 @@ id TVAppleFinishEmailLoad(TVAppleEmailLoad *load,BOOL terminalObserved,BOOL muta
     });
     return @{@"outcome":@"requires_email_verification",@"challenge_id":self.challenge,@"email":email,@"expires_in":@300};
 }
+- (NSDictionary *)freshEmailSettings:(NSString *)appleID error:(NSError **)error{
+    return TVAppleNativeEmailSettings(appleID,error);
+}
 - (NSDictionary *)verifyChallengeUnlocked:(NSString *)challenge code:(NSString *)code appleID:(NSString *)appleID error:(NSError **)error{
     if(![self.challenge isEqual:challenge]||![self.target isEqual:appleID]||NSProcessInfo.processInfo.systemUptime>=self.expires){
         if(NSProcessInfo.processInfo.systemUptime>=self.expires)[self clearPending];
@@ -289,11 +337,9 @@ id TVAppleFinishEmailLoad(TVAppleEmailLoad *load,BOOL terminalObserved,BOOL muta
     id pin=[[[model allPages]firstObject]passcodeViewOM];
     NSMutableURLRequest *post=TVAppleEmailPostbackRequest(model,pin,@{@"verificationInfo.answer":code},self.origin,@"/appleid/settings/account/manage/email/alternate/verification/put",error);
     if(!post)return nil;[self clearPending];
-    id response=[self load:post mutation:YES error:error];if(!response)return nil;
-    NSDictionary *fresh=TVAppleNativeEmailSettings(appleID,error);BOOL verified=NO;
-    for(NSString *address in fresh[@"reachable_emails"])if([address.lowercaseString isEqual:email.lowercaseString])verified=YES;
-    if(!verified||![self identityMatches:error]){*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"The email addition was not verified with a fresh server query.");return nil;}
-    return @{@"outcome":@"succeeded",@"email":email,@"settings":fresh};
+    if(![self load:post mutation:YES error:error])return nil;
+    *error=nil;
+    return @{@"outcome":@"succeeded",@"email":email};
 }
 - (NSDictionary *)setForwardingEmailUnlocked:(NSString *)email appleID:(NSString *)appleID error:(NSError **)error{
     if(self.challenge&&NSProcessInfo.processInfo.systemUptime<self.expires){*error=TVAppleError(TVAppleErrorConflict,@"Complete the pending email verification before changing forwarding.");return nil;}
@@ -327,11 +373,8 @@ id TVAppleFinishEmailLoad(TVAppleEmailLoad *load,BOOL terminalObserved,BOOL muta
     id form=[self get:link error:error];if(!form)return nil;
     NSMutableURLRequest *post=TVAppleRelayForwardingRequest(form,email,self.origin,error);if(!post)return nil;
     if(![self load:post mutation:YES error:error])return nil;
-    fresh=TVAppleNativeEmailSettings(appleID,error);
-    if(![fresh[@"forwarding_email"]isKindOfClass:NSString.class]||[fresh[@"forwarding_email"]caseInsensitiveCompare:email]!=NSOrderedSame||![self identityMatches:error]){
-        *error=TVAppleError(TVAppleErrorOutcomeUnknown,@"The relay destination was not confirmed by a fresh server query.");return nil;
-    }
-    return @{@"outcome":@"succeeded",@"already_configured":@NO,@"settings":fresh};
+    *error=nil;
+    return @{@"outcome":@"succeeded",@"already_configured":@NO};
 }
 - (NSDictionary *)beginEmail:(NSString *)email appleID:(NSString *)appleID error:(NSError **)error{
     @synchronized(self){NSDictionary *result=[self beginEmailUnlocked:email appleID:appleID error:error];if(!self.challenge)[self releaseAuthentication];return result;}

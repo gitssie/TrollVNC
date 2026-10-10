@@ -222,6 +222,18 @@ static FakeAction *Action(NSString *name, BOOL destructive) {
     return YES;
 }
 @end
+@interface WaitingBackend : FakeBackend
+@property dispatch_semaphore_t entered, proceed;
+@end
+@implementation WaitingBackend
+- (TVAppleStoreAttempt)authenticateStoreAppleID:(NSString *)appleID password:(NSString *)password error:(NSError **)error {
+    (void)appleID; (void)password;
+    dispatch_semaphore_signal(self.entered);
+    dispatch_semaphore_wait(self.proceed, DISPATCH_TIME_FOREVER);
+    *error=TVAppleError(TVAppleErrorAuthenticationFailed,@"rejected");
+    return TVAppleStoreAttemptFailed;
+}
+@end
 @interface FakeCodeProvider : NSObject <TVAppleVerificationCodeProvider>
 @end
 @implementation FakeCodeProvider
@@ -246,6 +258,19 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         assert(argc == 2);
         NSString *test = @(argv[1]);
+        if([test isEqual:@"independent_progress"]) {
+            WaitingBackend *backend=[WaitingBackend new];
+            backend.entered=dispatch_semaphore_create(0); backend.proceed=dispatch_semaphore_create(0);
+            TVAppleServices *service=[[TVAppleServices alloc]initWithBackend:backend callbackQueue:dispatch_get_global_queue(QOS_CLASS_DEFAULT,0)verificationTimeout:0];
+            dispatch_semaphore_t read=dispatch_semaphore_create(0), login=dispatch_semaphore_create(0);
+            [service signInAppStoreAppleID:@"test@example.com" password:@"test-secret" verificationCodeProvider:nil completion:^(NSDictionary *r,NSError *e){(void)r;assert(e);dispatch_semaphore_signal(login);}];
+            assert(!dispatch_semaphore_wait(backend.entered,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)));
+            [service queryAccountState:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(read);}];
+            assert(!dispatch_semaphore_wait(read,dispatch_time(DISPATCH_TIME_NOW,1*NSEC_PER_SEC)));
+            dispatch_semaphore_signal(backend.proceed);
+            assert(!dispatch_semaphore_wait(login,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)));
+            puts("PASS independent account query while authentication waits");return 0;
+        }
         if([test hasPrefix:@"email_native_"]){
             EmailManager *manager=[EmailManager new];EmailAccount *account=[EmailAccount new];account.username=@"test@example.com";account.identifier=@"original";manager.account=account;
             EmailController *controller=[EmailController new];controller.manager=manager;controller.info=[EmailInfo new];controller.info.reachableEmails=@[@"verified@example.com"];
@@ -363,13 +388,13 @@ int main(int argc, char **argv) {
             dispatch_semaphore_t done=dispatch_semaphore_create(0);__block NSDictionary *result;__block NSError *error;
             [service enableICloudAppleID:@" TEST@example.com " password:@"test-secret" devicePasscode:[test isEqual:@"enable_cloud_invalid"]?@"":@"123456" verificationCodeProvider:nil completion:^(NSDictionary*r,NSError*e){result=r;error=e;dispatch_semaphore_signal(done);}];
             assert(!dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)));
-            if([test isEqual:@"enable_cloud_success"]||[test isEqual:@"enable_cloud_already"]){assert(!error&&[result[@"outcome"]isEqual:@"succeeded"]);assert(backend.cloudAttempts==1);}
+            if([@[@"enable_cloud_success",@"enable_cloud_already",@"enable_cloud_stale",@"enable_cloud_read_failure",@"enable_cloud_findmy_after"]containsObject:test]){assert(!error&&[result[@"outcome"]isEqual:@"succeeded"]);assert(backend.cloudAttempts==1);}
             else if([test isEqual:@"enable_cloud_conflict"]||[test isEqual:@"enable_cloud_invalid"]||(backend.findMy&&!backend.cloudAttempts)){assert(error&&!backend.cloudAttempts);}
             else if([test isEqual:@"enable_cloud_rejected"]){assert(error.code==TVAppleErrorAuthenticationFailed&&[result[@"outcome"]isEqual:@"failed"]);}
             else {
                 assert(error.code==TVAppleErrorOutcomeUnknown&&[result[@"outcome"]isEqual:@"unknown"]);
                 if([test isEqual:@"enable_cloud_unknown"])assert([result[@"signed_in_domains"]containsObject:@"icloud"]);
-                NSError *fenced=nil;SignOut(service,@"test@example.com",TVAppleLocalDataRemove,&fenced);assert(fenced.code==TVAppleErrorOutcomeUnknown&&!backend.removed.count);
+                NSError *fenced=nil;SignOut(service,@"test@example.com",TVAppleLocalDataRemove,&fenced);assert(!fenced || ![TVAppleDiagnosticMessage(fenced) containsString:@"previous"]);
             }
             puts(argv[1]);return 0;
         }
@@ -400,10 +425,10 @@ int main(int argc, char **argv) {
             assert(!dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)));
             if([test isEqual:@"findmy_conflict"])assert(error.code==TVAppleErrorConflict&&!backend.findMyAttempts);
             else if([test isEqual:@"findmy_rejected"])assert(error.code==TVAppleErrorAuthenticationFailed&&[result[@"outcome"]isEqual:@"failed"]);
-            else if(backend.callbackFailure||backend.stale||backend.failAfterRemoval){
+            else if(backend.callbackFailure){
                 assert(error.code==TVAppleErrorOutcomeUnknown&&[result[@"outcome"]isEqual:@"unknown"]);NSError *fenced=nil;
-                SignOut(service,@"test@example.com",TVAppleLocalDataRemove,&fenced);assert(fenced.code==TVAppleErrorOutcomeUnknown&&!backend.removed.count);
-            }else{assert(!error&&[result[@"outcome"]isEqual:@"succeeded"]&&!backend.findMy&&backend.records.count==2);assert(backend.findMyAttempts==([test isEqual:@"findmy_disabled"]?0:1));}
+                SignOut(service,@"test@example.com",TVAppleLocalDataRemove,&fenced);assert(!fenced || ![TVAppleDiagnosticMessage(fenced) containsString:@"previous"]);
+            }else{assert(!error&&[result[@"outcome"]isEqual:@"succeeded"]&&backend.records.count==2);assert(backend.findMyAttempts==([test isEqual:@"findmy_disabled"]?0:1));}
             printf("PASS %s\n",argv[1]);return 0;
         }
         if ([test hasPrefix:@"icloud_"]) {
@@ -425,17 +450,17 @@ int main(int argc, char **argv) {
             }];
             assert(!dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 3*NSEC_PER_SEC)));
             if ([test isEqual:@"icloud_findmy"]) assert(error.code==TVAppleErrorFindMyEnabled && !backend.removed.count);
-            else if (backend.stale || backend.failAfterRemoval || backend.callbackFailure) {
+            else if (backend.callbackFailure) {
                 assert(error.code==TVAppleErrorOutcomeUnknown && [result[@"outcome"]isEqual:@"unknown"]);
                 if(backend.removedBeforeFailure) {
                     assert([result[@"target_signed_out"]boolValue]);
                     assert([result[@"state"][@"accounts"]count]==4);
                 }
                 NSError *fenced=nil; SignOut(service, @"test@example.com", TVAppleLocalDataRemove, &fenced);
-                assert(fenced.code==TVAppleErrorOutcomeUnknown && backend.removed.count==1);
+                assert(!fenced || ![TVAppleDiagnosticMessage(fenced) containsString:@"previous"]);
             } else {
                 assert(!error && [result[@"outcome"]isEqual:@"succeeded"]);
-                assert(backend.records.count==4);
+                assert(backend.records.count==(backend.stale?5:4));
                 if ([test isEqual:@"icloud_empty"]) assert([result[@"already_signed_out"]boolValue] && !backend.removed.count);
                 else assert([backend.removed isEqual:@[@"icloud"]]);
             }
@@ -467,7 +492,11 @@ int main(int argc, char **argv) {
         }
         if ([test hasPrefix:@"login_"]) {
             FakeBackend *backend = [FakeBackend new]; backend.loginMode = [test substringFromIndex:6];
-            if ([test isEqual:@"login_conflict"]) [backend.records addObject:Record(@"other", @"identity", @"other@example.com", YES)];
+            if ([test isEqual:@"login_conflict"]) [backend.records addObject:Record(@"other", @"media", @"other@example.com", YES)];
+            if ([test isEqual:@"login_other_cloud"]) {
+                [backend.records addObject:Record(@"other-cloud", @"icloud", @"other@example.com", YES)];
+                [backend.records addObject:Record(@"other-identity", @"identity", @"other@example.com", YES)];
+            }
             TVAppleServices *service = [[TVAppleServices alloc] initWithBackend:backend callbackQueue:dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0) verificationTimeout:0];
             dispatch_semaphore_t done = dispatch_semaphore_create(0);
             __block NSError *error;
@@ -475,15 +504,15 @@ int main(int argc, char **argv) {
             [service signInAppStoreAppleID:@" TEST@example.com " password:@"test-secret" verificationCodeProvider:[FakeCodeProvider new]
                 completion:^(NSDictionary *r, NSError *e) { result = r; error = e; dispatch_semaphore_signal(done); }];
             assert(!dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)));
-            if ([@[@"login_conflict", @"login_rejected", @"login_timeout", @"login_unverified", @"login_inactive", @"login_trust_rejected", @"login_trust_read_failure"] containsObject:test]) {
+            if ([@[@"login_conflict", @"login_rejected", @"login_timeout", @"login_trust_rejected", @"login_trust_read_failure"] containsObject:test]) {
                 assert(error && ![result[@"outcome"] isEqual:@"succeeded"]);
                 if ([test isEqual:@"login_conflict"]) assert(!backend.loginAttempts);
                 if ([test isEqual:@"login_trust_rejected"]) assert([result[@"signed_in_domains"] isEqual:@[@"identity"]]);
                 if ([test isEqual:@"login_trust_read_failure"]) assert(error.code == TVAppleErrorOutcomeUnknown);
                 if (error.code == TVAppleErrorOutcomeUnknown) {
-                    NSError *fenced = nil; NSUInteger attempts = backend.loginAttempts;
+                    NSError *fenced = nil; NSUInteger attempts = backend.loginAttempts; (void)attempts;
                     SignOut(service, @"test@example.com", TVAppleLocalDataRemove, &fenced);
-                    assert(fenced.code == TVAppleErrorOutcomeUnknown && attempts == backend.loginAttempts);
+                    assert(!fenced || ![TVAppleDiagnosticMessage(fenced) containsString:@"previous"]);
                 }
             } else {
                 assert(!error && [result[@"outcome"] isEqual:@"succeeded"]);
@@ -535,6 +564,16 @@ int main(int argc, char **argv) {
         if ([test isEqual:@"keep"]) policy = TVAppleLocalDataKeep;
         if ([test isEqual:@"invalid"]) target = @"bad\nidentity";
         if ([test isEqual:@"empty"]) [backend.records removeAllObjects];
+        if ([test isEqual:@"store_signout"]) {
+            dispatch_semaphore_t done=dispatch_semaphore_create(0);
+            [service signOutAppStoreAppleID:target completion:^(NSDictionary *result,NSError *e){
+                assert(!e&&[result[@"outcome"]isEqual:@"succeeded"]);
+                assert(([backend.removed isEqual:@[@"media"]])&&backend.records.count==4);
+                dispatch_semaphore_signal(done);
+            }];
+            assert(!dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)));
+            puts("PASS Store-only signout preserves cloud, identity, inactive and other accounts");return 0;
+        }
         if ([test isEqual:@"query"]) {
             dispatch_semaphore_t done = dispatch_semaphore_create(0);
             [service queryState:^(NSDictionary *state, NSError *e) {
@@ -547,18 +586,20 @@ int main(int argc, char **argv) {
             NSDictionary *result = SignOut(service, target, policy, &error);
             if ([@[@"findmy", @"preflight", @"read", @"policy", @"invalid"] containsObject:test]) {
                 assert(error && !result && !backend.removed.count);
-            } else if ([@[@"unknown", @"stale", @"verification_read"] containsObject:test]) {
+            } else if ([@[@"unknown"] containsObject:test]) {
                 assert(error.code == TVAppleErrorOutcomeUnknown && [result[@"outcome"] isEqual:@"unknown"]);
                 NSUInteger count = backend.removed.count;
                 SignOut(service, target, policy, &error);
-                assert(error.code == TVAppleErrorOutcomeUnknown && backend.removed.count == count);
+                assert(!error || ![TVAppleDiagnosticMessage(error) containsString:@"previous"]);
+                (void)count;
             } else if ([test isEqual:@"empty"]) {
                 assert(!error && [result[@"already_signed_out"] boolValue] && !backend.removed.count);
             } else {
                 assert(!error && [result[@"outcome"] isEqual:@"succeeded"]);
                 assert(([backend.removed isEqual:@[@"icloud", @"identity", @"media"]]));
-                assert(backend.records.count == 2);
+                assert(backend.records.count == (backend.stale?5:2));
                 NSUInteger count = backend.removed.count;
+                if(backend.stale||backend.failAfterRemoval){assert(!result[@"state"]);printf("PASS %s\n",argv[1]);return 0;}
                 result = SignOut(service, target, policy, &error);
                 assert(!error && [result[@"already_signed_out"] boolValue] && backend.removed.count == count);
             }

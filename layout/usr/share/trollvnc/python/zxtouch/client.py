@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Independent ZXTouch-compatible client for TrollVNC, including binary captures."""
 import os
+import base64
+import json
 import socket
 import threading
 from .datahandler import format_socket_data, decode_socket_data
+from .apple import AppleClient
+from .app_state import AppStateClient
 
 
 class zxtouch:
@@ -11,6 +15,8 @@ class zxtouch:
         self.s = socket.create_connection((str(ip), int(port or os.environ.get('ZXTOUCH_PORT', 6000))))
         self._recv_buffer = bytearray()
         self._lock = threading.RLock()
+        self.apple = AppleClient(self)
+        self.app_state = AppStateClient(self)
 
     def _recv_line(self):
         while True:
@@ -94,8 +100,30 @@ class zxtouch:
         return self._command(12, title, content, duration)
 
     def run_shell_command(self, command):
-        """Run as the TrollVNC service user (mobile), with output in its log."""
-        return self._command(13, command)
+        """Run as mobile; return (ok, stdout/stderr/exit status dictionary)."""
+        ok, fields = self._command(13, command)
+        if not ok or not fields:
+            return ok, fields  # Older servers only acknowledge execution.
+        if len(fields) != 1:
+            raise RuntimeError('Malformed shell response')
+        try:
+            result = json.loads(base64.b64decode(fields[0], validate=True))
+            if not isinstance(result, dict):
+                raise ValueError('Invalid shell result')
+            for stream in ('stdout', 'stderr'):
+                data = base64.b64decode(result.pop(stream + '_base64'), validate=True)
+                if len(data) > 65536:
+                    raise ValueError('Shell output exceeds limit')
+                result[stream] = data.decode('utf-8', errors='replace')
+            code = result['exit_code']
+            if code is not None and (type(code) is not int or not 0 <= code <= 255):
+                raise ValueError('Invalid shell exit code')
+            for key in ('stdout_truncated', 'stderr_truncated', 'timed_out', 'cancelled', 'output_read_failed'):
+                if type(result[key]) is not bool:
+                    raise ValueError('Invalid shell flag')
+        except (KeyError, TypeError, ValueError) as error:
+            raise RuntimeError('Malformed shell response') from error
+        return code == 0 and not any(result[key] for key in ('timed_out', 'cancelled', 'output_read_failed')), result
 
     def prompt_input(self, title='ZXTouch', message='', placeholder='', default_value=''):
         return self._scalar(29, title, message, placeholder, default_value)

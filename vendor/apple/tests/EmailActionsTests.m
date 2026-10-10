@@ -25,6 +25,27 @@
 @end
 @implementation HeadlessModel
 @end
+@interface AlertOnlyModel:HeadlessModel
+@property NSArray *allPages;
+@end
+@implementation AlertOnlyModel
+@end
+@interface NativeAlert:NSObject
+@property NSString *title,*message;
+@end
+@implementation NativeAlert
+@end
+@interface NativeParser:NSObject
+@property BOOL succeeded;
+@property id uiObjectModel;
+@end
+@implementation NativeParser
+@end
+@interface NativeLoader:NSObject
+@property NativeParser *parser;
+@end
+@implementation NativeLoader
+@end
 @interface ForwardPage : NSObject
 @property id tableViewOM,rightNavigationBarButtonItem,passcodeViewOM;
 @end
@@ -70,7 +91,8 @@
 @interface NameTransport : TVAppleNativeSettingsSession
 @property id personal,form;
 @property BOOL posted,mismatch,readFailure,identityChanged,refreshFailure;
-@property NSUInteger posts,refreshes;
+@property NSUInteger posts,refreshes,transientReads;
+@property BOOL postUnknown,transientMismatch;
 @end
 @implementation NameTransport
 - (BOOL)refreshName:(NSDictionary *)name appleID:(NSString *)appleID error:(NSError **)error{(void)name;(void)appleID;self.refreshes++;if(self.refreshFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture refresh failure");return NO;}return YES;}
@@ -86,9 +108,29 @@
     return self.personal;
 }
 - (id)load:(NSMutableURLRequest *)request mutation:(BOOL)mutation error:(NSError **)error{
-    (void)request;(void)error;assert(mutation);self.posts++;self.posted=YES;
+    (void)request;assert(mutation);self.posts++;self.posted=YES;
     if(!self.mismatch)[self.personal setClientInfo:@{@"firstName":@"jack",@"lastName":@"ma",@"middleName":@"preserved",@"accountName":@"test@example.com"}];
+    if(self.postUnknown){*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"fixture post timeout");return nil;}
     return self.personal;
+}
+@end
+// A verification POST can commit even when RemoteUI never delivers its model.
+@interface EmailVerificationTransport : TVAppleNativeSettingsSession
+@property BOOL absent,readFailure,changed,completed;
+@property NSUInteger posts,reads;
+@end
+@implementation EmailVerificationTransport
+- (id)load:(NSMutableURLRequest *)request mutation:(BOOL)mutation error:(NSError **)error{
+    (void)request;assert(mutation);self.posts++;
+    if(self.completed)return [NSObject new];
+    *error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Native email response did not complete (HTTP 200, terminal=0, finished=0, model=0, transport_failed=0).");return nil;
+}
+- (NSDictionary *)freshEmailSettings:(NSString *)appleID error:(NSError **)error{
+    self.reads++;if(self.readFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture fresh read failure");return nil;}
+    return @{@"apple_id":appleID,@"reachable_emails":self.absent?@[]:@[@"CONTACT@example.net"]};
+}
+- (BOOL)identityMatches:(NSError **)error{
+    if(self.changed){*error=TVAppleError(TVAppleErrorConflict,@"fixture changed identity");return NO;}return YES;
 }
 @end
 static void Wait(dispatch_semaphore_t done){assert(!dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)));}
@@ -158,14 +200,16 @@ int main(void){@autoreleasepool{
     nameLink.attributes=@{@"class":@"link",@"url":@"/appleid/settings/account/manage/name",@"httpMethod":@"GET"};
     personalSection.rows=@[nameLink];personalTable.sections=@[personalSection];personalPage.tableViewOM=personalTable;personal.allPages=@[personalPage];
     NameTransport *transport=[NameTransport new];transport.personal=personal;transport.form=model;error=nil;
-    NSDictionary *saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];assert(saved&&!error&&transport.posts==1&&transport.refreshes==1&&![saved[@"already_configured"]boolValue]);
-    saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];assert(saved&&[saved[@"already_configured"]boolValue]&&transport.posts==1&&transport.refreshes==2);
-    transport.refreshFailure=YES;error=nil;assert(![transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error]&&error.code==TVAppleErrorOutcomeUnknown&&transport.posts==1);
-    personal.clientInfo=model.clientInfo;transport=[NameTransport new];transport.personal=personal;transport.form=model;transport.refreshFailure=YES;error=nil;assert(![transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error]&&error.code==TVAppleErrorOutcomeUnknown&&transport.posts==1);
-    for(NSNumber *scenario in @[@0,@1,@2]){
-        transport=[NameTransport new];transport.personal=personal;transport.form=model;transport.mismatch=scenario.intValue!=2;transport.readFailure=scenario.intValue==1;transport.identityChanged=scenario.intValue==2;personal.clientInfo=model.clientInfo;error=nil;
-        assert(![transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error]&&error.code==TVAppleErrorOutcomeUnknown&&transport.posts==1);
+    NSDictionary *saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];assert(saved&&!error&&transport.posts==1&&transport.refreshes==0&&![saved[@"already_configured"]boolValue]);
+    saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];assert(saved&&[saved[@"already_configured"]boolValue]&&transport.posts==1&&transport.refreshes==0);
+    for(NSNumber *scenario in @[@0,@1,@2,@3]){
+        personal.clientInfo=model.clientInfo;transport=[NameTransport new];transport.personal=personal;transport.form=model;
+        transport.mismatch=YES;transport.readFailure=scenario.intValue==1;transport.identityChanged=scenario.intValue==2;transport.refreshFailure=scenario.intValue==3;error=nil;
+        saved=[transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error];
+        assert(saved&&!error&&transport.posts==1&&transport.refreshes==0);
     }
+    personal.clientInfo=model.clientInfo;transport=[NameTransport new];transport.personal=personal;transport.form=model;transport.postUnknown=YES;error=nil;
+    assert(![transport setFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"error:&error]&&error.code==TVAppleErrorOutcomeUnknown&&transport.posts==1);
     // Exercise production challenge checks without touching any Apple service.
     TVAppleNativeSettingsSession *native=[TVAppleNativeSettingsSession new];
     [native setValue:@"session" forKey:@"challenge"];[native setValue:@"test@example.com" forKey:@"target"];
@@ -186,6 +230,34 @@ int main(void){@autoreleasepool{
     [native setValue:@(NSProcessInfo.processInfo.systemUptime-1)forKey:@"expires"];
     assert(![native verifyChallenge:@"session"code:@"001234"appleID:@"test@example.com"error:&error]);
     assert(error.code==TVAppleErrorVerificationCode&&![native valueForKey:@"pendingModel"]);
+    element.attributes=@{@"url":path,@"httpMethod":@"POST"};
+    for(NSNumber *scenario in @[@0,@1,@2,@3,@4]){
+        EmailVerificationTransport *verification=[EmailVerificationTransport new];
+        verification.completed=scenario.intValue!=4;
+        verification.absent=scenario.intValue==1;verification.readFailure=scenario.intValue==2;verification.changed=scenario.intValue==3;
+        [verification setValue:@"session"forKey:@"challenge"];[verification setValue:@"test@example.com"forKey:@"target"];
+        [verification setValue:@(NSProcessInfo.processInfo.systemUptime+60)forKey:@"expires"];
+        [verification setValue:model forKey:@"pendingModel"];[verification setValue:@"contact@example.net"forKey:@"pendingEmail"];
+        [verification setValue:origin forKey:@"origin"];error=nil;
+        NSDictionary *result=[verification verifyChallenge:@"session"code:@"001234"appleID:@"test@example.com"error:&error];
+        assert(verification.posts==1&&verification.reads==0&&![verification valueForKey:@"challenge"]);
+        if(scenario.intValue!=4)assert([result[@"outcome"]isEqual:@"succeeded"]&&!error);
+        else assert(!result&&error.code==TVAppleErrorOutcomeUnknown);
+    }
+    NativeLoader *alertLoader=[NativeLoader new];alertLoader.parser=[NativeParser new];
+    AlertOnlyModel *alertModel=[AlertOnlyModel new];alertModel.allPages=@[];
+    NativeAlert *alert=[NativeAlert new];alert.title=@"Invalid Email";alert.message=@"This email address is not available. Choose a different address.";
+    alertModel.primaryAlert=alert;alertLoader.parser.uiObjectModel=alertModel;
+    TVAppleEmailLoad *alertLoad=[TVAppleEmailLoad new];alertLoad.status=200;
+    TVAppleObserveEmailParserAlert(alertLoader,alertLoad,YES);assert(![alertLoad complete]);
+    alertLoader.parser.succeeded=YES;alertModel.allPages=@[NSNull.null];
+    TVAppleObserveEmailParserAlert(alertLoader,alertLoad,YES);assert(![alertLoad complete]);
+    alertModel.allPages=@[];TVAppleObserveEmailParserAlert(alertLoader,alertLoad,YES);assert([alertLoad complete]);
+    error=nil;assert(!TVAppleFinishEmailLoad(alertLoad,YES,YES,&error)&&error.code==TVAppleErrorInvalidRequest);
+    assert([TVAppleDiagnosticMessage(error) containsString:@"not available"]);
+    alertLoad=[TVAppleEmailLoad new];alertLoad.status=200;alert.title=@"Unknown alert";
+    TVAppleObserveEmailParserAlert(alertLoader,alertLoad,YES);error=nil;
+    assert(!TVAppleFinishEmailLoad(alertLoad,YES,YES,&error)&&error.code==TVAppleErrorOutcomeUnknown);
     // Model arrival is not terminal, and errors remain errors even after a model.
     TVAppleEmailLoad *load=[TVAppleEmailLoad new];HeadlessModel *headless=[HeadlessModel new];
     [load loader:NSNull.null receivedObjectModel:headless topActionSignal:nil];assert(![load complete]);
@@ -219,15 +291,22 @@ int main(void){@autoreleasepool{
     [service setSignInWithAppleForwardingEmail:@"bad\n@example.net" appleID:@"test@example.com" completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorInvalidRequest);dispatch_semaphore_signal(done);}];Wait(done);
     [service setSignInWithAppleForwardingEmail:@"contact@example.net" appleID:@"test@example.com" completion:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(done);}];Wait(done);
     assert(backend.begins==1&&backend.verifications==1&&backend.forwards==1);
+    // Unknown email/name outcomes cannot block independent explicit commands.
+    backend.unknown=YES;
+    [service beginAddingContactEmail:@"contact@example.net" appleID:@"test@example.com" completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorOutcomeUnknown);dispatch_semaphore_signal(done);}];Wait(done);
+    backend.unknown=NO;
+    [service setSignInWithAppleForwardingEmail:@"contact@example.net" appleID:@"test@example.com" completion:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(done);}];Wait(done);
+    [service beginAddingContactEmail:@"contact@example.net" appleID:@"test@example.com" completion:^(NSDictionary *r,NSError *e){assert(!e&&[r[@"outcome"]isEqual:@"requires_email_verification"]);dispatch_semaphore_signal(done);}];Wait(done);
+    assert(backend.begins==3&&backend.forwards==2);
     [service setAppleIDFirstName:@"jack"lastName:@"ma"appleID:@" Test@Example.COM "completion:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(done);}];Wait(done);
     [service setAppleIDFirstName:@" "lastName:@"ma"appleID:@"test@example.com"completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorInvalidRequest);dispatch_semaphore_signal(done);}];Wait(done);
     assert(backend.names==1);
     backend.unknown=YES;
     [service setAppleIDFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorOutcomeUnknown);dispatch_semaphore_signal(done);}];Wait(done);
-    [service setSignInWithAppleForwardingEmail:@"contact@example.net" appleID:@"test@example.com" completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorOutcomeUnknown);dispatch_semaphore_signal(done);}];Wait(done);
+    [service setSignInWithAppleForwardingEmail:@"contact@example.net" appleID:@"test@example.com" completion:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(done);}];Wait(done);
     [service queryAppleIDEmailSettings:@"test@example.com" completion:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(done);}];Wait(done);
     [service setAppleIDFirstName:@"jack"lastName:@"ma"appleID:@"test@example.com"completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorOutcomeUnknown);dispatch_semaphore_signal(done);}];Wait(done);
     [service queryAppleIDNameSettings:@"test@example.com"completion:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(done);}];Wait(done);
-    assert(backend.names==2);
-    assert(backend.forwards==1);puts("PASS email and name actions: native postback boundaries, input, separate code, unknown write fence");return 0;
+    assert(backend.names==3);
+    assert(backend.forwards==3);puts("PASS email and name actions: native postback boundaries, input, separate code, unknown write fence");return 0;
 }}

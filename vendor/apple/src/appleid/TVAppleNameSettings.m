@@ -147,7 +147,6 @@ NSMutableURLRequest *TVAppleNamePostback(id form,NSString *first,NSString *last,
     if(![self beginSettingsOperation:appleID error:error])return nil;
     NSDictionary *before=[self readName:appleID error:error];if(!before)return nil;
     if([before[@"first_name"]isEqual:first]&&[before[@"last_name"]isEqual:last]){
-        if(![self refreshName:before appleID:appleID error:error]){*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Settings name matches, but native AuthKit synchronization was not verified.");return nil;}
         return @{@"outcome":@"succeeded",@"already_configured":@YES,@"settings":before};
     }
     // Follow the exact server-advertised Settings link, without using a guessed write URL.
@@ -172,12 +171,9 @@ NSMutableURLRequest *TVAppleNamePostback(id form,NSString *first,NSString *last,
     id form=[self get:link error:error];if(!form)return nil;NSString *middle=nil;
     NSMutableURLRequest *post=TVAppleNamePostback(form,first,last,[self origin],&middle,error);if(!post)return nil;
     if(![self load:post mutation:YES error:error])return nil;
-    NSDictionary *fresh=[self readName:appleID error:error];
-    if(![fresh[@"first_name"]isEqual:first]||![fresh[@"last_name"]isEqual:last]||![fresh[@"middle_name"]isEqual:middle]){
-        *error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Saved name was not confirmed by a fresh native Settings query.");return nil;
-    }
-    if(![self refreshName:fresh appleID:appleID error:error]){*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Settings name was saved, but native AuthKit synchronization was not verified.");return nil;}
-    return @{@"outcome":@"succeeded",@"already_configured":@NO,@"settings":fresh};
+    // Native API completion determines the write result; queries are independent.
+    *error=nil;
+    return @{@"outcome":@"succeeded",@"already_configured":@NO};
 }
 @end
 @implementation TVAppleServices (NameSettings)

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #import "TVNCZXTouchService.h"
+#import "TVNCAppleService.h"
+#import "TVNCAppStateService.h"
+#import "AppManagement.h"
 #import "ZXTouchTCPServer.h"
 #import "ZXTouchProcessRunner.h"
 #import "ZXTouchUIBridge.h"
@@ -84,6 +87,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 
 @implementation TVNCZXTouchService {
     ZXTouchTCPServer *_server;
+    TVNCAppleService *_appleService;
+    TVNCAppStateService *_appStateService;
     ZXTouchProcessRunner *_processRunner;
     ZXTouchUIBridge *_uiBridge;
     BOOL _hasAppAdapter;
@@ -110,6 +115,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         return NO;
     }
     _stopping = false;
+    _appleService = [TVNCAppleService new];
+    _appStateService = [TVNCAppStateService new];
     NSDictionary *paths = [ZXTouchProcessRunner runtimePaths];
     NSString *root = paths[@"root"], *modules = paths[@"modules"];
     _processRunner = [[ZXTouchProcessRunner alloc] initWithRuntimeRoot:root modulePath:modules
@@ -133,6 +140,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 }
 - (void)stop {
     _stopping = true;
+    [_appleService stop];
+    [_appStateService stop];
     [_uiBridge stop];
     [_processRunner stop];
     [_server stop];
@@ -476,10 +485,12 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
                 return [self ui:command client:client target:@"com.apple.springboard"];
             case 13: {
                 NSError *error = nil;
-                BOOL ok = [_processRunner runShell:ZXString(command.payload) cancelled:^BOOL {
+                NSDictionary *result = [_processRunner captureShell:ZXString(command.payload) timeout:30 cancelled:^BOOL {
                     return self->_stopping || ![self->_server isClientConnected:client];
                 } error:&error];
-                return ok ? ZXReply(nil) : ZXError(error.localizedDescription);
+                if(!result)return ZXError(error.localizedDescription);
+                NSData *json=[NSJSONSerialization dataWithJSONObject:result options:0 error:&error];
+                return json?ZXReply([json base64EncodedStringWithOptions:0]):ZXError(@"Cannot encode command result");
             }
             case 19: {
                 NSError *error = nil;
@@ -501,6 +512,11 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
             }
             case 90: return [self ui:command client:client target:@"com.apple.springboard"];
             case 99: return ZXReply(@"TrollVNC ZXTouch");
+            case 31: return [_appleService handlePayload:ZXString(command.payload)];
+            case 32: return [_appStateService handlePayload:ZXString(command.payload)];
+            case 33: return tvAppZXTouchRequest(ZXString(command.payload), ^BOOL {
+                return self->_stopping || ![self->_server isClientConnected:client];
+            });
             case 24:
                 if (command.fields[0] == "2" || (_hasAppAdapter && ZXInteger(command.fields[0], 1, 7) <= 5)) return [self ui:command client:client target:[self foreground]];
                 return [self keyboard:command];

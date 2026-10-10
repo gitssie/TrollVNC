@@ -1,6 +1,10 @@
 #import "AppManagement.h"
+#import "AppControlProtocol.h"
+#import <Security/SecRandom.h>
 #import "AppManagementPolicy.h"
 #import "ScreenUnlock.h"
+#import "NotificationBridge.h"
+#import "STHIDEventGenerator.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <TargetConditionals.h>
@@ -21,11 +25,14 @@
 static const int TVAppEncoding = (int)0xC0A1A990;
 static int tvAppEncodings[] = {TVAppEncoding, 0};
 static dispatch_queue_t tvAppQueue;
+static dispatch_queue_t tvAppEventQueue;
+static int tvAppControlPort;
 static NSMutableDictionary *tvAppClients;
 static rfbScreenInfoPtr tvAppScreen;
 static pthread_mutex_t tvAppScreenMutex = PTHREAD_MUTEX_INITIALIZER;
 static BOOL tvAppRegistered;
 static int tvAppLockToken = -1;
+static dispatch_source_t tvNotificationTimer;
 
 @interface NSObject (TVAppSPI)
 + (id)defaultWorkspace;
@@ -42,9 +49,13 @@ static int tvAppLockToken = -1;
 
 @interface TVAppClient : NSObject
 @property BOOL enabled;
+@property NSString *controlToken;
 @property BOOL connected;
 @property NSUInteger pending;
 @property NSNumber *lastLocked;
+@property BOOL notifications;
+@property BOOL notificationsSupported;
+@property NSString *notificationRevision;
 @end
 @implementation TVAppClient
 @end
@@ -203,7 +214,39 @@ static id tvAppMainRead(id (^work)(void), NSString **error) {
     return result;
 }
 
-static NSDictionary *tvAppExecute(unsigned char op, NSDictionary *request, NSString **error) {
+static NSDictionary *tvAppExecute(unsigned char op, NSDictionary *request, NSString **error, BOOL (^authorized)(void)) {
+    if (op == 12) {
+        BOOL locked;
+        if (!tvScreenReadLocked(&locked) || locked) { *error = @"Unlock the phone before returning to the home screen"; return nil; }
+        [[STHIDEventGenerator sharedGenerator] menuPress];
+        return @{@"ok":@YES};
+    }
+    if (op == 16) {
+        NSString *token = request[@"token"], *text = request[@"text"];
+        if (![token isKindOfClass:NSString.class] || ![[NSUUID alloc] initWithUUIDString:token] || ![text isKindOfClass:NSString.class]) { *error = @"Invalid clipboard request"; return nil; }
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        __block BOOL verified = NO;
+        __block BOOL expired = NO;
+        NSObject *gate = [NSObject new];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @try {
+                @synchronized(gate) {
+                    if (!expired && (!authorized || authorized())) {
+                        UIPasteboard *board = UIPasteboard.generalPasteboard;
+                        board.string = text;
+                        verified = [board.string isEqualToString:text];
+                    }
+                }
+            } @catch (NSException *exception) {
+                verified = NO;
+            } @finally {
+                dispatch_semaphore_signal(done);
+            }
+        });
+        if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)) != 0) { @synchronized(gate) { expired = YES; } *error = @"Clipboard result unknown: main-thread timeout"; return nil; }
+        if (!verified) { *error = @"Clipboard write could not be verified"; return nil; }
+        return @{@"ok":@YES, @"token":token};
+    }
     if (op == 7) return tvScreenUnlockState(error);
     if (op == 8) return tvScreenUnlockPrepare(error);
     if (op == 10) return tvScreenLock(error);
@@ -275,12 +318,11 @@ static BOOL tvAppWrite(rfbClientPtr cl, TVAppClient *state, unsigned char op, un
     // Never acquire it while holding the registry or per-client state lock.
     pthread_mutex_lock(&cl->sendMutex);
     @synchronized(state) {
-        if (state.connected && (op == 0 || state.enabled) && cl->sock != RFB_INVALID_SOCKET) {
-            attempted = YES;
-            ok = rfbWriteExact(cl, (const char *)header, sizeof(header)) >= 0 &&
-                rfbWriteExact(cl, (const char *)json.bytes, (int)json.length) >= 0;
-        }
+        attempted = state.connected && (op == 0 || state.enabled) && cl->sock != RFB_INVALID_SOCKET;
     }
+    if (attempted)
+        ok = rfbWriteExact(cl, (const char *)header, sizeof(header)) >= 0 &&
+             rfbWriteExact(cl, (const char *)json.bytes, (int)json.length) >= 0;
     pthread_mutex_unlock(&cl->sendMutex);
     if (attempted && !ok) rfbCloseClient(cl);
     return ok;
@@ -329,6 +371,32 @@ static void tvAppPushLocked(void) {
     }
 }
 
+// Poll the local adapter once per second, then push only changed snapshots to opted-in peers.
+static void tvAppPushNotifications(void) {
+    pthread_mutex_lock(&tvAppScreenMutex);
+    @try {
+        if (!tvAppRegistered || !tvAppScreen) return;
+        rfbClientIteratorPtr iterator = rfbGetClientIterator(tvAppScreen);
+        NSDictionary *snapshot = nil; BOOL read = NO;
+        @try {
+            rfbClientPtr cl;
+            while ((cl = rfbClientIteratorNext(iterator))) {
+                TVAppClient *state;
+                @synchronized(tvAppClients) { state = tvAppClients[[NSValue valueWithPointer:cl]]; }
+                if (!state) continue;
+                @synchronized(state) { if (!state.connected || !state.enabled || !state.notifications) continue; }
+                if (!read) { NSString *error = nil; snapshot = tvNotificationSnapshot(&error); read = YES; }
+                if (!snapshot) break;
+                BOOL changed;
+                @synchronized(state) { changed = ![state.notificationRevision isEqual:snapshot[@"revision"]]; }
+                if (changed && tvAppWrite(cl, state, 15, 0, 0, snapshot)) {
+                    @synchronized(state) { state.notificationRevision = snapshot[@"revision"]; }
+                }
+            }
+        } @finally { rfbReleaseClientIterator(iterator); }
+    } @finally { pthread_mutex_unlock(&tvAppScreenMutex); }
+}
+
 static rfbBool tvAppNew(rfbClientPtr cl, void **data) {
     TVAppClient *state = [TVAppClient new]; state.connected = YES;
     @synchronized(tvAppClients) {
@@ -345,7 +413,7 @@ static void tvAppClose(rfbClientPtr cl, void *data) {
         // close callbacks may repeat or race; consume the retained data once.
         if (!state || (__bridge void *)state != data) return;
         [tvAppClients removeObjectForKey:key];
-        @synchronized(state) { state.connected = NO; state.enabled = NO; }
+        @synchronized(state) { state.connected = NO; state.enabled = NO; state.notifications = NO; state.controlToken = nil; }
     }
     TVAppClient *owned = (__bridge_transfer TVAppClient *)data;
     (void)owned;
@@ -357,20 +425,34 @@ static rfbBool tvAppEnable(rfbClientPtr cl, void **data, int encoding) {
         state = tvAppClients[[NSValue valueWithPointer:cl]];
         if (!state || (__bridge void *)state != *data) return FALSE;
     }
-    if (encoding == 0) { @synchronized(state) { state.enabled = NO; state.lastLocked = nil; } return TRUE; }
+    if (encoding == 0) { @synchronized(state) { state.enabled = NO; state.lastLocked = nil; state.notifications = NO; state.controlToken = nil; } return TRUE; }
     if (encoding != TVAppEncoding) return FALSE;
+    BOOL notifications = tvNotificationsAvailable();
+    @synchronized(state) { state.notificationsSupported = notifications; }
     BOOL launch = [tvAppWorkspace() respondsToSelector:@selector(openApplicationWithBundleID:)];
     BOOL terminate = tvAppProcPath() != NULL;
-    BOOL ok = tvAppWrite(cl, state, 0, 0, 0, @{@"list":@([tvAppWorkspace() respondsToSelector:@selector(allInstalledApplications)]), @"launch":@(launch), @"terminate":@(terminate),
+    uint8_t random[32];
+    NSString *token = nil;
+    if (SecRandomCopyBytes(kSecRandomDefault, sizeof(random), random) == errSecSuccess) {
+        NSMutableString *hex = [NSMutableString stringWithCapacity:64];
+        for (uint8_t byte : random) [hex appendFormat:@"%02x", byte];
+        token = hex;
+    }
+    @synchronized(state) { state.controlToken = token; state.enabled = YES; }
+    NSMutableDictionary *capabilities = [@{@"list":@([tvAppWorkspace() respondsToSelector:@selector(allInstalledApplications)]), @"launch":@(launch), @"terminate":@(terminate),
         @"restart":@(launch && terminate), @"foreground":@(tvAppForegroundFunction() != NULL),
         @"icons":@([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:scale:)]),
-        @"unlock":@(tvScreenUnlockSupported()), @"lock":@(tvScreenLockSupported()), @"control":@(!cl->viewOnly)});
+        @"photo_tasks":@YES, @"clipboard_write":@YES, @"home":@YES, @"notifications":@(notifications), @"unlock":@(tvScreenUnlockSupported()), @"lock":@(tvScreenLockSupported()), @"control":@(!cl->viewOnly)} mutableCopy];
+    if (token && tvAppControlPort > 0)
+        capabilities[@"zx_control"] = @{@"version":@1, @"port":@(tvAppControlPort), @"token":token};
+    BOOL ok = tvAppWrite(cl, state, 0, 0, 0, capabilities);
     if (ok) {
         @synchronized(state) {
             if (state.connected) { state.enabled = YES; state.lastLocked = nil; }
         }
-        dispatch_async(tvAppQueue, ^{ tvAppPushLocked(); });
+        dispatch_async(tvAppEventQueue, ^{ tvAppPushLocked(); });
     }
+    if (!ok) { @synchronized(state) { state.enabled = NO; state.controlToken = nil; } }
     return ok;
 }
 static rfbBool tvAppMessage(rfbClientPtr cl, void *data, const rfbClientToServerMsg *message) {
@@ -387,7 +469,7 @@ static rfbBool tvAppMessage(rfbClientPtr cl, void *data, const rfbClientToServer
         memcpy(&id, header + 3, 4); memcpy(&length, header + 7, 4);
         id = ntohl(id); length = ntohl(length);
         unsigned char op = header[1];
-        if (header[0] != 1 || op < 1 || op > 10 || header[2] != 0 || id == 0 || length > 4096) {
+        if (header[0] != 1 || op < 7 || op > 14 || op == 11 || op == 12 || header[2] != 0 || id == 0 || length > 4096) {
             rfbCloseClient(cl); return TRUE;
         }
         NSMutableData *payload = [NSMutableData dataWithLength:length];
@@ -398,7 +480,7 @@ static rfbBool tvAppMessage(rfbClientPtr cl, void *data, const rfbClientToServer
         }
         BOOL unavailable;
         @synchronized(state) {
-            unavailable = !state.enabled || !state.connected || state.pending >= 8 || (cl->viewOnly && ((op >= 2 && op <= 4) || op >= 8));
+            unavailable = !state.enabled || !state.connected || state.pending >= 8 || (cl->viewOnly && ((op >= 2 && op <= 4) || (op >= 8 && op <= 10) || op == 12 || op == 16));
             if (!unavailable) state.pending++;
         }
         if (unavailable) {
@@ -417,19 +499,32 @@ static rfbBool tvAppMessage(rfbClientPtr cl, void *data, const rfbClientToServer
                 NSDictionary *result = nil;
                 @try {
                     if (NSProcessInfo.processInfo.systemUptime - queuedAt > 8.0) error = @"App request expired before execution";
-                    else if (cl->viewOnly && ((op >= 2 && op <= 4) || op >= 8)) error = @"Device control is read-only";
+                    else if (cl->viewOnly && ((op >= 2 && op <= 4) || (op >= 8 && op <= 10) || op == 12 || op == 16)) error = @"Device control is read-only";
+                    else if (op == 13 || op == 14) {
+                        BOOL supported;
+                        @synchronized(state) { supported = state.notificationsSupported; }
+                        if (!supported) error = @"Notification adapter was not negotiated";
+                        else if (op == 13) {
+                            NSNumber *enabled = request[@"enabled"];
+                            if (![enabled isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)enabled) != CFBooleanGetTypeID()) error = @"Invalid notification subscription";
+                            else { @synchronized(state) { state.notifications = enabled.boolValue; state.notificationRevision = nil; } result = @{@"ok":@YES}; }
+                        } else result = tvNotificationSnapshot(&error);
+                    }
                     else if (op == 9) {
                         NSNumber *digits = request[@"digits"];
                         if (![digits isKindOfClass:NSNumber.class] || [digits doubleValue] != [digits unsignedIntegerValue]) error = @"Invalid unlock input request";
                         else result = tvScreenUnlockArm(cl, [digits unsignedIntegerValue], &error);
                     }
-                    else result = tvAppExecute(op, request, &error);
+                    else result = tvAppExecute(op, request, &error, nil);
                 } @catch (NSException *exception) {
                     error = [NSString stringWithFormat:@"App operation failed: %@", exception.name];
                 }
-                tvAppWrite(cl, state, op, result ? 0 : 1, id, result ?: @{@"error":error ?: @"App operation failed"});
-                @synchronized(state) { state.pending--; }
-                rfbDecrClientRef(cl);
+                NSDictionary *response = result ?: @{@"error":error ?: @"App operation failed"};
+                dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                    tvAppWrite(cl, state, op, result ? 0 : 1, id, response);
+                    @synchronized(state) { state.pending--; }
+                    rfbDecrClientRef(cl);
+                });
             }
         });
     }
@@ -440,10 +535,61 @@ static rfbProtocolExtension tvAppExtension = {
     .newClient = tvAppNew, .pseudoEncodings = tvAppEncodings, .enablePseudoEncoding = tvAppEnable,
     .handleMessage = tvAppMessage, .close = tvAppClose,
 };
-void tvRegisterAppManagement(rfbScreenInfoPtr screen) {
+
+NSData *tvAppZXTouchRequest(NSString *encoded, BOOL (^cancelled)(void)) {
+    NSDictionary *request = TVAppControlDecode(encoded);
+    if (!request) return [@"-1;;Invalid control request\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+    __block NSDictionary *result = nil;
+    __block NSString *error = nil;
+    NSTimeInterval queuedAt = NSProcessInfo.processInfo.systemUptime;
+    // The operation queue is shared with legacy VNC commands, but replies are
+    // written on their own transport workers, outside this queue.
+    dispatch_sync(tvAppQueue, ^{
+        rfbClientPtr owner = NULL;
+        TVAppClient *state = nil;
+        @synchronized(tvAppClients) {
+            for (NSValue *key in tvAppClients) {
+                TVAppClient *candidate = tvAppClients[key];
+                @synchronized(candidate) {
+                    if (candidate.connected && candidate.enabled &&
+                        [candidate.controlToken isEqualToString:request[@"token"]]) {
+                        owner = (rfbClientPtr)key.pointerValue;
+                        state = candidate;
+                        rfbIncrClientRef(owner);
+                        break;
+                    }
+                }
+            }
+        }
+        if (!owner) { error = @"Control authorization expired or unavailable"; return; }
+        @try {
+            unsigned char op = [request[@"op"] unsignedCharValue];
+            BOOL valid;
+            @synchronized(state) { valid = state.connected && state.enabled; }
+            if (cancelled()) error = @"Control request cancelled before execution";
+            else if (!valid || owner->sock == RFB_INVALID_SOCKET) error = @"Control authorization expired";
+            else if (NSProcessInfo.processInfo.systemUptime - queuedAt > 8.0) error = @"Control request expired before execution";
+            else if (owner->viewOnly && TVAppControlMutation(op)) error = @"Device control is read-only";
+            else if (op == 0) result = @{@"ok":@YES};
+            else result = tvAppExecute(op, request[@"payload"], &error, ^BOOL{
+                if (cancelled()) return NO;
+                @synchronized(state) { return state.connected && state.enabled && [state.controlToken isEqualToString:request[@"token"]]; }
+            });
+        } @catch (NSException *exception) {
+            (void)exception;
+            error = @"Device operation failed";
+        } @finally {
+            rfbDecrClientRef(owner);
+        }
+    });
+    return TVAppControlEncode(request, result, error);
+}
+void tvRegisterAppManagement(rfbScreenInfoPtr screen, int controlPort) {
+    tvAppControlPort = controlPort;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         tvAppQueue = dispatch_queue_create("com.82flex.trollvnc.apps", DISPATCH_QUEUE_SERIAL);
+        tvAppEventQueue = dispatch_queue_create("com.82flex.trollvnc.device-events", DISPATCH_QUEUE_SERIAL);
         tvAppClients = [NSMutableDictionary new];
     });
     pthread_mutex_lock(&tvAppScreenMutex);
@@ -453,12 +599,19 @@ void tvRegisterAppManagement(rfbScreenInfoPtr screen) {
     if (tvAppLockToken < 0) {
         // The system notification is only a trigger; query actual lock status.
         // Also used by Appium WebDriverAgent's XCUIDevice+FBHelpers.
-        if (notify_register_dispatch("com.apple.springboard.lockstate", &tvAppLockToken, tvAppQueue,
+        if (notify_register_dispatch("com.apple.springboard.lockstate", &tvAppLockToken, tvAppEventQueue,
             ^(int token) { (void)token; tvAppPushLocked(); }) != NOTIFY_STATUS_OK) tvAppLockToken = -1;
+    }
+    if (!tvNotificationTimer) {
+        tvNotificationTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, tvAppEventQueue);
+        dispatch_source_set_timer(tvNotificationTimer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, 100 * NSEC_PER_MSEC);
+        dispatch_source_set_event_handler(tvNotificationTimer, ^{ tvAppPushNotifications(); });
+        dispatch_resume(tvNotificationTimer);
     }
     rfbRegisterProtocolExtension(&tvAppExtension);
 }
 void tvUnregisterAppManagement(void) {
+    if (tvNotificationTimer) { dispatch_source_cancel(tvNotificationTimer); tvNotificationTimer = nil; }
     if (tvAppLockToken >= 0) { notify_cancel(tvAppLockToken); tvAppLockToken = -1; }
     pthread_mutex_lock(&tvAppScreenMutex);
     tvAppRegistered = NO; tvAppScreen = NULL;

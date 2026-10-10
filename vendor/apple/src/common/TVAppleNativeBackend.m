@@ -2,6 +2,7 @@
 #import "TVAppleNativeSelectors.h"
 #import "TVApplePolicy.h"
 #import "TVAppleStoreLogin.h"
+#import "TVAppleStoreSignIn.h"
 #import "TVAppleFindMy.h"
 #import "TVAppleICloud.h"
 #import "TVAppleSearchParty.h"
@@ -51,37 +52,41 @@ static BOOL Entitled(NSString *key) {
     return entitled;
 }
 @interface TVAppleNativeBackend : NSObject <TVAppleBackend, TVAppleStoreLoginBackend, TVAppleFindMyBackend, TVAppleICloudBackend, TVAppleEmailSettingsBackend, TVAppleEmailActionsBackend, TVAppleNameSettingsBackend, TVAppleSignInWithAppleBackend, TVAppleICloudDevicesBackend>
-@property TVAppleNativeSettingsSession *settingsSession;
+@property NSMutableDictionary<NSString *, TVAppleNativeSettingsSession *> *settingsSessions;
 @end
 @implementation TVAppleNativeBackend
-- (TVAppleNativeSettingsSession *)settingsSessionWithError:(NSError **)error{
+- (TVAppleNativeSettingsSession *)settingsSessionForDomain:(NSString *)domain error:(NSError **)error {
     if(!Entitled(@"com.apple.authkit.client.private")||!Entitled(@"com.apple.private.accounts.allaccounts")){
         *error=TVAppleError(TVAppleErrorPermissionDenied,@"Effective native Settings entitlement is missing.");return nil;
     }
-    if(!self.settingsSession)self.settingsSession=[TVAppleNativeSettingsSession new];return self.settingsSession;
+    @synchronized(self) {
+        if(!self.settingsSessions) self.settingsSessions=[NSMutableDictionary new];
+        if(!self.settingsSessions[domain]) self.settingsSessions[domain]=[TVAppleNativeSettingsSession new];
+        return self.settingsSessions[domain];
+    }
 }
-- (NSDictionary *)iCloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{return [[self settingsSessionWithError:error]queryICloudDevices:appleID error:error];}
-- (NSDictionary *)removeOtherICloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{return [[self settingsSessionWithError:error]removeOtherICloudDevices:appleID error:error];}
+- (NSDictionary *)iCloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{return [[self settingsSessionForDomain:@"devices" error:error]queryICloudDevices:appleID error:error];}
+- (NSDictionary *)removeOtherICloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{return [[self settingsSessionForDomain:@"devices" error:error]removeOtherICloudDevices:appleID error:error];}
 - (NSDictionary *)signInWithAppleAppsForAppleID:(NSString *)appleID error:(NSError **)error{
-    return [[self settingsSessionWithError:error]querySignInWithAppleApps:appleID error:error];
+    return [[self settingsSessionForDomain:@"authorizations" error:error]querySignInWithAppleApps:appleID error:error];
 }
 - (NSDictionary *)stopUsingAppleIDForBundleID:(NSString *)bundleID appleID:(NSString *)appleID error:(NSError **)error{
-    return [[self settingsSessionWithError:error]stopUsingAppleIDForBundleID:bundleID appleID:appleID error:error];
+    return [[self settingsSessionForDomain:@"authorizations" error:error]stopUsingAppleIDForBundleID:bundleID appleID:appleID error:error];
 }
 - (NSDictionary *)nameSettingsForAppleID:(NSString *)appleID error:(NSError **)error{
-    return [[self settingsSessionWithError:error]queryName:appleID error:error];
+    return [[self settingsSessionForDomain:@"name" error:error]queryName:appleID error:error];
 }
 - (NSDictionary *)setFirstName:(NSString *)first lastName:(NSString *)last appleID:(NSString *)appleID error:(NSError **)error{
-    return [[self settingsSessionWithError:error]setFirstName:first lastName:last appleID:appleID error:error];
+    return [[self settingsSessionForDomain:@"name" error:error]setFirstName:first lastName:last appleID:appleID error:error];
 }
 - (NSDictionary *)beginContactEmail:(NSString *)email appleID:(NSString *)appleID error:(NSError **)error{
-    return [[self settingsSessionWithError:error]beginEmail:email appleID:appleID error:error];
+    return [[self settingsSessionForDomain:@"email" error:error]beginEmail:email appleID:appleID error:error];
 }
 - (NSDictionary *)verifyContactEmail:(NSString *)challenge code:(NSString *)code appleID:(NSString *)appleID error:(NSError **)error{
-    return [[self settingsSessionWithError:error]verifyChallenge:challenge code:code appleID:appleID error:error];
+    return [[self settingsSessionForDomain:@"email" error:error]verifyChallenge:challenge code:code appleID:appleID error:error];
 }
 - (NSDictionary *)setRelayEmail:(NSString *)email appleID:(NSString *)appleID error:(NSError **)error{
-    return [[self settingsSessionWithError:error]setForwardingEmail:email appleID:appleID error:error];
+    return [[self settingsSessionForDomain:@"email" error:error]setForwardingEmail:email appleID:appleID error:error];
 }
 - (NSDictionary *)emailSettingsForAppleID:(NSString *)appleID error:(NSError **)error {
     if(!Entitled(@"com.apple.authkit.client.private")){
@@ -195,7 +200,7 @@ static BOOL Entitled(NSString *key) {
 }
 - (id)prepareAccount:(NSDictionary *)record policy:(TVAppleLocalDataPolicy)policy error:(NSError **)error {
     NSDictionary *state = [self snapshot:error]; if (!state) return nil;
-    if ([state[@"find_my_enabled"] boolValue]) { *error = TVAppleError(TVAppleErrorFindMyEnabled, @"Find My must be disabled using the authenticated system flow first."); return nil; }
+    if (![record[@"domain"] isEqual:@"media"] && [state[@"find_my_enabled"] boolValue]) { *error = TVAppleError(TVAppleErrorFindMyEnabled, @"Find My must be disabled using the authenticated system flow first."); return nil; }
     id store = [self store:error]; if (!store) return nil;
     NSArray *accounts = [self accounts:store error:error]; if (!accounts) return nil;
     id account = nil;
@@ -230,7 +235,7 @@ static BOOL Entitled(NSString *key) {
 - (BOOL)removePreparedAccount:(NSDictionary *)prepared error:(NSError **)error {
     NSDictionary *record = prepared[@"record"];
     NSDictionary *state = [self snapshot:error]; if (!state) return NO;
-    if ([state[@"find_my_enabled"] boolValue]) { *error = TVAppleError(TVAppleErrorFindMyEnabled, @"Find My became enabled."); return NO; }
+    if (![record[@"domain"] isEqual:@"media"] && [state[@"find_my_enabled"] boolValue]) { *error = TVAppleError(TVAppleErrorFindMyEnabled, @"Find My became enabled."); return NO; }
     NSDictionary *current = nil;
     for (NSDictionary *candidate in state[@"accounts"]) if ([candidate[@"identifier"] isEqual:record[@"identifier"]]) current = candidate;
     if (!current || ![current[@"apple_id"] isEqual:record[@"apple_id"]] || ![current[@"selected"] boolValue] ||
@@ -304,6 +309,10 @@ static BOOL Entitled(NSString *key) {
 }
 - (TVAppleStoreAttempt)authenticateStoreAppleID:(NSString *)appleID password:(NSString *)password error:(NSError **)error {
     return TVAppleNativeStoreLogin(appleID, password, error);
+}
+- (NSDictionary *)signInStoreAppleID:(NSString *)appleID password:(NSString *)password
+    provider:(id<TVAppleVerificationCodeProvider>)provider error:(NSError **)error {
+    return [[TVAppleNativeStoreSignIn new] signIn:appleID password:password provider:provider error:error];
 }
 - (BOOL)establishTrustForAppleID:(NSString *)appleID password:(NSString *)password provider:(id<TVAppleVerificationCodeProvider>)provider error:(NSError **)error {
     return TVAppleNativeEstablishTrust(appleID, password, provider, error);

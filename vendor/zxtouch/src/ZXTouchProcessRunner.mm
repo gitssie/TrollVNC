@@ -68,6 +68,10 @@ static BOOL ZXProcessError(NSError **error, NSString *message, int code = EINVAL
 }
 - (ZXProcess *)spawn:(NSString *)program arguments:(NSArray<NSString *> *)arguments
                  cwd:(NSString *)cwd script:(BOOL)script error:(NSError **)error {
+    return [self spawn:program arguments:arguments cwd:cwd script:script stdoutFD:-1 stderrFD:-1 error:error];
+}
+- (ZXProcess *)spawn:(NSString *)program arguments:(NSArray<NSString *> *)arguments
+                 cwd:(NSString *)cwd script:(BOOL)script stdoutFD:(int)stdoutFD stderrFD:(int)stderrFD error:(NSError **)error {
     if (!program) { ZXProcessError(error, @"Required interpreter is not installed", ENOENT); return nil; }
     NSFileManager *fm = NSFileManager.defaultManager;
     if (![fm createDirectoryAtPath:_logPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error]) return nil;
@@ -95,9 +99,12 @@ static BOOL ZXProcessError(NSError **error, NSString *message, int code = EINVAL
     posix_spawn_file_actions_init(&actions);
     posix_spawnattr_init(&attributes);
     int result = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-    if (!result) result = posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, _logPath.fileSystemRepresentation,
-        O_WRONLY | O_CREAT | O_APPEND, 0600);
-    if (!result) result = posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
+    if (!result) {
+        if (stdoutFD >= 0) result = posix_spawn_file_actions_adddup2(&actions, stdoutFD, STDOUT_FILENO);
+        else result = posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, _logPath.fileSystemRepresentation,
+            O_WRONLY | O_CREAT | O_APPEND, 0600);
+    }
+    if (!result) result = posix_spawn_file_actions_adddup2(&actions, stderrFD >= 0 ? stderrFD : STDOUT_FILENO, STDERR_FILENO);
     // iOS has no spawn chdir action; the Python launcher changes only its own cwd.
     (void)cwd;
     if (!result) result = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT);
@@ -119,9 +126,17 @@ static BOOL ZXProcessError(NSError **error, NSString *message, int code = EINVAL
     return process;
 }
 - (BOOL)wait:(ZXProcess *)process cancelled:(BOOL (^)(void))cancelled error:(NSError **)error {
+    return [self wait:process cancelled:cancelled drain:nil timeout:0 status:NULL error:error];
+}
+- (BOOL)wait:(ZXProcess *)process cancelled:(BOOL (^)(void))cancelled drain:(void (^)(void))drain
+       timeout:(NSTimeInterval)timeout status:(int *)statusOut error:(NSError **)error {
     int status = 0;
+    NSTimeInterval started=NSProcessInfo.processInfo.systemUptime;BOOL timedOut=NO;
+    if(statusOut)*statusOut=-1;
     for (;;) {
-        BOOL cancel = cancelled && cancelled();
+        if(drain)drain();
+        timedOut=timeout>0 && NSProcessInfo.processInfo.systemUptime-started>=timeout;
+        BOOL cancel = timedOut || (cancelled && cancelled());
         int failure = 0;
         pid_t result;
         @synchronized(_processes) {
@@ -150,6 +165,9 @@ static BOOL ZXProcessError(NSError **error, NSString *message, int code = EINVAL
         if (result < 0 && failure != EINTR) return ZXProcessError(error, @"Unable to wait for child process", failure);
         usleep(10000);
     }
+    if(drain)drain();
+    if(statusOut)*statusOut=status;
+    if(timedOut)return ZXProcessError(error,@"Command timed out",ETIMEDOUT);
     if (process.cancelled) return ZXProcessError(error, @"Command was cancelled", ECANCELED);
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
         return ZXProcessError(error, [NSString stringWithFormat:@"Command exited with status %d",
@@ -160,6 +178,47 @@ static BOOL ZXProcessError(NSError **error, NSString *message, int code = EINVAL
     ZXProcess *process = [self spawn:[self executable:@[@"/bin/sh", @"/usr/bin/sh"]]
         arguments:@[@"-c", command] cwd:nil script:NO error:error];
     return process && [self wait:process cancelled:cancelled error:error];
+}
+- (NSDictionary *)captureShell:(NSString *)command timeout:(NSTimeInterval)timeout
+                      cancelled:(BOOL (^)(void))cancelled error:(NSError **)error {
+    if(error)*error=nil;
+    if(!std::isfinite(timeout) || timeout<=0){ZXProcessError(error,@"Invalid command timeout");return nil;}
+    int output[2]={-1,-1},errors[2]={-1,-1};
+    if(pipe(output)!=0 || pipe(errors)!=0){
+        for(int fd:output)if(fd>=0)close(fd);for(int fd:errors)if(fd>=0)close(fd);
+        ZXProcessError(error,@"Cannot create command output pipes");return nil;
+    }
+    BOOL prepared=YES;
+    for(int fd:output)if(fcntl(fd,F_SETFD,FD_CLOEXEC)<0)prepared=NO;
+    for(int fd:errors)if(fcntl(fd,F_SETFD,FD_CLOEXEC)<0)prepared=NO;
+    if(fcntl(output[0],F_SETFL,O_NONBLOCK)<0 || fcntl(errors[0],F_SETFL,O_NONBLOCK)<0)prepared=NO;
+    if(!prepared){for(int fd:output)close(fd);for(int fd:errors)close(fd);ZXProcessError(error,@"Cannot prepare command pipes");return nil;}
+    ZXProcess *process=[self spawn:[self executable:@[@"/bin/sh",@"/usr/bin/sh"]] arguments:@[@"-c",command]
+        cwd:nil script:NO stdoutFD:output[1] stderrFD:errors[1] error:error];
+    close(output[1]);close(errors[1]);
+    if(!process){close(output[0]);close(errors[0]);return nil;}
+    NSMutableData *stdoutData=[NSMutableData new],*stderrData=[NSMutableData new];
+    __block BOOL stdoutTruncated=NO,stderrTruncated=NO,readFailed=NO;
+    void (^readPipe)(int,NSMutableData *,BOOL *)=^(int fd,NSMutableData *data,BOOL *truncated){
+        for(int attempt=0;attempt<32;attempt++) {
+            char bytes[4096];ssize_t count=read(fd,bytes,sizeof(bytes));
+            if(count<0 && errno==EINTR)continue;
+            if(count<0 && errno!=EAGAIN && errno!=EWOULDBLOCK)readFailed=YES;
+            if(count<=0)break;
+            NSUInteger keep=MIN((NSUInteger)count,65536-data.length);
+            [data appendBytes:bytes length:keep];if(keep<(NSUInteger)count)*truncated=YES;
+        }
+    };
+    int stdoutFD=output[0],stderrFD=errors[0];
+    void (^drain)(void)=^{readPipe(stdoutFD,stdoutData,&stdoutTruncated);readPipe(stderrFD,stderrData,&stderrTruncated);};
+    NSError *failure=nil;int status=-1;
+    [self wait:process cancelled:cancelled drain:drain timeout:timeout status:&status error:&failure];
+    // Once the owned process group is terminated, drain the remaining pipe buffer.
+    drain();close(output[0]);close(errors[0]);
+    id exitCode=status<0?(id)NSNull.null:@(WIFEXITED(status)?WEXITSTATUS(status):128+WTERMSIG(status));
+    return @{@"stdout_base64":[stdoutData base64EncodedStringWithOptions:0],@"stderr_base64":[stderrData base64EncodedStringWithOptions:0],
+        @"exit_code":exitCode,@"stdout_truncated":@(stdoutTruncated),@"stderr_truncated":@(stderrTruncated),
+        @"timed_out":failure.code==ETIMEDOUT?@YES:@NO,@"cancelled":failure.code==ECANCELED?@YES:@NO,@"output_read_failed":@(readFailed)};
 }
 - (BOOL)startScript:(NSString *)path error:(NSError **)error {
     if (!path.isAbsolutePath) return ZXProcessError(error, @"Script path must be absolute");

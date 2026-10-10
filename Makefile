@@ -1,4 +1,4 @@
-export PACKAGE_VERSION := 3.2-307
+export PACKAGE_VERSION := 3.2-315
 export THEOS_PACKAGE_SCHEME
 
 ifeq ($(THEOS_DEVICE_SIMULATOR),1)
@@ -24,6 +24,37 @@ trollvncserver_USE_MODULES := 0
 
 trollvncserver_FILES += src/trollvncserver.mm
 trollvncserver_FILES += src/TVNCWireGuardConfig.m
+APPLE_MODULE_ROOT := vendor/apple
+include $(APPLE_MODULE_ROOT)/apple.mk
+trollvncserver_FILES += $(APPLE_MODULE_FILES)
+trollvncserver_CFLAGS += $(APPLE_MODULE_CFLAGS)
+APP_STATE_ROOT := vendor/app-state
+include $(APP_STATE_ROOT)/app-state.mk
+trollvncserver_FILES += $(APP_STATE_FILES) src/TVNCAppStateService.mm
+trollvncserver_CFLAGS += $(APP_STATE_CFLAGS)
+trollvncserver_FRAMEWORKS += Security LocalAuthentication
+ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
+trollvncserver_CFLAGS += -DTVAS_ROOTHIDE=1
+trollvncserver_LDFLAGS += -lroothide
+TOOL_NAME += app-state-worker app-state-idfv-worker
+TOOL_NAME += cazer-apple-searchparty-recover
+cazer-apple-searchparty-recover_FILES := $(APPLE_MODULE_ROOT)/src/icloud/TVAppleSearchPartyRecovery.c
+cazer-apple-searchparty-recover_CFLAGS := -Wall -Wextra -Werror
+cazer-apple-searchparty-recover_INSTALL_PATH := /usr/bin
+cazer-apple-searchparty-recover_CODESIGN_FLAGS := -S$(APPLE_MODULE_ROOT)/recovery.entitlements
+app-state-worker_FILES := $(APP_STATE_WORKER_FILES)
+app-state-worker_CFLAGS := $(APP_STATE_CFLAGS) -DTVAS_ROOTHIDE=1 -Wall -Wextra -Werror
+app-state-worker_FRAMEWORKS := Foundation Security LocalAuthentication
+app-state-worker_LDFLAGS := -lroothide
+app-state-worker_INSTALL_PATH := /usr/libexec/trollvnc
+app-state-worker_CODESIGN_FLAGS := -S$(APP_STATE_ROOT)/product/worker.entitlements
+app-state-idfv-worker_FILES := $(APP_STATE_ROOT)/cli/VendorWorker.m
+app-state-idfv-worker_CFLAGS := -fobjc-arc -Wall -Wextra -Werror
+app-state-idfv-worker_FRAMEWORKS := Foundation
+app-state-idfv-worker_INSTALL_PATH := /usr/libexec/trollvnc
+app-state-idfv-worker_CODESIGN_FLAGS := -S$(APP_STATE_ROOT)/product/idfv.entitlements
+endif
+trollvncserver_FILES += src/TVNCAppleService.mm
 trollvncserver_FILES += src/TVNCZXTouchService.mm
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchProtocol.cpp
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchImage.cpp
@@ -33,6 +64,7 @@ trollvncserver_FILES += vendor/zxtouch/src/ZXTouchUIBridge.mm
 trollvncserver_CFLAGS += -Ivendor/zxtouch/include
 trollvncserver_FILES += src/FileManagement.c
 trollvncserver_FILES += src/AppManagement.mm
+trollvncserver_FILES += src/NotificationBridge.mm
 trollvncserver_FILES += src/ScreenUnlock.mm
 trollvncserver_FILES += src/PhotoLibrary.m
 trollvncserver_FILES += src/BulletinManager.mm
@@ -135,6 +167,7 @@ include $(THEOS_MAKE_PATH)/tool.mk
 
 ifeq ($(THEBOOTSTRAP)$(THEOS_DEVICE_SIMULATOR),)
 SUBPROJECTS += zxtouch-adapter
+SUBPROJECTS += notification-adapter
 endif
 
 SUBPROJECTS += prefs/TrollVNCPrefs

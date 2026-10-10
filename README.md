@@ -53,17 +53,17 @@ during the restart. Set a VNC password before enabling file transfer.
 
 **Display/Performance**:
 
-- `-s scale`  Output scale factor (`0 < s <= 1`, default: `1.0`; `1` means no scaling)
+- `-s scale`  Output scale factor (`0 < s <= 1`, default: `0.28`; `1` means no scaling)
 - `-F spec`   Frame rate: single `fps`, range `min-max`, or full `min:pref:max`; on iOS 15+ a range is applied, on iOS 14 the max (or preferred) is used
-- `-d sec`    Defer update window in seconds to coalesce changes (`0..0.5`, default: `0.015`)
-- `-Q n`      Max in-flight updates before dropping new frames (`0..8`, default: `2`; `0` disables dropping)
+- `-d sec`    Defer update window in seconds to coalesce changes (`0..0.5`, default: `0`)
+- `-Q n`      Max in-flight updates before dropping new frames (`0..8`, default: `1`; `0` disables the early capture gate)
 
 **Dirty detection**:
 
 - `-t size`   Tile size for dirty-detection in pixels (`8..128`, default: `32`)
-- `-P pct`    Fullscreen fallback threshold percent (`0..100`, default: `0`; `0` disables dirty detection entirely)
-- `-R max`    Max dirty rects before collapsing to a bounding box (default: `256`)
-- `-a`        Enable non-blocking swap (may cause tearing).
+- `-P pct`    Fullscreen fallback threshold percent (`0..100`, default: `80`; `0` disables dirty detection entirely)
+- `-R max`    Max dirty rects before falling back to fullscreen (default: `256`)
+- `-a`        Compatibility flag; all swaps are safe and non-blocking.
 
 **Scroll/Input**:
 
@@ -155,23 +155,28 @@ home root.
 Quick guidance on key trade-offs (latency vs. bandwidth vs. CPU/battery):
 
 - `-s scale`: Biggest lever for bandwidth and encoder CPU. Start at `0.66–0.75` for text-heavy UIs; use `0.5` for tight links or slow networks; `1.0` for pixel-perfect.
-- `-F spec`: Cap preferred frame rate to balance smoothness and battery. `30–60` is a sensible range; on 120 Hz devices, `60` often suffices. On iOS 14 the max (or preferred if provided) value is used.
+- `-F spec`: Capture defaults to `15` FPS for older phones. Increase to `20` or `30` only after checking responsiveness and device load. On iOS 14 the max (or preferred if provided) value is used.
 - `-d sec`: Coalesce updates. Larger values lower CPU/bitrate but add latency. Typical range `0.005–0.030`; interactive UIs prefer `≤ 0.015`.
 - `-Q n`: Throughput vs. latency backpressure. `1–2` recommended. `0` disables dropping and can grow latency when encoders are slow.
 - `-t size`: Dirty-detection tile size. `32` default; `64` cuts hashing/rect overhead on slower devices; `16` (or `8`) captures finer UI details at higher CPU cost.
 - `-P pct`: Fullscreen fallback threshold. Practical `25–40`; higher values stick to rect updates longer. `0` disables dirty detection (always fullscreen).
-- `-R max`: Rect cap before collapsing to a bounding box. `128–512` common; too high increases RFB overhead.
-- `-a`: Non-blocking swap. Can reduce stalls/contension; may introduce tearing. Try if you see occasional stalls; leave off for maximal visual stability. If a non-blocking swap cannot lock clients, TrollVNC falls back to copying only dirty rectangles to the front buffer to minimize tearing and bandwidth.
+- `-R max`: Rect cap before falling back to fullscreen, so changes outside the bounded list are still delivered.
+- `-a`: Retained for configuration compatibility. All framebuffer publication now uses safe non-blocking send locks. A busy sender skips publication and retries the latest screen; it never copies over a buffer being encoded.
 
 **Notes:**
 
 - Scaling happens before dirty detection; tile size applies to the scaled frame. Effective tile size in source pixels ≈ t / scale.
-- With `-Q 0`, frames are never dropped. If the client or network is slow, input-to-display latency can grow.
+- `-Q 0` disables the early capture gate, but publication still skips busy senders to keep the main thread responsive.
 - On older devices, prefer lowering `-s` and increasing `-t` to reduce CPU and memory bandwidth.
 
 ### Preset Examples
 
-By default, dirty detection is **disabled** because it usually has a high CPU cost. You can enable it with `-P` to set a fullscreen fallback threshold.
+Defaults favor older phones: `-s 0.28 -F 15 -d 0 -Q 1 -t 32 -P 80 -R 256`.
+Dirty detection uses one full hash scan at the scaled output resolution. Unchanged output is not published; only changed tiles are marked unless the fullscreen threshold or rectangle cap is reached. Screen capture is skipped before rendering while the configured number of updates is in flight. Ordinary framebuffer publication never waits for a busy send lock; geometry changes still use LibVNCServer's resize path.
+
+Explicit saved settings and CLI options take precedence over these defaults. Existing installations with `FrameRateSpec=60` or `FullscreenThresholdPercent=0` should change them to `15` and `80`, set `DeferWindowSec=0` and `MaxInflight=1`, then apply/restart. Lower-cost scaling may slightly change text appearance; verify readability on the actual device.
+
+Regression checks: `python3 tests/FramebufferPipelineTests.py` exercises the production damage scan and send-lock guard on the host. Device frame rate, CPU load and weak-network latency still require measurement on an iPhone.
 
 Low-latency interactive (LAN):
 
@@ -182,7 +187,7 @@ trollvncserver -p 5901 -n "My iPhone" -s 0.75 -d 0.008 -Q 1 -t 32 -P 35 -R 512
 Battery/bandwidth saver (cellular/WAN):
 
 ```sh
-trollvncserver -p 5901 -n "My iPhone" -s 0.5 -d 0.025 -Q 2 -t 64 -P 50 -R 128
+trollvncserver -p 5901 -n "My iPhone" -s 0.28 -F 15 -d 0 -Q 1 -t 32 -P 80 -R 256
 ```
 
 High quality on fast LAN:

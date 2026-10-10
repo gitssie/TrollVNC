@@ -8,7 +8,7 @@
 - Apple ID、iCloud、App Store 功能分别放在 `src/appleid/`、`src/icloud/`、`src/appstore/`；共享运行时后端和错误处理放在 `src/common/`。
 - `vendor/appstorectl/` 是平级 vendor，保留完整上游快照；不要重新放进本模块的 `third_party/` 或添加 `upstream/` 层级。
 - 上游固定为 appknox/appstorectl 的 `4b60f16b2066056cc9a9c53da9a61c1aa53fec2f`。适配代码在本模块；不得直接修改上游快照。来源见其 `UPSTREAM.md`，MIT 通知保留在本模块 `docs/appstorectl-LICENSE`。
-- 使用 Apple 原生接口。不要使用 ZXTouch、坐标点击或 Settings 页面刷新完成账户操作。
+- 使用 Apple 原生接口。TrollVNC 的 ZXTouch socket 可作为外部命令传输入口，但不能使用触控、坐标点击或 Settings 页面刷新完成账户操作。适配层位于 src/TVNCAppleService.mm，模块本身不依赖 socket。
 
 ## 权限与运行环境
 
@@ -45,6 +45,13 @@
 - 删除后的失败可能代表部分完成；不存在可回滚的系统事务。必须报告已完成步骤和实际状态。
 
 ## 登录密码与验证码分离
+
+- 后续用户确认重启Settings进程消除了iCloud登录页面预填的旧账号。只读独立AuthKit检查为allAuthKitAccounts/mostRecentlyUsedAuthKitAccount仅新账号，primaryAuthKitAccount/primaryiCloudAccount为空；账户列表不能证明Settings进程内表单缓存已更新。登录成功后的Settings进程缓存处理待实现，不能把重启Settings说成iCloud开通或额度重置。
+- 本轮未调用clearSessionCacheWithCompletion。iOS18上游该接口清理AuthKit会话缓存，不能未经验证当Settings页面刷新接口；临时探针未执行。用户实际验证的是Settings进程重启。
+- GitHub额度研究：dockur/macos#98的维护者称v1.16以独立机器serial修复macOS虚拟机相同提示（https://github.com/dockur/macos/issues/98#issuecomment-2480584748）。macless-haystack#86有真实Mac/iPad首次关联后成功，也有Docker-OSX虚拟Mac登录后成功的用户报告（https://github.com/dchristl/macless-haystack/issues/86#issuecomment-2590675432）。这些是其他客户端/虚拟机案例，未验证可清除本Dopamine iOS15真机开通限额；网页iCloud登录同issue仅改变错误仍失败，不当作完整开通成功。Settings缓存处理与iCloud额度需独立验证。
+
+- 真机登录测试脚本 `tests/AppleSocketDeviceLogin.py`（TrollVNC根目录）同样不能取码；代理单独执行 curl 后通过私密 stdin 提供验证码，脚本不接收取码URL、不联网取码或轮询。
+- 2026-10-07 新账号 socket Store 登录已成功，identity/media fresh匹配；随后 iCloud 在进入CDP前返回 HTTP409 / com.apple.appleaccount/403。独立原生工具同阶段失败，临时原生alert只输出分类account_limit/activation，表明设备开通数量限制。回调已完成且fresh确认cloud不存在/FindMy=false；不能归因验证码、手机密码，也不能重复激活解决。需要另一设备开通此账号或使用已开通iCloud账号，参考 https://support.apple.com/en-us/101661 。此轮姓名/邮箱/SIWA/设备返回Conflict7，依赖icloud的写操作尚未验证；临时诊断已删除。
 
 - 外部先提交 Apple ID 和密码。只有原生流程实际需要验证码时，提供器才发布 `requires_verification_code` 挑战。
 - 使用 `TVAppleManualCodeProvider`：外部自行 curl 取码，然后在后续请求中调用 `submitCode:forChallengeID:error:`，继续同一次认证。
@@ -254,3 +261,50 @@ rtk proxy bash vendor/apple/tests/build_device_probe.sh /tmp/apple-login apple-l
 - 工具tests/apple-icloud-devices.m stdin action=query或remove_others/apple_id，使用device builder和SSH/SCP，外层3600秒；apple-state聚合等待600秒。测试ICloudDevicesTests覆盖本机保护、原生确认、精确target/route、批量/部分失败/幂等/共享写栅栏；aggregate验证设备分项失败、身份变化、无iCloud不查询。
 - 旧AAURLConfiguration.getDeviceListURL是/setup/account/getDevices，AATrustedDeviceListRequest探针未取得可用response，不能将nil当空列表。AuthKit.fetchDeviceListWithContext可作只读线索；清理以Settings详情和确认表单为准，不硬编码iMac或其他设备名称。
 - 真机正式cazer-apple-icloud-devices-v3已清理此账号所有非本机设备（本次1台iMac），succeeded后仅剩本机；重复调用already_removed=true、不POST。独立aggregate-v6确认icloud.devices.available仅本机、Find My=false、三域仍登录。主机多目标/部分失败/停止后续POST及共享栅栏回归通过，独立审查无剩余P1/P2；实际多设备批量、其他OS仍未实测。
+# RootHide package provisioning (2026-10-07)
+
+TrollVNC 3.2-308 packages the existing fixed-purpose SearchParty recovery executable at /usr/bin/cazer-apple-searchparty-recover, numeric root:wheel ownership, mode4755 and platform-application entitlement only. Main daemon remains mobile; never link the helper main into it. The package ownership normalizer covers parent directories too. Archive/signature checks passed; this package has not yet been installed on the device.
+
+
+## iCloud 开通限额设备标识试验（2026-10-07）
+
+用户授权后已逐项做独立原生进程对照：客户端UUID、请求头/body设备字段、AADeviceInfo/AKDevice getter、MGCopyAnswer/ElleKit hook。后两项实际命中UDID 3次/serial 1次，仍HTTP409及account_limit/activation alert；fresh确认主iCloud不存在、Store/idms仍为目标账号、FindMy=false。详细证据及局限见 [icloud-activation-research.md](docs/icloud-activation-research.md)。没有部署上游完整TLS代理；后续独立GSA/旧loginDelegates已真实测试：认证成功，但mobileme返回limit且无token，见研究记录。不能宣称带有效Mac NAC的完整V2方案已失败。所有hook仅临时测试进程，没有修改系统缓存/硬件身份或注入Apple daemon；临时设备工具尚未全部清理，手机离线后暂无法清理。不能将安装hook数量当实际替换次数，初次零命中试验不计有效测试。
+
+
+纯独立客户端已不依赖手机：使用隔离ADI配套元数据后GSA init/complete均200/ec=0，无新验证码；旧delegate仍limit。Mac V2缺少NAS证明的对照返回HTTP400非plist，不等于完整方案失败。开发Mac仅获取类/selector信息，未生成其NAC或用于目标账号开通，未修改其账户/钥匙串/系统配置。凭据仍私密stdin；无自动取码或轮询。详细结果见docs/icloud-activation-research.md。
+
+虚拟Mac研究补充：用户授权后已用完全合成的MacBookPro15,1配置、OpenCore macserial和隔离Linux Unicorn运行完整open-absinthe，NAC握手200、proof517字节；未使用开发Mac真实身份。带NAS的V2实际返回MOBILEME_TERMS_OF_SERVICE_UPDATE；网页条款提交success=false/Error creating account.，Mac termsAccepted cookie补全仍409，无iCloud token。不能把NAC握手/HTTP200/GSA成功当开通成功。模拟器必须确认正常返回，指令上限截断时RAX不是可信错误码。完整证据及源码链接见docs/icloud-activation-research.md；当前仍是研究客户端，未纳入生产模块。
+
+最终网络侧开通已成功：同一账号使用/setup/iosbuddy/ui/genericTermsUI获取BuddyML，解析唯一clientInfo.agreeUrl并校验Apple HTTPS同源setup路径，POST空body获得200及X-Apple-I-Accepted-Terms；fresh虚拟NAC再次V2登录返回status=0/mobileme.status=0/service-data.tokens存在。独立旧delegate也status=0/mobileme.status=0、无limit。不能再把前述网页form失败作为最终结论。手机离线，尚未进行其主账户/CDP配置；下一步先调用正式原生enableICloud流程，验证本机完成，不把网络侧token当本机已登录。凭据只内存；完整流程和临时入口见docs/icloud-activation-research.md。
+
+2026-10-10 重新绑定初始化：用户主动再次beginAddingContactEmail时，服务串行核对当前账户，清空旧原生challenge/model及认证/签名会话，重新准备原生认证环境并fresh读取reachable_emails；目标已经验证则返回succeeded/already_verified，未绑定才发新请求与新challenge。只允许同一Apple ID的邮箱begin/verify未知结果通过新begin恢复，且新begin成功后才解除邮箱专属unknown标记；其它写操作未知结果不因此解锁。task31允许同账户替换旧邮箱挑战，旧challenge立即不可提交；busy仍拒绝并发，结果历史继续保留。RV提供独立「重新发送绑定」命令，保持原资料并刷新新邮件基线，旧验证码不自动重放。只读取码按钮仍不发新邮件。主机回归/编译与真机绑定验收区分，新恢复流程尚未进行真机账户写入验证。
+
+2026-10-10 验证提交后的 RemoteUI 超时恢复：真机312的fresh queryEmail确认此前用户提供的Outlook目标已经在reachable_emails中；TrollVNC内queryName与独立原生个人信息读取均正常完成，未证明加载器普遍阻塞。旧verifyChallenge在load返回unknown后立即退出，跳过fresh服务端确认。313改为仅在已提交验证码POST返回模块OutcomeUnknown时继续独立TVAppleNativeEmailSettings读取，并验证session身份未变；目标确实在fresh reachable_emails且读取无错误才返回succeeded。缺失目标、读失败或身份变化保留unknown，不重放POST、不把HTTP200当成功。回归覆盖同一真实verifyChallenge调用链：HTTP200/no terminal/model + 服务端已绑定、未绑定、读失败、身份变化；首次旧代码复现失败，修复后通过。真机已验证当前绑定状态；新提交导致的超时分支尚未在真机重放。
+
+
+## 2026-10-10 / 3.2-314：撤销跨功能写栅栏
+
+本节覆盖此前关于 shared Worker、unknown 写栅栏以及全局 busy 的设计约定。用户明确要求一次操作失败不阻止其它功能。
+
+- Services 删除静态 uncertainMutation；每次结果只由该请求的返回/错误决定，unknown 不拒绝后续写入，也不要求重启模块。
+- 原生工作队列可并发；name/email/authorizations/devices 使用各自 SettingsSession。task31按具体功能维护当前请求与验证码 provider；仅同一原生会话尚在执行时返回 busy，完成（含错误）释放。账户身份预检 queryAccountState 不查询网络 profile，不被登录挑战或邮箱操作占用。
+- 新 signOutAppStore 只退出选中的 media 账户，保留 iCloud、identity、历史媒体记录。媒体退出不依赖 Find My；原有云账户身份、设备及数据策略检查继续有效。
+- 真机捕获的 Native Invalid Email alert 仅在 parser succeeded、HTTP200、无普通 page 且确切 title/message 匹配时返回 InvalidRequest/code3。未知原生提示仍返回 unknown；不将 HTTP200 当绑定成功。当前用户指定目标被 Apple 返回 not available，与之前已绑定目标不同，不能用旧地址的查询说明当前目标已绑定。
+- 本机使用314正式包已完成安装；原生并发与原始错误分支检查、RV面板隔离检查通过。账户写操作不会因为结果未知自动重放。
+
+314正式服务后续fresh绑定已返回requires_email_verification，等待时queryAccountState仍正常完成；没有提交验证码。此前Invalid Email是更早请求的诊断，不能作为当前绑定状态。
+
+
+## 2026-10-10 / 3.2-315：接口成功直接完成
+
+用户明确要求以 Apple 原生修改接口的成功响应决定结果，覆盖历史文档中成功后 fresh 复核、缓存同步及超时后查询恢复的完成判据。姓名、邮箱验证、转发邮箱、SIWA 撤销、设备移除，以及 Services 层 Store/iCloud 登录退出、Find My 关闭不再因成功后的查询失败或缓存陈旧返回 code 6。成功写入返回 outcome=succeeded；不输出伪造的查询 settings/state，不重发写入。原生响应必须完整、无错误及拒绝提示；HTTP 200 本身不代表原生操作成功，超时仍保留原始错误。身份、输入、服务器提供的请求路由和下一个设备写入前的预检继续保留。
+
+RV 通过独立 queryAccountState 更新登录/退出菜单，Store 与 iCloud 分别判断，状态刷新不改写原操作结果。本次没有再次提交真机改名。
+
+## 2026-10-10：原生 Store 首次 Review 已打通
+
+美国账单地址、支付方式 None、条款和首次转换已在 iOS15.8.8 真机静默完成；后续 Store 登录不再要求 Review。正确调用顺序、SAP priming、上下文 query、字段和重要来源见 [native-store-review.md](docs/native-store-review.md)。能力仍是 private 会话和设备探针，未新增正式 socket/HTTP 动作。不要以预转换认证 type4 当最终完成，不把原始响应、cookies、凭据或失败试验作为复用流程保存。
+
+2026-10-10 后续：首次 Store Review 已接入正式 Services/NativeBackend 的 signInAppStore 登录分支及 ZXTouch task31，参数仍只有 apple_id/password，验证码外部单独提交。iOS NSURLSession 自动取六字段美国账单，None/条款/单次转换复用已验证原生流程；普通登录不取地址。代码 TVAppleStoreSignIn.m，协议 docs/apple-zxtouch.md。原生成功探针与此生产接入验收不可混为一轮测试；未打包安装不能称已部署。
+
+2026-10-10 后续已完成另一未开通账号的 ZXTouch 真机完整验收：signOutAppStore → signInAppStore/SMS submit_code → iOS自动取址 → native Review/None转换 → 后续 Store 登录 succeeded/review_completed=true。独立轻量账户查询确认新 media selected/authenticated=true，原 iCloud 保留、Find My=false。预转换 type3仅在原生code10/context/合法Review路由齐全时使用新的 response继续；不强制type4。selected media才阻碍 Store 切换。回归新增真实prepare type3保留context、完整编排continuation及不同云/身份账户保持的用例。服务为独立loopback ZXTouch探针，未替换正式daemon包；成功调用流程及引用见 native-store-review.md。不要记录凭据、原始响应或失败试验作为正确流程。

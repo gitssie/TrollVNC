@@ -15,9 +15,12 @@ APPLE_MODULE_FILES := $(APPLE_MODULE_ROOT)/src/common/TVAppleErrors.m \
     $(APPLE_MODULE_ROOT)/src/icloud/TVAppleSearchParty.m \
     $(APPLE_MODULE_ROOT)/src/icloud/TVAppleFindMy.m \
     $(APPLE_MODULE_ROOT)/src/appstore/TVAppleStoreAuthentication.m \
+    $(APPLE_MODULE_ROOT)/src/appstore/TVAppleStoreReview.m \
+    $(APPLE_MODULE_ROOT)/src/appstore/TVAppleStoreSignIn.m \
     $(APPLE_MODULE_ROOT)/src/appstore/TVAppleManualCodeProvider.m
 APPLE_MODULE_CFLAGS := -fobjc-arc -I$(APPLE_MODULE_ROOT)/include -I$(APPLE_MODULE_ROOT)/private
 APPLE_MODULE_FRAMEWORKS := Foundation
 
 # TVAppleSearchPartyRecovery.c is a separate privileged executable; never link
-# its main() into the host. Build/deploy with tests/build_service_recovery.sh.
+# its main() into the host. RootHide package builds it as a separate tool;
+# tests/build_service_recovery.sh remains the standalone probe builder.

@@ -317,6 +317,8 @@
 			<string>com.82flex.trollvnc</string>
 			<key>key</key>
 			<string>FrameRateSpec</string>
+			<key>default</key>
+			<string>15</string>
 			<key>label</key>
 			<string>Frame Rate</string>
 			<key>placeholder</key>
@@ -496,7 +498,7 @@
 			<key>key</key>
 			<string>DeferWindowSec</string>
 			<key>default</key>
-			<real>0.015</real>
+			<real>0.0</real>
 			<key>min</key>
 			<real>0.0</real>
 			<key>max</key>
@@ -522,7 +524,7 @@
 			<key>key</key>
 			<string>MaxInflight</string>
 			<key>default</key>
-			<integer>2</integer>
+			<integer>1</integer>
 			<key>min</key>
 			<real>0.0</real>
 			<key>max</key>
@@ -576,7 +578,7 @@
 			<key>key</key>
 			<string>FullscreenThresholdPercent</string>
 			<key>default</key>
-			<integer>0</integer>
+			<integer>80</integer>
 			<key>min</key>
 			<real>0.0</real>
 			<key>max</key>
@@ -616,7 +618,7 @@
 			<key>label</key>
 			<string></string>
 			<key>footerText</key>
-			<string>Attempts to avoid blocking when swapping buffers; may cause tearing. Can reduce stalls when encoders are slow.</string>
+			<string>Legacy compatibility option. Buffer publication now always skips busy senders safely and retries the latest screen.</string>
 		</dict>
 		<dict>
 			<key>cell</key>

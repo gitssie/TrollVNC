@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Real socket tests for the drop-in client; native device behavior is separate."""
 import ast
+import base64
+import json
 from pathlib import Path
 import socketserver
 import sys
@@ -40,6 +42,8 @@ class Peer(socketserver.BaseRequestHandler):
                 else:
                     if task == 21:
                         fields = ['10', '20', '30', '40']
+                    elif task == 13 and hasattr(self.server, 'shell_result'):
+                        fields = [base64.b64encode(json.dumps(self.server.shell_result).encode()).decode()]
                     elif task == 23:
                         fields = ['11', '22', '33']
                     elif task == 28:
@@ -117,6 +121,24 @@ class ClientTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.client.set_clipboard_text(value)
         self.assertEqual(self.client.get_screen_scale(), (True, '3'))
+
+    def test_shell_streams_and_exit_status(self):
+        self.server.shell_result = dict(stdout_base64=base64.b64encode('中文;;line\r\n'.encode()).decode(),
+                                       stderr_base64=base64.b64encode(b'error\x00\xff').decode(), exit_code=7,
+                                       stdout_truncated=False, stderr_truncated=False, timed_out=False,
+                                       cancelled=False, output_read_failed=False)
+        ok, result = self.client.run_shell_command('exit 7')
+        self.assertFalse(ok)
+        self.assertEqual(result['stdout'], '中文;;line\r\n')
+        self.assertEqual(result['stderr'], 'error\x00\ufffd')
+        self.assertEqual(result['exit_code'], 7)
+        self.server.shell_result['exit_code'] = 0
+        self.assertTrue(self.client.run_shell_command('true')[0])
+        self.server.shell_result['timed_out'] = True
+        self.assertFalse(self.client.run_shell_command('true')[0])
+        self.server.shell_result['stdout_base64'] = 'invalid!'
+        with self.assertRaises(RuntimeError):
+            self.client.run_shell_command('true')
 
     def test_upstream_public_method_names_preserved(self):
         source = ROOT.parent / 'zxtouchrootless/layout/usr/share/zxtouch/python/zxtouch/client.py'

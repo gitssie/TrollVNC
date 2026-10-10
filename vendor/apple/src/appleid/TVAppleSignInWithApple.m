@@ -175,10 +175,8 @@ NSMutableURLRequest *TVAppleSIWARevokeRequest(id model,NSDictionary *application
     id model=[self get:target[@"detail_url"]error:error];if(!model)return nil;
     NSMutableURLRequest *post=TVAppleSIWARevokeRequest(model,target,[self origin],error);if(!post)return nil;
     if(![self load:post mutation:YES error:error])return nil;
-    NSArray *after=[self readSIWAApps:error];BOOL absent=after!=nil;
-    for(NSDictionary *app in after)if([app[@"bundle_id"]isEqual:bundleID])absent=NO;
-    if(!absent){*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Application authorization removal was not confirmed by a fresh server list.");return nil;}
-    return @{@"outcome":@"succeeded",@"already_stopped":@NO,@"bundle_id":bundleID,@"settings":SIWAResult(after,appleID)};
+    *error=nil;
+    return @{@"outcome":@"succeeded",@"already_stopped":@NO,@"bundle_id":bundleID};
 }
 @end
 @implementation TVAppleServices (SignInWithApple)

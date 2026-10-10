@@ -19,6 +19,8 @@
     <key>com.apple.icloud.searchpartyd.beaconmanager</key><true/>
     <key>com.apple.icloud.findmydeviced.access</key><true/>
     <key>com.apple.accounts.appleaccount.fullaccess</key><true/>
+    <!-- Native Store Review FairPlay session, matched to this device App Store. -->
+    <key>fairplay-client</key><string>1699554724</string>
     <key>adi-client</key><string>409835401</string>
     <key>keychain-access-groups</key><array><string>apple</string></array>
 </dict></plist>

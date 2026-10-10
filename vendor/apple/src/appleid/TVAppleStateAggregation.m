@@ -47,6 +47,14 @@ static NSDictionary *ProfileResult(NSDictionary *data,NSError *error,NSString *t
     if([data[@"apple_id"]caseInsensitiveCompare:target]!=NSOrderedSame)return SectionError(TVAppleErrorConflict);
     return @{@"status":@"available",@"data":data};
 }
+NSDictionary *TVAppleAccountState(NSDictionary *state){
+    NSMutableDictionary *result=[state mutableCopy];
+    result[@"app_store"]=DomainSummary(Selected(state,@"media"));
+    NSMutableDictionary *cloud=[DomainSummary(Selected(state,@"icloud"))mutableCopy];
+    cloud[@"find_my_enabled"]=state[@"find_my_enabled"];
+    result[@"icloud"]=cloud;result[@"identity"]=DomainSummary(Selected(state,@"identity"));
+    [result removeObjectForKey:@"find_my_enabled"];return result;
+}
 NSDictionary *TVAppleAggregateState(id<TVAppleBackend> backend,NSError **error){
     NSDictionary *before=[backend snapshot:error];
     if(!before||*error){if(!*error)*error=TVAppleError(TVAppleErrorBackendRead,@"Account state is unavailable.");return nil;}

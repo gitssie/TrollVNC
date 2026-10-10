@@ -6,6 +6,10 @@ if [ "$DPKG_MAINTSCRIPT_ARCH" == "iphoneos-arm64" ]; then
     DPKG_ROOT="/var/jb"
 fi
 
+if [ "$DPKG_MAINTSCRIPT_ARCH" = "iphoneos-arm64e" ]; then
+    /bin/sh /usr/libexec/trollvnc/configure-app-state.sh install || exit 1
+fi
+
 SERV_AGENT="$DPKG_ROOT/Library/LaunchDaemons/com.82flex.trollvnc.plist"
 
 if [ -f "$SERV_AGENT" ]; then

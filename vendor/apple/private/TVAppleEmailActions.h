@@ -15,8 +15,9 @@ FOUNDATION_EXPORT NSMutableURLRequest * _Nullable TVAppleRelayForwardingRequest(
 // Injectable production observer for terminal ordering / headless regressions.
 @interface TVAppleEmailLoad : NSObject
 @property id _Nullable model;
-@property BOOL rejected,closed,finished;
+@property BOOL rejected,closed,finished,parserProbePending;
 @property NSError * _Nullable failure;
+@property NSError * _Nullable nativeAlertError;
 @property NSInteger status;
 - (BOOL)complete;
 - (void)loader:(id)loader loadResourcesForObjectModel:(id)model completion:(void(^)(BOOL,NSError * _Nullable))completion;
@@ -24,5 +25,6 @@ FOUNDATION_EXPORT NSMutableURLRequest * _Nullable TVAppleRelayForwardingRequest(
 - (void)loader:(id)loader didReceiveHTTPResponse:(NSHTTPURLResponse *)response;
 - (void)loader:(id)loader didFinishLoadWithError:(nullable NSError *)error;
 @end
+FOUNDATION_EXPORT void TVAppleObserveEmailParserAlert(id loader,TVAppleEmailLoad *load,BOOL mutation);
 FOUNDATION_EXPORT id _Nullable TVAppleFinishEmailLoad(TVAppleEmailLoad *load,BOOL terminalObserved,BOOL mutation,NSError **error);
 NS_ASSUME_NONNULL_END

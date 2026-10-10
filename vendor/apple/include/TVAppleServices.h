@@ -2,6 +2,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSString *const TVAppleErrorDomain;
+// Only module-authored diagnostic text; native userInfo and descriptions are excluded.
+FOUNDATION_EXPORT NSString * _Nullable TVAppleDiagnosticMessage(NSError *error);
 typedef NS_ENUM(NSInteger, TVAppleErrorCode) {
     TVAppleErrorUnsupported = 1,
     TVAppleErrorPermissionDenied,
@@ -50,7 +52,9 @@ typedef void (^TVAppleCodeCompletion)(NSString * _Nullable code, NSError * _Null
 - (instancetype)initWithCallbackQueue:(dispatch_queue_t)callbackQueue;
 // Account snapshot plus domain summaries and fresh name/email sections.
 // Optional profile errors are reported in sections; unreadable account state fails the call.
+- (void)queryAccountState:(TVAppleCompletion)completion;
 - (void)queryState:(TVAppleCompletion)completion;
+- (void)signOutAppStoreAppleID:(NSString *)appleID completion:(TVAppleCompletion)completion;
 - (void)signOutAppleID:(NSString *)appleID
       localDataPolicy:(TVAppleLocalDataPolicy)policy
            completion:(TVAppleCompletion)completion;

@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)startWithAuthenticateResponseBlock:(void (^)(id response, NSError *error))completion;
 - (long long)authenticateResponseType;
 - (NSError *)error;
+- (NSDictionary * _Nullable)responseDictionary;
 - (id)initWithVerificationType:(long long)type;
 - (id)utility;
 - (id)resourceLoadDelegate;

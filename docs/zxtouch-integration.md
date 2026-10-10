@@ -52,7 +52,8 @@ control ports 46751/46752. A configured reverse VNC connection keeps the local
 listeners running and retries the outbound peer without restarting local services.
 The Control Center tile is a restart action, not an enable switch. Stop any standalone ZXTouch listener on 6000 before using
 this package. ZXTouch preserves the original protocol without an authentication
-handshake; VNC passwords do not authenticate ZXTouch commands.
+handshake for its original tasks. Product control task 33 requires a short-lived
+token issued to an authenticated VNC session; see below.
 
 ## Client and supported commands
 
@@ -97,6 +98,8 @@ device.disconnect()
 | 28 | RGB range search in a region |
 | 29 | Native text-input prompt, user cancel/120-second timeout (adapter) |
 | 30 | Fresh JPEG screenshot with binary length framing |
+| 31 | Apple native account services; Base64 JSON, asynchronous operations and external code submission |
+| 32 | App-state backup/baseline/switch management; Base64 JSON and asynchronous operation results |
 
 Coordinates refer to full-resolution pixels in the current interface
 orientation, independent of VNC scaling and orientation offsets. Capture, touch
@@ -142,9 +145,17 @@ on `PYTHONPATH`, and `ZXTOUCH_PORT` set to the configured local service port.
 
 Only one script runs at a time. Start replies after spawning; runtime task 25/32
 reports foreground bundle, script-running flag and recording flag (always 0).
-Shell commands and scripts inherit TrollVNC's `mobile` privileges. stdout/stderr
-append to `/var/mobile/Library/Logs/TrollVNC/zxtouch-process.log`; nonzero shell
-exit returns an error. Disconnect cancels a synchronous shell request; script
+Shell commands and scripts inherit TrollVNC's `mobile` privileges. Task 13 returns
+one Base64 JSON result containing separate `stdout_base64` and `stderr_base64`,
+`exit_code`, and Boolean `stdout_truncated`, `stderr_truncated`, `timed_out`,
+`cancelled`, and `output_read_failed` fields. Each stream retains at most 64 KiB;
+excess bytes are drained and discarded. The command deadline is 30 seconds.
+Python `run_shell_command` decodes the streams as UTF-8 with replacement and
+returns `(ok, result)`; a nonzero exit still includes captured output with
+`ok=false`. Older servers returning no payload retain the legacy empty-list
+result. Shell output is not appended to the process log; asynchronous script
+stdout/stderr still append to `/var/mobile/Library/Logs/TrollVNC/zxtouch-process.log`.
+Disconnect cancels a synchronous shell request; script
 execution is independent of the requesting connection and stops via task 20 or
 service shutdown, which kills the owned process group. When the top-level
 command exits, remaining children in that group are terminated before its PID
@@ -176,3 +187,26 @@ Device input injection, screen orientation, Unicode paste and OCR still require
 physical-device acceptance testing, including SpringBoard scenes, dialogs,
 keyboard selectors and global touch monitoring; host transport tests use a mock command
 handler and do not verify these native capabilities.
+
+Apple task 31 protocol, method list and Python examples: [apple-zxtouch.md](apple-zxtouch.md). Run `bash tests/run_apple_socket_tests.sh` for adapter and real TCP client coverage.
+
+App-state task32 methods/parameters and validation: [app-state-zxtouch.md](app-state-zxtouch.md).
+
+## RV product control (task 33)
+
+RV uses the integrated ZXTouch service for App enumeration/launch/termination/
+restart/foreground/icons, Home and verified clipboard writes. These operations
+have no VNC request path. VNC carries display and ordinary input alongside the
+existing lock/notification operations. RV's connection editor saves an optional
+ZXTouch port override using the same host; blank means the advertised phone port.
+
+The device capabilities reply issues a random session token and active control
+port. Task 33 accepts Base64 JSON `{version:1,token,op,id,payload}` and returns
+`0;;<Base64 JSON>\r\n` with `{version:1,op,id,status,payload}`. Auth uses op/id 0;
+commands use ops 1–6,12,16 and nonzero IDs. The token expires when its VNC session
+ends or disables device control. Read-only sessions cannot mutate the phone.
+Requests and replies are bounded; queued stale requests expire, disconnected
+requests are cancelled before execution, and delayed clipboard writes recheck
+authorization. RV reports uncertain results and never retries mutations automatically.
+The token is transient and never saved in password storage. Full protocol details
+are in RV's `docs/app-control-protocol.md`.

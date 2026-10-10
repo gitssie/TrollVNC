@@ -2,6 +2,10 @@
 
 exec 3>&1 &>/dev/null
 
+if [ "$DPKG_MAINTSCRIPT_ARCH" = "iphoneos-arm64e" ]; then
+    /bin/sh /usr/libexec/trollvnc/configure-app-state.sh remove || exit 1
+fi
+
 if [ "$DPKG_MAINTSCRIPT_ARCH" == "iphoneos-arm64" ]; then
     DPKG_ROOT="/var/jb"
 fi

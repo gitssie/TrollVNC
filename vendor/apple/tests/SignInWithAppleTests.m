@@ -121,7 +121,8 @@ int main(void){@autoreleasepool{
             assert(result&&!error&&![result[@"already_stopped"]boolValue]);
             result=[transport stopUsingAppleIDForBundleID:Bundle appleID:@"test@example.com"error:&error];assert(result&&[result[@"already_stopped"]boolValue]&&transport.posts==1);
             result=[transport querySignInWithAppleApps:@"test@example.com"error:&error];assert(result&&[result[@"bundle_ids"]count]==0);
-        }else assert(!result&&error.code==TVAppleErrorOutcomeUnknown);
+        }else if(transport.timeout)assert(!result&&error.code==TVAppleErrorOutcomeUnknown);
+        else assert(result&&!error&&[result[@"outcome"]isEqual:@"succeeded"]);
     }
     section.rows=@[row];SIWATransport *transport=[SIWATransport new];transport.listing=listing;error=nil;
     NSDictionary *query=[transport querySignInWithAppleApps:@"test@example.com"error:&error];assert(query&&!error&&[query[@"apps"]count]==1&&!query[@"apps"][0][@"detail_url"]);
@@ -133,7 +134,7 @@ int main(void){@autoreleasepool{
     [service stopUsingAppleIDForBundleID:Bundle appleID:@" TEST@Example.COM "completion:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(done);}];Wait(done);assert(backend.stops==1);
     backend.unknown=YES;
     [service stopUsingAppleIDForBundleID:Bundle appleID:@"test@example.com"completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorOutcomeUnknown);dispatch_semaphore_signal(done);}];Wait(done);
-    [service stopUsingAppleIDForBundleID:Bundle appleID:@"test@example.com"completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorOutcomeUnknown);dispatch_semaphore_signal(done);}];Wait(done);assert(backend.stops==2);
+    [service stopUsingAppleIDForBundleID:Bundle appleID:@"test@example.com"completion:^(NSDictionary *r,NSError *e){assert(!r&&e.code==TVAppleErrorOutcomeUnknown);dispatch_semaphore_signal(done);}];Wait(done);assert(backend.stops==3);
     [service querySignInWithAppleApps:@"test@example.com"completion:^(NSDictionary *r,NSError *e){assert(r&&!e);dispatch_semaphore_signal(done);}];Wait(done);assert(backend.queries==2);
     puts("PASS Sign in with Apple: server list, native confirmation capture, targeted revoke, fresh verification, fence");return 0;
 }}

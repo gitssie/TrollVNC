@@ -34,6 +34,16 @@ int main(int argc, const char *argv[]) { @autoreleasepool {
     Check([fm createSymbolicLinkAtPath:[bin stringByAppendingPathComponent:@"python3"] withDestinationPath:@"/usr/bin/python3" error:nil], @"Python runtime symlink");
     ZXTouchProcessRunner *runner = [[ZXTouchProcessRunner alloc] initWithRuntimeRoot:root modulePath:argc > 1 ? @(argv[1]) : @"" logPath:[root stringByAppendingPathComponent:@"output.log"]];
     NSError *error = nil;
+    NSDictionary *capture=[runner captureShell:@"printf '中文;;line\\r\\n'; printf 'error;;line\\n' >&2; exit 7" timeout:2 cancelled:^BOOL{return NO;} error:&error];
+    NSString *(^decode)(NSString *)=^NSString *(NSString *field){return [[NSString alloc]initWithData:[[NSData alloc]initWithBase64EncodedString:capture[field] options:0] encoding:NSUTF8StringEncoding];};
+    Check(capture && [capture[@"exit_code"]intValue]==7 && [decode(@"stdout_base64")isEqual:@"中文;;line\r\n"] && [decode(@"stderr_base64")isEqual:@"error;;line\n"],@"Captured streams lost delimiters, Unicode or nonzero exit");
+    capture=[runner captureShell:@"/usr/bin/python3 -c 'import sys; sys.stdout.buffer.write(b\"x\"*200000); sys.stderr.buffer.write(b\"y\"*200000)'" timeout:5 cancelled:^BOOL{return NO;} error:&error];
+    Check(capture && [capture[@"exit_code"]intValue]==0 && [capture[@"stdout_truncated"]boolValue] && [capture[@"stderr_truncated"]boolValue] && [[NSData alloc]initWithBase64EncodedString:capture[@"stdout_base64"] options:0].length==65536,@"Large output blocked or exceeded cap");
+    CFAbsoluteTime captureStart=CFAbsoluteTimeGetCurrent();
+    capture=[runner captureShell:@"printf before; sleep 30 & wait" timeout:.1 cancelled:^BOOL{return NO;} error:&error];
+    Check([capture[@"timed_out"]boolValue] && ![capture[@"cancelled"]boolValue] && CFAbsoluteTimeGetCurrent()-captureStart<2,@"Capture timeout failed");
+    capture=[runner captureShell:@"sleep 30 & wait" timeout:5 cancelled:^BOOL{return YES;} error:&error];
+    Check([capture[@"cancelled"]boolValue] && ![capture[@"timed_out"]boolValue],@"Capture cancellation failed");
     Check([runner runShell:@"printf '%s' \"literal ' spaces\"" cancelled:^BOOL { return NO; } error:&error], error.description);
     Check([[NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:@"output.log"] encoding:NSUTF8StringEncoding error:nil] isEqual:@"literal ' spaces"], @"Shell quoting changed");
     Check(![runner runShell:@"exit 7" cancelled:^BOOL { return NO; } error:&error], @"Nonzero exit succeeded");

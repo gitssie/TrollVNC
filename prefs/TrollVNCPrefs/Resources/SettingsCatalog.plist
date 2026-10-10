@@ -182,6 +182,8 @@
 					<dict>
 						<key>key</key>
 						<string>FrameRateSpec</string>
+			<key>default</key>
+			<string>15</string>
 						<key>title</key>
 						<string>Frame rate</string>
 						<key>kind</key>
@@ -526,7 +528,7 @@
 						<key>kind</key>
 						<string>number</string>
 						<key>default</key>
-						<real>0.015</real>
+						<real>0.0</real>
 						<key>min</key>
 						<real>0.0</real>
 						<key>max</key>
@@ -544,7 +546,7 @@
 						<key>kind</key>
 						<string>number</string>
 						<key>default</key>
-						<integer>2</integer>
+						<integer>1</integer>
 						<key>min</key>
 						<real>0.0</real>
 						<key>max</key>
@@ -580,7 +582,7 @@
 						<key>kind</key>
 						<string>number</string>
 						<key>default</key>
-						<integer>0</integer>
+						<integer>80</integer>
 						<key>min</key>
 						<real>0.0</real>
 						<key>max</key>

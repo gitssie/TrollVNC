@@ -148,7 +148,7 @@ BOOL TVAppleNativeEnableICloud(NSString *appleID,NSString *password,NSString *pa
     NSError *inputError=nil;
     @synchronized(input){input.closed=YES;input.passcode=nil;inputError=input.failure;if(inputError)ok=NO;}
     [flow setDelegate:nil];[flow setCdpUIProvider:nil];
-    // The flow can preflight-save an account before failure: retain an unknown fence.
+    // The flow can preflight-save an account before failure: report this request as unknown.
     if(!ok)*error=TVAppleError(TVAppleErrorOutcomeUnknown,inputError?inputError.localizedDescription:completed?
         [NSString stringWithFormat:@"Native iCloud/CDP sign-in did not complete successfully (code %@).",nativeCode?:@0]:
         @"Native iCloud/CDP sign-in timed out; inspect actual account state.");

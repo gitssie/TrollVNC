@@ -76,6 +76,11 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)startCaptureWithFrameHandler:(void (^)(CMSampleBufferRef sampleBuffer))frameHandler;
 
+// Optional main-thread gate, checked before rendering/copying the screen.
+// Returning NO leaves dirty-frame tracking untouched so the latest screen is
+// captured when the sender becomes ready, including the last frame of a change.
+@property(nonatomic, copy, nullable) BOOL (^captureReadinessHandler)(void);
+
 /**
  Stop screen capture and release internal resources (CADisplayLink, IOSurface).
  Safe to call multiple times.

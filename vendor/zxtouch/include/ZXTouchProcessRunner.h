@@ -6,6 +6,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithRuntimeRoot:(NSString *)root modulePath:(NSString *)modulePath logPath:(NSString *)logPath;
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *environment;
 - (BOOL)runShell:(NSString *)command cancelled:(BOOL (^)(void))cancelled error:(NSError **)error;
+- (nullable NSDictionary *)captureShell:(NSString *)command timeout:(NSTimeInterval)timeout
+                             cancelled:(BOOL (^)(void))cancelled error:(NSError **)error;
 - (BOOL)startScript:(NSString *)path error:(NSError **)error;
 - (BOOL)stopScript:(NSError **)error;
 - (BOOL)isScriptRunning;
