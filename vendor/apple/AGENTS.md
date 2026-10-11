@@ -1,3 +1,20 @@
+2026-10-11 native REVIEW-ONLY success: row23 arikuhicmyjl, native AuthKit SMS (not GSA PET), owned iPhone, canSetActiveAccount=NO in isolated copied module; native fields/SAP proof/validate0/final0 full details; post-Review Store login SKIPPED. Independent SSAccountStore active=nil before/after, exit0/stderr0. Converted; never replay final. Production unchanged. Diagnostic-only patch tests/review-only-process.patch and state source tests/review-media-state.m; docs/native-store-review.md + review-only-result-20261011.json. Different credential/network/native context from preceding Mac test; do not assign unique root cause.
+
+2026-10-11 SAME-ACCOUNT NATIVE FINAL SUCCESS after Intel final fraud rejection: row18 lavonrathxpa reused same GSA PET source/device, same tool-generated Jacksonville FL address/phone, None/terms. Native validate and one final conversion HTTP200/status0/details; subsequent Store attempt0/review_required0, exit0. Account converted: NEVER replay final Review. Native/Intel final URL same, ordinary form fields same by native parameters vs labeled Intel source reconstruction; device GUID/serial/SAP/session/network remain different, exact root unknown. Not pure Intel conversion success; no production deployment. See AppleServices/docs/store-first-use-review-research.md from workspace.
+
+2026-10-11 Review trace breakthrough: after caller manually signed out old native media account, row18 external Intel GSA PET native Review fields status0 and SAP proof verified. Independent Intel native-auth-endpoint + iTunes UA got Store token/fields but no proof; same Intel flow with runtime native AppStore UA got convertWizard proof, Intel SAPVerify passed. No phone cookies/token/SAP copied; no billing validation/final conversion. See AppleServices/docs/store-first-use-review-research.md (relative to workspace). Prime-only research, not production deployment or completed conversion.
+
+2026-10-11 external GSA PET -> native Review verified on iPhone10,3/iOS16.7.10.
+Same previously HTTP-rejected markuslemkevc account: external Intel GSA PET only,
+no password fallback/foreign headers/cookies/SAP. Native preauth + iOS auto-address
++ None/terms + native SAP validated and submitted once HTTP200/status0/full result;
+subsequent native Store login attempt0/no Review; exit0/stderr0. Account now
+converted: no final replay. tests/apple-store-review.m supports private stdin pet
+(exclusive with password) and auto_address. Probe-only, no public API/socket change.
+See docs/native-store-review.md for successful sequence and scope; not a pure HTTP
+migration or proof of persisted active media/iCloud state. Temporary device
+binaries deleted; current source arm64 warning-as-error build checked.
+
 # Apple 模块开发知识与约束
 
 本文件适用于 `vendor/apple/`。修改前先读公共接口 `include/TVAppleServices.h`、`docs/interface.md` 和 `docs/validation.md`。结论必须区分：真机实际结果、运行时/机器码确认的接口，以及尚未完成的回归验证。

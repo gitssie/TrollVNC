@@ -1,0 +1,30 @@
+--- a/src/appstore/TVAppleStoreAuthentication.m
++++ b/src/appstore/TVAppleStoreAuthentication.m
+@@ -72,7 +72,7 @@
+     // setter. Review receives a raw password, never populate that slot with it.
+     // Keep the established login entry's behavior until independently verified.
+     if (credentialIsPET || !reviewResponse) [context setInitialPassword:password];
+-    [context setPromptStyle:1]; [context setCanSetActiveAccount:YES]; [context setCanCreateNewAccount:YES];
++    [context setPromptStyle:1]; [context setCanSetActiveAccount:NO]; [context setCanCreateNewAccount:YES];
+     [context setAllowsSilentAuthentication:YES]; [context setAllowsRetry:NO];
+     [context setShouldSuppressDialogs:prepareConversion || reviewResponse != NULL]; [context setShouldCreateNewSession:YES];
+     id request = [requestClass alloc];
+--- a/tests/apple-store-review.m
++++ b/tests/apple-store-review.m
+@@ -216,15 +216,7 @@
+         if (!ConversionSucceeded(submitted, error)) return 1;
+         puts("review_complete=1 payment_method=None");
+         fflush(stdout);
+-        // Separate subsequent Store login check; never re-submit conversion.
+-        NSDictionary *loginResponse = nil;
+-        id loginContext = nil;
+-        error = nil;
+-        TVAppleStoreAttempt finalLogin = TVAppleNativeStoreLoginForReviewWithPET(appleID, credential,
+-            &loginResponse, &loginContext, &error);
+-        printf("post_review_store_attempt=%ld review_required=%d\n", (long)finalLogin,
+-            TVAppleStoreReviewEntryURL(loginResponse) != nil);
+-        PrintError(@"post_review_store_login", error);
++        puts("post_review_store_login_skipped=1 can_set_active_account=0");
+         return 0;
+     }
+ }

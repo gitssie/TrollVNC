@@ -1,5 +1,40 @@
 # iOS 原生 App Store 首次 Review：已验证流程
 
+## GSA PET → 真机 Review 衔接成功（2026-10-11）
+
+在 iPhone10,3 / iOS16.7.10 / 20H350 真机完成了跨凭据来源实验。
+目标是此前纯 HTTP Review 最终返回 FraudScoringTxn 的同一未转换账号。
+GSA 使用既有 Intel profile / 持久 ADI / 12334 代理取得新的 PET；只有
+账号名和 PET 经 SSH private stdin 交给真机，没有传入账号密码、Intel
+设备请求头、Cookie 或模拟 SAP 上下文。手机没有重新调用 AuthKit 密码认证。
+
+实测顺序和结果：
+
+1. GSA init/complete 均 HTTP200/ec0，无验证码挑战。
+2. `TVAppleNativeStoreLoginForReviewWithPET` 返回 needs Review / code10；
+   `TVAppleNativeStoreReviewAuthentication` 成功，保留原生 response/context。
+3. 手机复用 `TVAppleNativeStoreSignIn` 的现有账单获取方法，自行取得美国六字段地址。
+4. 现有 `TVAppleNativeStoreReviewSession` 完成原生设备信息、SAP priming/proof
+   和签名，None/同意条款的账单校验 HTTP200/status0。
+5. 只提交一次最终转换，HTTP200/status0，完整 result/details 成功。
+6. 后续独立原生 Store 登录 attempt0，`review_required=0`。探针 exit0/stderr0。
+
+因此已证明本次 GSA PET 可以交给真机完成 Review；不是只能使用手机 AuthKit
+产生的 PET。它不证明纯 HTTP 路径已修好，也不能把差异归因于某个请求头：
+真机设备身份、ADI、Cookie、SAP、原生请求准备和网络路径仍是整体差异。
+本次没有开通 iCloud，也不以 Store 认证结果声称活动媒体账户已持久化保存。
+
+`tests/apple-store-review.m` 现在支持外部 PET 模式：private stdin 首行为
+`apple_id`、`pet`、`auto_address:true`、`complete_review:true`。
+不要同时传 password；空/非法 PET 或两种凭据并存直接拒绝。该模式不会退回
+手机密码认证。`complete_review:false` 可仅校验，`billing` 可继续手动传入。
+这里只扩展设备探针，未增加公开 Services、ZXTouch 或 AppleServices HTTP 接口。
+凭据只在管道和短期原生会话中传递；日志仅记录阶段、状态和模块诊断。
+
+构建仍用既有 `build_device_probe.sh ... apple-store-review.m`，本次 arm64/ARC/
+`-Wall -Wextra -Werror` 构建通过。设备临时探针已删除；不要再次为这个已转换
+账号重放最终 Review POST。
+
 2026-10-10，在 Dopamine / RootHide、arm64、iOS 15.8.8 真机完成：原生认证 → 首次 Review → 同意条款 → 美国账单地址 → 支付方式 `None` → 保存 → 再次 Store 登录不再要求 Review。
 
 ## 成功证据与范围
@@ -80,3 +115,25 @@ rtk proxy bash vendor/apple/tests/build_device_probe.sh /tmp/apple-store-review 
 2026-10-10：按用户要求，先通过 task31 signOutAppStore 退出原媒体账号，再从项目 tempdir/apple_account.txt 选择另一个未开通测试账号。SMS 挑战由外部获取新码并通过 submit_code 续接；iOS 自行取美国六字段地址。完整 signInAppStore operation 返回 outcome=succeeded、authenticated=true、review_completed=true、payment_method=None、billing_address。独立 queryAccountState 确认新媒体账户 selected/authenticated=true，原 iCloud 账户保留、Find My=false。
 
 正确流程支持预转换 type3/合法 Review/context continuation，而不是强制必须 type4；严格限定此原生分支，仍由校验和最终转换响应决定完成。Services 的登录切换冲突检查只覆盖 selected media，允许 App Store 与 iCloud/identity 不同账号。测试经源码构建的独立 ZXTouch socket 服务，复用正式适配器/Services/后端与daemon entitlements；未替换运行中的正式 TrollVNC 包。没有打开 UI，没有持久化凭据或原始认证响应。
+
+## 2026-10-11：同账号同账单真机最终提交成功
+
+在上一轮 Intel 最终拒绝之后，用户明确要求将同样信息通过真机提交对照。账号文件第18行 lavonrathxpa，继续原 Intel 设备/ADI fresh GSA PET，只向 iPhone 传 apple_id/PET 和同一账单六字段，不做 native password fallback，不复制 Intel Cookie/header/SAP。地址复用上一轮工具获取的 1063 Arrowood Drive / Jacksonville / FL / 32202，电话 904/4575274，支付 None、agreedToTerms=1。
+
+真机 Review 预认证成功；p28 fields HTTP200/status0；入口 proof 验证；validateAccountFieldsSrv HTTP200/status0/pageUUID；一次 createAccountSrv HTTP200/status0/result.details完整。随后原生 Store attempt0/review_required0/error0。probe exit0/stderr0。该账号已转换，禁止重复最终 Review。这里未执行 iCloud 激活，也未验证媒体 selected 状态。
+
+最终接口实际 URL 两边一致：p28-buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/createAccountSrv?context=convert。原生 POST 参数在模块提交前完整留存；Intel 上轮未捕获 body，因此根据原字段响应、地址、profile和代码重建（不冒充 wire capture）。比较结果：业务字段、支付、条款、账户名全部相同，无额外/缺失普通字段，lastModified 随 fresh 字段请求更新。设备 guid/machineGUID、serialNumber、pageUUID、xAppleActionSignature 使用各自原生/Intel上下文，不能当普通可互换字段。原生 guid40位（iPhone），Intel guid为MAC对应标识；序列号分别为真机和Intel profile。两边都本地验过服务器 SAP proof；这不证明服务端在最终转换认可两边的全部设备/认证上下文。
+
+因此同一账号和这组账单可完成转换，最终错误不能直接归为账号无法开通或地址不合法。已排除不同最终URL和明显缺失业务表单字段；尚未确认导致 Intel 最终拒绝的具体设备属性、认证/Cookie/header、SAP绑定或网络因素。原生当前账号Cookie是响应后的快照，不是精确出站 header；不能把快照与Intel出站header差异直接当因果证据。Native手机的网络路线与Intel代理并非已控制的相同变量。
+
+新增测试专用 private_native_review_submission_parameters，显式 trace_private_data 时记录 POST 前参数，trace_scope=module_parameters_before_native_transport。生产模块/协议未修改。私密记录：/tmp/cazer-native-review-same-billing-final-20261011/row18-record1–8.json，其中7是最终参数、8是最终成功响应。/tmp/cazer-review-final-parameter-comparison-20261011.json 保留 native参数和明确标注来源的Intel重建。重要引用：TrollVNC/vendor/apple/src/appstore/TVAppleStoreReview.m 的 validateBilling/signatureForAccount/submitConversion，以及 iOS18.2 pinned dump SSVLoadURLOperation._newURLRequestWithRedirectURL 的原生账户/设备上下文准备。不能把这轮原生成功记录为纯 Intel HTTP Review 已完成。
+
+## 2026-10-11：真机仅完成 Review，不登录活动 App Store
+
+用户在Mac真实手机GUID最终被风控拒绝后，要求直接真机完成Review并不保留App Store登录。测试账号文件第23行arikuhicmyjl。SSH mobile@10.17.12.17:2222；执行前SSAccountStore独立只读确认activeAccount为空。为符合要求，在/tmp复制模块构建独立Review-only探针：SSAuthenticationContext.canSetActiveAccount=NO，完成转换后跳过原探针的post-review Store登录检查。未改生产模块或daemon，未调用退出/删除已有账号。补丁tests/review-only-process.patch只能用于这一独立复制模块，不能直接作为生产默认登录逻辑；只读状态探针tests/review-media-state.m。
+
+这轮使用手机原生AuthKit密码/SMS认证，未使用Intel GSA PET，凭据只private stdin。Native Store Review必要预认证保留context，但禁止设置活动媒体账号。原生设备/SAP/proof和fields成功；账单复用Mac上一轮已校验的4505 Gregory Lane/Louisville/KY/40223、电话502/2084743，支付None/同意条款。原生validate实际Bag路径p30/account/v2/create/validateFields，HTTP200/status0；一次最终p30/WebObjects/MZFinance.woa/wa/createAccountSrv?context=convert返回HTTP200/status0、完整details，review_complete=1。随后没有执行Store登录检查。独立SSAccountStore查询activeAccount仍为空；前后媒体状态相同。探针exit0/stderr0。账号已完成转换，不再次提交最终Review。
+
+普通结果docs/review-only-result-20261011.json；主机私密记录/tmp/cazer-native-review-only-result-20261011/result.json和events.txt，无原始认证响应/PET/cookies。手机临时两探针清理。与前一轮Mac比较属于不同凭据来源/原生认证及网络上下文的整体对照，不能将结果唯一归因GUID、SAP或GSA。此次真实手机执行不同于只把手机GUID填进Mac SAP。
+
+重现构建：cp -rf vendor/apple到新的独立/tmp目录，在副本用git apply应用review-only-process.patch，再运行副本tests/build_device_probe.sh输出独立arm64探针。操作前/后用单独read-only media-state探针确认activeAccount状态；成功标志为最终status0且完整details。账号已转换时不要重复最终POST。

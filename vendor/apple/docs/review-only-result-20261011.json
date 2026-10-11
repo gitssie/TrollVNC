@@ -1,0 +1,16 @@
+{
+  "account": "arikuhicmyjl@hotmail.com",
+  "native_exit": 0,
+  "stderr_bytes": 0,
+  "before": {
+    "active_account_present": 0,
+    "active_account_fingerprint": "none"
+  },
+  "after": {
+    "active_account_present": 0,
+    "active_account_fingerprint": "none"
+  },
+  "active_media_unchanged": true,
+  "final_store_login_skipped": true,
+  "review_complete": true
+}
