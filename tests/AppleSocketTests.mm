@@ -15,6 +15,9 @@
 - (void)signInAppStoreAppleID:(NSString *)a password:(NSString *)p verificationCodeProvider:(id<TVAppleVerificationCodeProvider>)v completion:(TVAppleCompletion)c {
     (void)a;(void)p;self.pending=c;self.provider=(id)v;
 }
+- (void)enableICloudAppleID:(NSString *)a password:(NSString *)p devicePasscode:(NSString *)d verificationCodeProvider:(id<TVAppleVerificationCodeProvider>)v completion:(TVAppleCompletion)c {
+    (void)a;(void)p;(void)d;self.pending=c;self.provider=(id)v;
+}
 - (void)beginAddingContactEmail:(NSString *)e appleID:(NSString *)a completion:(TVAppleCompletion)c { (void)e;(void)a;self.pending=c; }
 - (void)verifyContactEmailChallenge:(NSString *)ch code:(NSString *)code appleID:(NSString *)a completion:(TVAppleCompletion)c { (void)ch;(void)code;(void)a;self.pending=c; }
 - (void)setAppleIDFirstName:(NSString *)f lastName:(NSString *)l appleID:(NSString *)a completion:(TVAppleCompletion)c {
@@ -68,6 +71,30 @@ int main(int argc,const char **argv){@autoreleasepool{
     fake.pending(nil,[NSError errorWithDomain:@"fake" code:2 userInfo:nil]);
     CHECK(!Call(service,@{@"action":@"result",@"operation_id":op})[@"error"]);
     CHECK(Call(service,@{@"action":@"result",@"operation_id":@"wrong"})[@"error"]);
+    NSDictionary *cloudParams=@{@"apple_id":@"example@example.com",@"password":@"secret",@"device_passcode":@"123456"};
+    NSString *cloudOp=Invoke(service,@"enableICloud",cloudParams)[@"operation_id"];CHECK(cloudOp);
+    TVAppleManualCodeProvider *oldProvider=fake.provider;
+    TVAppleCompletion oldCompletion=fake.pending;
+    __block NSUInteger cancelled=0;
+    [oldProvider requestCodeForChallenge:@{@"type":@"trusted_device"} completion:^(NSString *v,NSError *e){CHECK(!v&&e);cancelled++;}];Pump();
+    CHECK([Call(service,@{@"action":@"result",@"operation_id":cloudOp})[@"status"]isEqual:@"requires_verification_code"]);
+    NSMutableDictionary *cloudInfo=[TVAppleError(TVAppleErrorNativeFailure,@"Native iCloud/CDP sign-in failed.").userInfo mutableCopy];
+    [cloudInfo addEntriesFromDictionary:@{@"TVAppleFailureStage":@"icloud_cdp",@"TVAppleNativeCompletionReceived":@YES,@"TVAppleNativeDomain":@"com.apple.appleaccount",@"TVAppleNativeCode":@403,@"private_token":@"SECRET"}];
+    oldCompletion(nil,[NSError errorWithDomain:TVAppleErrorDomain code:TVAppleErrorNativeFailure userInfo:cloudInfo]);
+    NSDictionary *cloudDone=Call(service,@{@"action":@"result",@"operation_id":cloudOp});
+    CHECK([cloudDone[@"status"]isEqual:@"completed"]&&[cloudDone[@"result"][@"outcome"]isEqual:@"failed"]);
+    CHECK(!cloudDone[@"challenge"]&&cancelled==1&&[cloudDone[@"error"][@"native_code"]integerValue]==403);
+    CHECK(!cloudDone[@"error"][@"private_token"]);
+    NSString *nextCloud=Invoke(service,@"enableICloud",cloudParams)[@"operation_id"];CHECK(nextCloud);
+    TVAppleCompletion nextCompletion=fake.pending;
+    oldCompletion(@{@"outcome":@"succeeded"},nil);
+    __block NSUInteger lateReplies=0;
+    [oldProvider requestCodeForChallenge:@{@"type":@"trusted_device"} completion:^(NSString *v,NSError *e){CHECK(!v&&e);lateReplies++;}];
+    CHECK(lateReplies==1);
+    [oldProvider prepareForAuthentication:^(NSError *e){CHECK(e);lateReplies++;}];CHECK(lateReplies==2);Pump();
+    CHECK([Call(service,@{@"action":@"result",@"operation_id":cloudOp})isEqual:cloudDone]);
+    CHECK([Call(service,@{@"action":@"result",@"operation_id":nextCloud})[@"status"]isEqual:@"running"]);
+    nextCompletion(@{@"outcome":@"succeeded"},nil);
     op=Invoke(service,@"setName",@{@"apple_id":@"example@example.com",@"first_name":@"a;;b\r\n雪",@"last_name":@"Last"})[@"operation_id"];CHECK([fake.name isEqual:@"a;;b\r\n雪"]);
     fake.pending(nil,[NSError errorWithDomain:TVAppleErrorDomain code:TVAppleErrorOutcomeUnknown userInfo:@{@"password":@"SECRET"}]);
     done=Call(service,@{@"action":@"result",@"operation_id":op});CHECK([done[@"error"]count]==2&&[done[@"error"][@"code"]integerValue]==TVAppleErrorOutcomeUnknown);

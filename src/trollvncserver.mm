@@ -147,7 +147,7 @@ static char *gSslKeyPath = NULL;
 static BOOL gBonjourEnabled = YES; // publish _rfb._tcp (and optional _http._tcp)
 
 // TightVNC 1.x file transfer extension (deprecated)
-static BOOL gFileTransferEnabled = NO;
+static BOOL gFileTransferEnabled = YES;
 
 // UltraVNC repeater
 static int gRepeaterMode = 0; // 0: disabled, 1: viewer, 2: repeater
@@ -280,7 +280,7 @@ static void printUsageAndExit(const char *prog) {
 
     fprintf(stderr, "Basic:\n");
     fprintf(stderr, "  -b host    Bind host address (IPv4 literal, default 0.0.0.0)\n");
-    fprintf(stderr, "  -zxtouch-port n   ZXTouch TCP port (default 6000)\n");
+    fprintf(stderr, "  -zxtouch-port n   HTTP/2 control port (default 6000)\n");
     fprintf(stderr, "  -p port    VNC TCP port (default: %d)\n", gPort);
     fprintf(stderr, "  -c port    Client management TCP port (0=off, default: 0)\n");
     fprintf(stderr, "  -n name    Desktop name (default: %s)\n", [gDesktopName UTF8String]);
@@ -328,7 +328,7 @@ static void printUsageAndExit(const char *prog) {
 
     fprintf(stderr, "Extensions:\n");
     fprintf(stderr, "  -C on|off  Clipboard sync (default: on)\n");
-    fprintf(stderr, "  -T on|off  File transfer (default: off)\n\n");
+    fprintf(stderr, "  -T on|off  File transfer (default: on)\n\n");
 
 #if DEBUG
     fprintf(stderr, "Logging:\n");
@@ -4260,7 +4260,7 @@ static void startZXTouchService(void) {
         TVPrintError("ZXTouch could not listen: %s", error.localizedDescription.UTF8String);
         exit(EXIT_FAILURE);
     }
-    TVLog(@"ZXTouch control listening on %@:%d", TVNCIPv4BindAddress(gBindHost), gZXTouchPort);
+    TVLog(@"HTTP/2 control listening on %@:%d", TVNCIPv4BindAddress(gBindHost), gZXTouchPort);
 }
 
 static void startWireGuardServices(void) {

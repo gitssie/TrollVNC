@@ -2,6 +2,8 @@
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL %d\n",__LINE__);exit(1);}}while(0)
 int main(){@autoreleasepool{
     NSError *e=nil;
+    CHECK(TVASRequest(@"profile",@{@"bundle_id":@"test.app",@"backup_id":@"snapshot:20261006-01"},&e));
+    CHECK(!TVASRequest(@"profile",@{@"bundle_id":@"test.app",@"backup_id":@"baseline:1"},&e));
     for(NSString *method in @[@"launch",@"stop",@"status"]) {
         CHECK(TVASRequest(method,@{@"bundle_id":@"test.app"},&e));
         CHECK(!TVASRequest(method,@{@"bundle_id":@"test.app",@"backup_id":@"snapshot:20261006-01"},&e));
@@ -10,7 +12,8 @@ int main(){@autoreleasepool{
     CHECK(!TVASRequest(@"switch",@{@"bundle_id":@"test.app",@"backup_id":@"../secret"},&e));
     CHECK(!TVASRequest(@"switch",@{@"bundle_id":@"test.app",@"backup_id":@"snapshot:20261006-01",@"discard_current":@1},&e));
     CHECK(!TVASRequest(@"switch",@{@"bundle_id":@"test.app",@"backup_id":@"snapshot:20261006-01",@"discard_current":@YES,@"display_name":@"Lost"},&e));
-    CHECK(!TVASRequest(@"delete",@{@"bundle_id":@"test.app",@"backup_id":@"baseline:1.0"},&e));
+    CHECK(TVASRequest(@"delete",@{@"bundle_id":@"test.app",@"backup_id":@"baseline:1.0"},&e));
+    CHECK(!TVASRequest(@"edit",@{@"bundle_id":@"test.app",@"backup_id":@"baseline:1.0",@"display_name":@"No",@"note":@""},&e));
     CHECK(!TVASRequest(@"save",@{@"bundle_id":@"test.app",@"root":@"/tmp"},&e));
     NSDictionary *r=TVASRequest(@"switch",@{@"bundle_id":@"test.app",@"backup_id":@"snapshot:20261006-01",@"discard_current":@NO},&e);
     CHECK([r[@"reference"]isEqual:@"test.app/snapshots/20261006-01"] && ![r[@"discardCurrent"]boolValue]);

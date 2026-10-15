@@ -1,6 +1,7 @@
 #import "../core/PXAppStateSession.h"
 #import "../adapters/PXASNative.h"
 #import "../src/TVASRuntime.h"
+#import "../profiles/TVAppProfile.h"
 #include <dlfcn.h>
 #include <sys/sysctl.h>
 #include <sys/stat.h>
@@ -153,7 +154,11 @@ static BOOL RefreshPreferences(NSDictionary *target, NSDictionary *before, NSErr
 - (BOOL)edit:(NSString *)reference metadata:(NSDictionary *)metadata error:(NSError **)error {
     return [self.engine updateSnapshot:reference bundleID:self.bundleID metadata:metadata error:error];
 }
-- (BOOL)remove:(NSString *)reference error:(NSError **)error { return [self.engine deleteSnapshot:reference bundleID:self.bundleID error:error]; }
+- (BOOL)remove:(NSString *)reference error:(NSError **)error {
+    NSArray *parts=[reference componentsSeparatedByString:@"/"];
+    if(parts.count==3 && [parts[1] isEqual:@"baselines"])return [self.engine deleteBaseline:reference bundleID:self.bundleID error:error];
+    return [self.engine deleteSnapshot:reference bundleID:self.bundleID error:error];
+}
 @end
 
 int main(int argc, const char **argv) { @autoreleasepool {
@@ -195,6 +200,10 @@ int main(int argc, const char **argv) { @autoreleasepool {
                 PXAppStateEngine *engine=[[PXAppStateEngine alloc] initWithRoot:backupRoot resolver:resolver
                     keychain:[[PXASSecurityKeychain alloc] initWithApplicationIdentifier:target[@"applicationIdentifier"]] identity:identity error:&error];
                 if (engine) { Backend *backend=[Backend new]; backend.engine=engine; backend.resolver=resolver; backend.resolvedTarget=target; backend.bundleID=bundleID;
+                    TVSessionSupplementStore *supplements=[[TVSessionSupplementStore alloc]initWithRoot:[backupRoot stringByAppendingPathComponent:@".session-supplements"]];
+                    engine.restoredKeychainFilter=^NSArray *(NSDictionary *manifest,NSArray *records,NSError **failure) {
+                        return [supplements mergeRecords:records manifest:manifest error:failure];
+                    };
                     NSString *progressPath=[directory stringByAppendingPathComponent:@"progress.plist"];
                     __block CFAbsoluteTime lastProgressTime=0;
                     __block NSString *lastStage=nil;
@@ -212,6 +221,20 @@ int main(int argc, const char **argv) { @autoreleasepool {
                     };
                     engine.progressHandler=progress; backend.progress=progress;
                     result=[engine performExclusive:^id(NSError **sessionError) {
+                        if([@[@"profile",@"sessionSupplement"]containsObject:request[@"operation"]])return [engine readSnapshot:request[@"reference"] bundleID:bundleID reader:^NSDictionary *(NSString *directory,NSDictionary *manifest,NSArray *records,NSError **failure){
+                            if([request[@"operation"]isEqual:@"sessionSupplement"]) {
+                                if(![bundleID isEqual:@"lt.manodrabuziai.fr"] || ![request[@"idfv"]isEqual:[[NSUUID alloc]initWithUUIDString:manifest[@"idfv"]].UUIDString]){Failed(failure,@"Session supplement identity differs");return nil;}
+                                // Validate exact target token records before publishing an independent plist.
+                                NSMutableDictionary *state=[NSMutableDictionary dictionaryWithDictionary:[supplements loadBundle:bundleID idfv:request[@"idfv"] error:failure]?:@{}];
+                                if(failure && *failure)return nil;
+                                state[@"tokens"]=request[@"tokens"];
+                                if(![supplements mergeRecords:records tokens:request[@"tokens"] error:failure])return nil;
+                                if(![supplements saveState:state bundle:bundleID idfv:request[@"idfv"] error:failure])return nil;
+                                if(![supplements mergeRecords:records manifest:manifest error:failure])return nil;
+                                return @{@"bundle_id":bundleID,@"idfv":request[@"idfv"],@"credentials_staged":@YES};
+                            }
+                            return TVReadAppProfile(directory,manifest,records,supplements,failure);
+                        } error:sessionError];
                         return [[[PXAppStateSession alloc] initWithBackend:backend] perform:request error:sessionError];
                     } error:&error]; }
             } else if (error) {

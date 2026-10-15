@@ -80,7 +80,7 @@ static NSObject *LifecycleGate(void) {
 }
 - (NSDictionary *)runBundle:(NSString *)bundleID request:(NSDictionary *)request error:(NSError **)error {
     if (![self isMobile]) { FailService(error,@"App-state operations must run as mobile"); return nil; }
-    BOOL readOnly=[@[@"catalog",@"describe",@"status"] containsObject:request[@"operation"]];
+    BOOL readOnly=[@[@"catalog",@"describe",@"status",@"profile"] containsObject:request[@"operation"]];
     @synchronized(LifecycleGate()) {
         if(!readOnly && (LifecyclePending || LifecycleUnknown)) {
             if(error)*error=[NSError errorWithDomain:@"TVAppStateServices" code:4 userInfo:@{@"stateMayBePartial":@YES}];return nil;

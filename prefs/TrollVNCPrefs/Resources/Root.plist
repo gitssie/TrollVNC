@@ -196,7 +196,7 @@
 			<key>label</key>
 			<string>File Transfer</string>
 			<key>default</key>
-			<false/>
+			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>

@@ -10,5 +10,7 @@ void tvUnregisterAppManagement(void);
 #endif
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
-NSData *tvAppZXTouchRequest(NSString *encoded, BOOL (^cancelled)(void));
+NSDictionary *tvAppHTTPRequest(NSString *token, unsigned char op, NSDictionary *payload, BOOL (^cancelled)(void), NSString **error);
+NSDictionary *tvAppHTTPConnect(NSString *password);
+void tvAppHTTPDisconnect(NSString *token);
 #endif

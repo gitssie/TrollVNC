@@ -5,6 +5,13 @@ umask 077
 mkdir -p "$root/build"
 case "${1:-test}" in
     test)
+        xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -DTVAS_ROOTHIDE=1 -I "$root/tests/runtime" \
+            "$root/src/TVASRuntime.m" "$root/tests/RuntimePathsTests.m" -framework Foundation -o "$root/build/runtime-path-tests"
+        "$root/build/runtime-path-tests"
+        xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -I "$root/profiles" \
+            "$root/profiles/TVAppProfile.m" "$root/profiles/TVVintedProfile.m" "$root/profiles/TVSessionSupplementStore.m" "$root/tests/ProfileTests.m" \
+            -framework Foundation -lsqlite3 -o "$root/build/profile-tests"
+        "$root/build/profile-tests"
         xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror \
             "$root/core/PXAppState.m" "$root/tests/PXASFixture.m" "$root/tests/StateTests.m" \
             -framework Foundation -o "$root/build/state-tests"

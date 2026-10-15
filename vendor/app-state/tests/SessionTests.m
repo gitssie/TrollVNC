@@ -145,5 +145,13 @@ int main(void) { @autoreleasepool {
     Check([patchSession perform:@{@"operation":@"save",@"accountPatch":@{@"displayName":@"Renamed"}} error:&error]!=nil,"partial rename accepted on current snapshot");
     Check([patch.lastMetadata[@"displayName"]isEqual:@"Renamed"] && [patch.lastMetadata[@"note"]isEqual:@"preserve"],"omitted note preserved in partial rename");
     Check([patchSession perform:@{@"operation":@"save",@"accountPatch":@{@"note":@"Updated"}} error:&error]!=nil && [patch.lastMetadata[@"displayName"]isEqual:@"New"] && [patch.lastMetadata[@"note"]isEqual:@"Updated"],"note-only patch preserves current name");
+    Fixture *cleanup=[Fixture new];PXAppStateSession *cleanupSession=[[PXAppStateSession alloc]initWithBackend:cleanup];
+    error=nil;Check([cleanupSession perform:@{@"operation":@"delete",@"reference":@"test/baselines/1.0"} error:&error]!=nil &&
+        [cleanup.calls isEqual:@[@"delete:test/baselines/1.0"]],"baseline deletion does not save or restore live data");
+    [cleanup.calls removeAllObjects];cleanup.current=@{@"reference":@"",@"containers":cleanup.roots,@"restorePending":@YES,@"pendingReference":@"test/baselines/1.0"};
+    error=nil;Check([cleanupSession perform:@{@"operation":@"delete",@"reference":@"test/baselines/1.0"} error:&error]==nil && !cleanup.calls.count,
+        "pending restore baseline cannot be deleted");
+    error=nil;NSDictionary *pendingCatalog=[cleanupSession perform:@{@"operation":@"catalog"} error:&error];
+    Check([pendingCatalog[@"pendingReference"] isEqual:@"test/baselines/1.0"],"catalog preserves the exact pending restore archive");
     printf("%lu session assertions passed.\n",(unsigned long)count);
 } return 0; }

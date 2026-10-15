@@ -256,3 +256,10 @@ iOS15.8.8 真机已运行只读取址探针 apple-store-billing.m：Foundation N
 2026-10-10 网络对照：同一真机相邻测试 hectorrathkix 与已成功 murlbodegmb，仅原生AuthKit认证、不提交Store转换。hector约5.6秒返回AKAuthenticationError/-7014且无验证码挑战，murl完成SMS并约10.9秒认证成功。两次认证前后共12次gsa/idmsa无凭据GET探测均取得HTTP响应且无NSURL网络错误；401/403/404仅作为连通证据，不当作账号认证结果。既有失败时段日志显示ServerUI续接返回-7014，另有HTTP200响应。证据不支持当前DNS/TLS/连接/超时故障；具体账号后续交互分支仍未确认。诊断现在保留原生错误domain/code链，不记录native userInfo或认证材料。
 
 2026-10-10 按用户要求追加第五账号 milodoyleimm@hotmail.com：同一ZXTouch原生登录分支完成SMS挑战与外部新码submit_code，iOS自动获取Sacramento/CA/95814账单地址，None付款方式，原生Review保存后Store认证成功；返回outcome=succeeded/authenticated=true/review_completed=true/error=null。独立queryAccountState确认该media selected/authenticated=true，原iCloud保留、Find My=false。该批次累计五账号2成功/3认证异常；本次成功不改变此前-7014根因尚未确认的结论。未替换正式daemon。
+
+
+### 2026-10-15 iCloud 终态与迟到挑战回归
+
+先在真实 TVAppleRunICloudFlow 生产等待路径复现：terms provider 已失败、总 completion 缺席，仍消耗完整 .3 秒测试兜底。修复后同步/异步 terms、本机密码失败和原生 completion 拒绝均在 .15 秒断言窗口内返回；无回调仍超时为 unknown，缺失 account 不误报成功，重复/迟到 completion 不改结果，关闭后输入不再次调用原生解锁。全模块 run_tests.sh 通过，覆盖账户读取失败不覆盖明确错误、验证码 provider 永久关闭及 100 轮 request/invalidate 并发竞争。
+
+run_apple_socket_tests.sh 的真实 adapter 用例与 2 个历史 TCP fixture 通过：完成时释放等待输入，迟到挑战立即回绝，旧 completion 不影响新操作，诊断仅导出白名单字段。这些 fixture 不代表已验收生产 HTTP/2 流。iOS arm64 全模块 probe 编译、链接、签名通过；本轮未安装到手机或重放账户写入。可恢复 HTTP/2 状态流目前是设计，不是已部署实现，见 TrollVNC/docs/apple-operation-stream.md。

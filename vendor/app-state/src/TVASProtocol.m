@@ -19,19 +19,30 @@ static NSString *BackupID(NSString *reference,NSString *bundle) {
     return [NSString stringWithFormat:@"%@:%@",[parts[1] isEqual:@"snapshots"]?@"snapshot":@"baseline",parts[2]];
 }
 NSDictionary *TVASRequest(NSString *method,NSDictionary *params,NSError **error) {
-    NSDictionary *map=@{@"list":@"catalog",@"describe":@"describe",@"save":@"save",@"createBaseline":@"baseline",@"switch":@"switch",@"edit":@"edit",@"delete":@"delete",@"launch":@"launch",@"stop":@"stop",@"status":@"status"};
+    NSDictionary *map=@{@"list":@"catalog",@"describe":@"describe",@"profile":@"profile",@"sessionSupplement":@"sessionSupplement",@"save":@"save",@"createBaseline":@"baseline",@"switch":@"switch",@"edit":@"edit",@"delete":@"delete",@"launch":@"launch",@"stop":@"stop",@"status":@"status"};
     if(![method isKindOfClass:NSString.class] || !map[method] || ![params isKindOfClass:NSDictionary.class] || !TVASComponent(params[@"bundle_id"]))return Bad(error);
     NSMutableSet *allowed=[NSMutableSet setWithObject:@"bundle_id"];
-    BOOL reference=[@[@"switch",@"edit",@"delete"] containsObject:method];
+    BOOL reference=[@[@"switch",@"edit",@"delete",@"profile",@"sessionSupplement"] containsObject:method];
     if(reference)[allowed addObject:@"backup_id"];
     if([@[@"save",@"switch",@"edit"] containsObject:method])[allowed addObjectsFromArray:@[@"display_name",@"note"]];
     if([method isEqual:@"switch"])[allowed addObject:@"discard_current"];
+    if([method isEqual:@"sessionSupplement"])[allowed addObjectsFromArray:@[@"idfv",@"access_token",@"refresh_token"]];
     for(id key in params)if(![allowed containsObject:key])return Bad(error);
     NSMutableDictionary *request=[@{@"operation":map[method]} mutableCopy];
     if(reference) {
         NSString *ref=Reference(params[@"backup_id"],params[@"bundle_id"]);
-        if(!ref || ([@[@"edit",@"delete"] containsObject:method] && ![params[@"backup_id"] hasPrefix:@"snapshot:"]))return Bad(error);
+        if(!ref || ([@[@"edit",@"profile",@"sessionSupplement"] containsObject:method] && ![params[@"backup_id"] hasPrefix:@"snapshot:"]))return Bad(error);
         request[@"reference"]=ref;
+    }
+    if([method isEqual:@"sessionSupplement"]) {
+        if(![params[@"idfv"]isKindOfClass:NSString.class] || ![[NSUUID alloc]initWithUUIDString:params[@"idfv"]])return Bad(error);
+        request[@"idfv"]=[[NSUUID alloc]initWithUUIDString:params[@"idfv"]].UUIDString;
+        NSMutableDictionary *tokens=[NSMutableDictionary new];
+        for(NSString *key in @[@"access_token",@"refresh_token"]) {
+            NSString *value=params[key];if(![value isKindOfClass:NSString.class] || !value.length || value.length>65536)return Bad(error);
+            tokens[[key isEqual:@"access_token"]?@"token":key]=[value dataUsingEncoding:NSUTF8StringEncoding];
+        }
+        request[@"tokens"]=tokens;
     }
     NSMutableDictionary *metadata=[NSMutableDictionary new];
     if(params[@"display_name"]) {
@@ -72,6 +83,10 @@ NSDictionary *TVASResult(NSDictionary *result,NSString *bundle,NSError **error) 
     }
     NSString *current=BackupID(result[@"currentReference"],bundle);if(!current)return Bad(error);
     NSMutableDictionary *mapped=[@{@"bundle_id":bundle,@"backups":backups,@"current_backup_id":current.length?current:(id)NSNull.null,@"restore_pending":@([result[@"restorePending"] boolValue])} mutableCopy];
+    if(result[@"pendingReference"]) {
+        NSString *pending=BackupID(result[@"pendingReference"],bundle);if(!pending.length)return Bad(error);
+        mapped[@"pending_backup_id"]=pending;
+    }
     NSMutableArray *duplicates=[NSMutableArray new];
     for(NSString *ref in result[@"duplicateIdentityReferences"]) { NSString *identifier=BackupID(ref,bundle);if(!identifier.length)return Bad(error);[duplicates addObject:identifier]; }
     if(duplicates.count)mapped[@"duplicate_identity_backup_ids"]=duplicates;

@@ -125,7 +125,7 @@
 						<key>kind</key>
 						<string>switch</string>
 						<key>default</key>
-						<false/>
+						<true/>
 					</dict>
 				</array>
 			</dict>

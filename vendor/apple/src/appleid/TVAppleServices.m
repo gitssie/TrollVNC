@@ -361,13 +361,22 @@ static NSArray *SignOutTargets(NSDictionary *state, NSString *appleID, BOOL iClo
     NSError *queryError = nil;
     NSDictionary *state = [_backend snapshot:&queryError];
     if (!state) {
-
+        // An independent state read cannot erase a definite native rejection.
+        // Partial account effects and the request's execution result are separate.
+        if ([stage isEqual:@"icloud_sign_in"] && *error && (*error).code!=TVAppleErrorOutcomeUnknown)
+            return @{ @"outcome":@"failed", @"stage":stage, @"account_state_available":@NO,
+                      @"account_state_may_be_partial":@YES };
         *error = TVAppleError(TVAppleErrorOutcomeUnknown, @"Authentication failed and the resulting account state could not be read.");
         return @{ @"outcome":@"unknown", @"stage":stage };
     }
     NSMutableOrderedSet *domains = [NSMutableOrderedSet new];
     for (NSDictionary *record in Targets(state, target)) [domains addObject:record[@"domain"]];
-    return @{ @"outcome":((*error).code==TVAppleErrorOutcomeUnknown) ? @"unknown" : @"failed", @"stage":stage, @"state":state,
-              @"signed_in_domains":domains.array };
+    NSMutableDictionary *result=[@{ @"outcome":((*error).code==TVAppleErrorOutcomeUnknown) ? @"unknown" : @"failed", @"stage":stage, @"state":state,
+              @"signed_in_domains":domains.array } mutableCopy];
+    if([stage isEqual:@"icloud_sign_in"]) {
+        result[@"account_state_available"]=@YES;
+        result[@"account_state_may_be_partial"]=@YES;
+    }
+    return result;
 }
 @end

@@ -25,11 +25,22 @@ static BOOL CloudSupports(id object, NSArray<NSString *> *selectors) {
 // Native ManagedConfiguration verifies it before a CDPLocalSecret is constructed.
 @interface TVAppleCloudInput : NSObject
 @property NSString *passcode;
-@property NSError *failure;
+@property(nonatomic) NSError *failure;
+@property(copy) void (^failureHandler)(NSError *);
+@property(copy) BOOL (^operationActive)(void);
 @property BOOL closed;
 @property NSUInteger localPrompts;
 @end
 @implementation TVAppleCloudInput
+@synthesize failure=_failure;
+- (void)setFailure:(NSError *)error {
+    // All provider failures converge on the same first-terminal gate as completion.
+    @synchronized(self) {
+        if(_failure)return;
+        _failure=error;
+        if(self.failureHandler)self.failureHandler(error);
+    }
+}
 - (NSUInteger)findMyActivationAction { return 2; }
 - (BOOL)skipCDPEnablement { return NO; }
 - (BOOL)skipDataclassEnablement { return NO; }
@@ -46,7 +57,7 @@ static BOOL CloudSupports(id object, NSArray<NSString *> *selectors) {
 - (void)cdpContext:(id)context promptForLocalSecretWithCompletion:(void (^)(id,NSError *))completion {
     (void)context;
     @synchronized(self) {
-        if(self.closed||++self.localPrompts>1||!self.passcode.length) {
+        if(self.closed||(self.operationActive&&!self.operationActive())||++self.localPrompts>1||!self.passcode.length) {
             self.failure=TVAppleError(TVAppleErrorAccountNeedsReview,@"The local passcode challenge is unavailable or repeated.");completion(nil,self.failure);return;
         }
         id device=[NSClassFromString(@"CDPLocalDevice")sharedInstance];
@@ -128,29 +139,63 @@ BOOL TVAppleNativeEnableICloud(NSString *appleID,NSString *password,NSString *pa
     }
     NSDictionary *authentication=TVAppleNativeAuthenticate(appleID,password,provider,NO,error);
     if(!authentication)return NO;
+    return TVAppleRunICloudFlow(flow,authentication,passcode,240,error);
+}
+
+BOOL TVAppleRunICloudFlow(id flow,NSDictionary *authentication,NSString *passcode,NSTimeInterval timeout,NSError **error) {
     TVAppleCloudInput *input=[TVAppleCloudInput new];input.passcode=[passcode copy];
-    [flow setDelegate:(id)input];[flow setCdpUIProvider:input];[flow setShouldAutomaticallySaveSignInResults:YES];
     dispatch_semaphore_t signal=dispatch_semaphore_create(0);
     NSMutableDictionary *ticket=[NSMutableDictionary new];
+    // One gate owns both early provider failure and the eventual native completion.
+    // No callback may overwrite the first terminal observation or revive this flow.
+    void (^finish)(BOOL,NSError *,BOOL)=^(BOOL ok,NSError *failure,BOOL nativeCompleted) {
+        @synchronized(ticket) {
+            if(ticket[@"closed"]||ticket[@"finished"])return;
+            ticket[@"finished"]=@YES;ticket[@"ok"]=@(ok);
+            ticket[@"native_completed"]=@(nativeCompleted);
+            if(failure)ticket[@"failure"]=failure;
+            dispatch_semaphore_signal(signal);
+        }
+    };
+    input.failureHandler=^(NSError *failure){finish(NO,failure,NO);};
+    input.operationActive=^BOOL{@synchronized(ticket){return !ticket[@"closed"]&&!ticket[@"finished"];}};
+    [flow setDelegate:(id)input];[flow setCdpUIProvider:input];[flow setShouldAutomaticallySaveSignInResults:YES];
     [flow signInWithIDMSAuthenticationResults:authentication completion:^(BOOL success,id account,NSError *failure){
-        @synchronized(ticket){if(ticket[@"closed"]||ticket[@"finished"])return;
-            ticket[@"finished"]=@YES;ticket[@"ok"]=@(success&&account&&!failure);
-            ticket[@"error_code"]=@(failure.code);dispatch_semaphore_signal(signal);}
+        NSError *reported=nil;
+        if(failure||!success) {
+            // Preserve only native domain/code, never userInfo or localizedDescription.
+            NSMutableDictionary *info=[TVAppleError(TVAppleErrorNativeFailure,@"Native iCloud/CDP sign-in failed.").userInfo mutableCopy];
+            NSString *domain=failure.domain;
+            NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"];
+            if(domain.length&&domain.length<=128&&[domain rangeOfCharacterFromSet:allowed.invertedSet].location==NSNotFound)
+                info[@"TVAppleNativeDomain"]=domain;
+            if(failure)info[@"TVAppleNativeCode"]=@(failure.code);
+            reported=[NSError errorWithDomain:TVAppleErrorDomain code:TVAppleErrorNativeFailure userInfo:info];
+        } else if(!account)reported=TVAppleError(TVAppleErrorOutcomeUnknown,@"Native iCloud/CDP completion omitted its account.");
+        finish(success&&account&&!failure,reported,YES);
     }];
     authentication=nil;
-    NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+240;
-    BOOL completed=NO;
-    while(!(completed=dispatch_semaphore_wait(signal,DISPATCH_TIME_NOW)==0)&&NSProcessInfo.processInfo.systemUptime<deadline) {
-        [[NSRunLoop currentRunLoop]runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+timeout;
+    while(NSProcessInfo.processInfo.systemUptime<deadline) {
+        NSTimeInterval remaining=deadline-NSProcessInfo.processInfo.systemUptime;
+        if(dispatch_semaphore_wait(signal,dispatch_time(DISPATCH_TIME_NOW,(int64_t)(MAX(0,MIN(.01,remaining))*NSEC_PER_SEC)))==0)break;
+        // Pump native callbacks without busy-spinning on a worker with no run-loop sources.
+        [[NSRunLoop currentRunLoop]runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.001]];
     }
-    BOOL ok=NO;NSNumber *nativeCode=nil;
-    @synchronized(ticket){ticket[@"closed"]=@YES;ok=completed&&[ticket[@"ok"]boolValue];nativeCode=ticket[@"error_code"];}
-    NSError *inputError=nil;
-    @synchronized(input){input.closed=YES;input.passcode=nil;inputError=input.failure;if(inputError)ok=NO;}
+    BOOL ok=NO,nativeCompleted=NO;NSError *failure=nil;
+    @synchronized(ticket) {
+        ticket[@"closed"]=@YES;
+        ok=[ticket[@"ok"]boolValue];nativeCompleted=[ticket[@"native_completed"]boolValue];failure=ticket[@"failure"];
+        if(!ticket[@"finished"])failure=TVAppleError(TVAppleErrorOutcomeUnknown,@"Native iCloud/CDP sign-in timed out; inspect actual account state.");
+    }
+    @synchronized(input){input.closed=YES;input.passcode=nil;input.failureHandler=nil;input.operationActive=nil;}
     [flow setDelegate:nil];[flow setCdpUIProvider:nil];
-    // The flow can preflight-save an account before failure: report this request as unknown.
-    if(!ok)*error=TVAppleError(TVAppleErrorOutcomeUnknown,inputError?inputError.localizedDescription:completed?
-        [NSString stringWithFormat:@"Native iCloud/CDP sign-in did not complete successfully (code %@).",nativeCode?:@0]:
-        @"Native iCloud/CDP sign-in timed out; inspect actual account state.");
+    if(ok&&error)*error=nil;
+    if(!ok) {
+        NSMutableDictionary *info=[failure.userInfo mutableCopy];
+        info[@"TVAppleFailureStage"]=@"icloud_cdp";
+        info[@"TVAppleNativeCompletionReceived"]=@(nativeCompleted);
+        *error=[NSError errorWithDomain:TVAppleErrorDomain code:failure.code userInfo:info];
+    }
     return ok;
 }

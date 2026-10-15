@@ -98,7 +98,7 @@ during the restart. Set a VNC password before enabling file transfer.
 **Extensions**:
 
 - `-C on|off` Enable UltraVNC UTF-8 clipboard extension (default: `on`)
-- `-T on|off` Enable TightVNC 1.x file transfer extension (default: `off`)
+- `-T on|off` Enable TightVNC 1.x file transfer extension (default: `on`)
 
 With file transfer enabled, version 3.2-285 advertises management flags for
 atomic replacement of a regular file and SHA-256 verification. RV uses these
@@ -382,7 +382,7 @@ Connect from your browser. Open the bundled web page at `http://<host>:5801/`. T
 
 On Dopamine rootless, VNC and integrated ZXTouch always run together on distinct
 TCP ports (5901 and 6000 by default). They share one listen address and one
-userspace WireGuard network. See [ZXTouch integration](docs/zxtouch-integration.md)
+userspace WireGuard network. See [HTTP control API](docs/control-http.md)
 for supported Python commands and validation limits.
 
 Open **Network settings** in the native TrollVNC Settings pane to see active

@@ -1,3 +1,55 @@
+## 2026-10-15 / 3.2-328: App-state HTTP/2 progress
+
+Published RootHide 3.2-328 to local Sileo source `http://172.16.20.203:18766/`, reusing the existing ordinary foreground HTTP service (no Orca Terminal). Authorization advertises app_state_stream:1; `/api/app-state/stream` accepts invoke or result envelopes and emits bounded NDJSON state/heartbeat events over HTTP/2. Atomic service subscription, coalesced progress, terminal backpressure, authorization/disconnect cleanup and first-terminal late-callback guards preserve the original operation; reconnect observes its cached snapshot without another invoke. Apple/task31 streaming remains a separate unimplemented design.
+
+Native host stream and existing adapter checks pass; RV local HTTP/2 checks verify progress before completion, immediate terminal handling before EOF, and no request replay. Resume authorization failure remains unknown with a manual query entry, rather than marking the original mutation failed. RV's switch Dialog becomes the persistent progress/result/error panel after confirmation; the backup list contains environment records only. User performs UI/phone acceptance; no window automation, phone mutation or installation in this update.
+
+Clean RootHide package built; all216 archive entries numeric owner0:0, all169 payload files match staging bytes/modes, recovery helper4755. Deploy verifies successfully, all five repo files including the328 deb match byte-for-byte via the LAN endpoint. RV compilation passes; third-party block0.1.6 future-compat warning remains unrelated.
+
+## 2026-10-15 / 3.2-327: version baseline deletion
+
+Published RootHide 3.2-327 to local Sileo source `http://172.16.20.203:18766/`, reusing the existing HTTP service. Explicit delete accepts a listed baseline version as well as an inactive snapshot. Worker routes baseline deletion to strict bundle/path/kind/version/format manifest validation; edit/profile remain snapshot-only. Current snapshot and the exact pending restore target cannot be deleted. Catalog maps `pendingReference` to `pending_backup_id`. Partial archive deletion keeps its uncertainty flag. Deleting a baseline allows explicit recreation of the same installed version; no automatic replacement or phone installation.
+
+Host module checks pass (173 core, 245 mocked native keychain, 52 session, protocol/lifecycle/service/supervision suites). Full clean RootHide package passed; 216 archive entries owner0:0, all169 payload files match staging bytes/modes, recovery helper4755. RV displays baseline versions separately from snapshots, uses standard component menus and current-item check icon. Independent scoped review found no important deletion issue. User requested to perform UI/phone acceptance themselves; no computer-use testing or phone mutations performed for this update.
+
+## 2026-10-15 / 3.2-326: iCloud terminal handling published locally
+
+Published RootHide 3.2-326 to the existing local Sileo source `http://172.16.20.203:18766/`. Includes the iCloud provider-error/total-completion first-terminal gate, preserved definite failure across account-read failure, sanitized native domain/code, normalized adapter failure outcome, and irreversible per-operation manual-code provider invalidation. Duplicate/late completion or challenges cannot reopen a finished operation. The recoverable HTTP/2 operation stream remains design only (`docs/apple-operation-stream.md`), not an advertised or implemented capability.
+
+Full Apple native suite, adapter plus two historical TCP fixtures, and five package-install fixtures passed; prior independent scoped review had no remaining important issues. Clean RootHide package build passed. All 216 archive entries are owner 0:0, all 169 payload files match staging bytes/modes, recovery helper remains 4755. Deploy/verify/status healthy; all five repository files, including the deb, match over the LAN endpoint. HTTP runs in ordinary foreground exec session (no Orca Terminal/no detached nohup). This publishes the repo only; no phone installation or live-device acceptance performed.
+
+## 2026-10-14 / 3.2-325: sudo library trust before visudo
+
+Phone screenshot of 324 confirms visudo abort134: dyld found native `/usr/libexec/sudo/libsudo_util.0.dylib` but rejected its code signature (errno1). This is not a missing-library error. Installer now registers that fixed existing library with `/basebin/jbctl trustcache add` using the jbroot-derived native path before visudo. RootHide source supports this command; no re-signing or skipped sudoers validation. Trust registration failure retains the previous rule and reports its stage.
+
+325 built/published to the same LAN source; package 216 entries owner0:0,169 payload files match staging bytes/modes, recovery helper4755. `rtk proxy python3 tests/package_install_tests.py` passes five fixture tests including modeled old abort134/new ordering, failed trust, failed validation and missing library; these do not prove real dyld acceptance. Scoped independent review found no important issues. Five repo files match disk byte-for-byte over LAN and status healthy; ordinary exec persistent session. Phone installation not performed by agent; await user device result.
+
+## 2026-10-14 / 3.2-324: installation configuration diagnostics
+
+User reported 3.2-323 unpacking successfully then failing postinst with exit 1. The actual package required visudo without declaring sudo; device-specific failing command is still unconfirmed because postinst suppressed stderr. RootHide before-package now appends sudo to staged Depends idempotently. postinst/prerm retain stderr; app-state configuration reports missing executables and failed stages, preserves RootHide library resolution and validates the temporary sudo rule before replacement. Missing helper is an error rather than silent success.
+
+3.2-324 built and published at `http://172.16.20.203:18766/`, ordinary exec persistent session, no Orca Terminal. Shell syntax and fixture checks passed for dependency idempotence/scheme isolation, missing visudo, failed validation/error propagation/temp cleanup, successful reconfiguration/removal. Independent scoped review found no important issues. Package 216 entries owner 0:0; 169 payload files match staging bytes/modes, recovery helper 4755. Five repository files verified byte-for-byte over LAN; status healthy. No phone installation or claim that the original device failure is resolved.
+
+## 2026-10-12 / 3.2-318: Rust WireGuard bridge published
+
+Production daemon links only `wgbridge-onetun` (BoringTun + smoltcp); the four C entry points and existing JSON configuration remain compatible. A dedicated Rust worker owns transport and TCP state. Seven retained local tests cover encrypted IPv4/IPv6 dual-service forwarding, PSK, multi-peer dispatch, 256 KiB payload, stop/restart, C ABI, AllowedIPs source checks, half-close, refused local service, incomplete handshake reclamation and Closed-buffer backpressure. Independent review fixes verified. These are local tests, not physical-phone acceptance; user requested no new test report.
+
+RootHide 3.2-318 built and published at `http://172.16.20.203:18766/`, reusing the ordinary foreground exec HTTP session. Package 215 entries have owner 0:0, all 168 payload files match staging and modes, recovery helper remains 4755; all five repository files verified byte-for-byte over LAN. Deploy/status healthy. No phone installation by agent.
+
+## 2026-10-12 / 3.2-317: HTTP/2 screen lock/unlock
+
+User retained RV framebuffer screenshots and legacy VNC unlock/lock, and requested new HTTP/2 unlock/lock. `POST /api/device/unlock` accepts a six-digit passcode; `POST /api/device/lock` accepts `{}`. Both return bounded NDJSON progress with observed terminal screen state. `http_screen_control` capability makes RV choose this flow; older servers retain VNC behavior. Never automatically replay or fall back after submitting HTTP input. Passcodes still come from existing local configuration; no keychain dependency. Cancellation stops future digits/delayed presentation, releases current keypress, and reports unknown when no terminal observation arrives. Authorization runs on the worker and is followed by a quick cancellation recheck; main callbacks/HID keyboard mutex must never synchronously wait on the app authorization queue. The synchronized completion gate protects delayed callbacks from freed stream producers.
+
+Retained checks: `tests/run_screen_http_tests.sh` exercises production ScreenHTTPControl.inc with deterministic screen/HID primitives (11 scenarios); control-http has 5 real HTTP/2 transport tests; RV session has 101 tests and unlock UI has 11 tests, including legacy flow, fragmented progress, EOF/inconsistent state/no replay and cancellation. RootHide package and RV executable build passed; independent review found no remaining important issues. These checks do not claim a physical-phone passcode unlock in this version. RV output is `../rv/target/debug/rv`, without app bundling.
+
+Local Sileo publishing: 316 first published HTTP/2 migration; 317 now supersedes it at `http://172.16.20.203:18766/`. Foreground ordinary exec HTTP session reused (no Orca Terminal/no detached nohup). Final 317 deb: 215 control/data entries numeric owner 0:0, recovery helper 4755, all 168 payload files match staging content/mode; all 5 repository files verified byte-for-byte over LAN. deploy/verify/status healthy. No phone installation performed by agent in this publish.
+
+## 2026-10-12: HTTP/2 phone control supersedes network task protocol
+
+Validation: RootHide arm64 full build passed; RV session 97 tests and production HTTP engine 3 tests passed. Retained iOS HTTP/2 probe reported 11 PASS (control-http/tests/reports/device-2026-10-12.json). Probe uses production settings discovery with RootHide path conversion and daemon entitlements; temporary binaries/process are cleaned. Production daemon not installed/replaced in this migration. RV built as target/debug/rv, no app packaging.
+
+User explicitly replaced the network task/CRLF protocol with ordinary HTTP URL routing. The resident daemon builds `control-http` (locked Hyper/h2/Tokio Rust static library) and `src/TVNCHTTPServer.mm`; it no longer builds ZXTouchTCPServer or typed vendor/karing service. `/api/karing/*` is a raw streaming reverse proxy, never JSON normalization/post-verification/failover. Native Apple/app-state dictionary facades are invoked by named POST URLs. VNC capability token discovery is version2; RV must build/update together. Existing local password/passcode settings remain authoritative. See [control HTTP API](docs/control-http.md) for routes and retained tests. Old task documentation/tests and Python scripts are historical, not a supported listener. Internal SpringBoard IPC/native helper kinds may still use existing private identifiers.
+
 # TrollVNC 开发与真机测试记忆
 
 RV/VNC 密码与设备解锁密码复用现有本地配置，不添加系统钥匙串保存、读取、迁移或依赖。

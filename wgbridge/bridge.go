@@ -289,8 +289,8 @@ func stop() {
 	}
 }
 
-//export TVNCWGStartServices
-func TVNCWGStartServices(config *C.char, services *C.char) *C.char {
+//export TVNCWGStartServices_Go
+func TVNCWGStartServices_Go(config *C.char, services *C.char) *C.char {
 	if config == nil || services == nil {
 		return C.CString("WireGuard configuration and service routes are required")
 	}
@@ -304,8 +304,8 @@ func TVNCWGStartServices(config *C.char, services *C.char) *C.char {
 	return nil
 }
 
-//export TVNCWGStart
-func TVNCWGStart(config *C.char, port C.int) *C.char {
+//export TVNCWGStart_Go
+func TVNCWGStart_Go(config *C.char, port C.int) *C.char {
 	if config == nil {
 		return C.CString("WireGuard configuration is missing")
 	}
@@ -315,10 +315,10 @@ func TVNCWGStart(config *C.char, port C.int) *C.char {
 	return nil
 }
 
-//export TVNCWGStop
-func TVNCWGStop() { stop() }
+//export TVNCWGStop_Go
+func TVNCWGStop_Go() { stop() }
 
-//export TVNCWGFree
-func TVNCWGFree(value *C.char) { C.free(unsafe.Pointer(value)) }
+//export TVNCWGFree_Go
+func TVNCWGFree_Go(value *C.char) { C.free(unsafe.Pointer(value)) }
 
 func main() {}

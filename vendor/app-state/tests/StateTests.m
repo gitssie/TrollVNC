@@ -374,6 +374,14 @@ int main(void) { @autoreleasepool {
     fixture.running=NO;
     Assert([engine restoreReference:blank[@"reference"] bundleID:@"com.example.state" restoreIdentity:YES error:&error]!=nil,@"empty baseline restores through normal pipeline");
     Assert(![NSFileManager.defaultManager fileExistsAtPath:[liveData stringByAppendingPathComponent:@"account.txt"]] && fixture.records.count==0 && ![fixture.identityState isEqual:liveIdentity],@"using empty baseline clears account data and keychain and resets identity");
+    error=nil;
+    Assert(![engine deleteBaseline:@"com.example.state/snapshots/20261005-01" bundleID:@"com.example.state" error:&error],@"baseline delete refuses snapshot paths");
+    error=nil;
+    Assert(![engine deleteBaseline:@"other.app/baselines/3.0" bundleID:@"com.example.state" error:&error],@"baseline delete refuses other app archives");
+    error=nil;
+    Assert([engine deleteBaseline:blank[@"reference"] bundleID:@"com.example.state" error:&error] &&
+        ![NSFileManager.defaultManager fileExistsAtPath:blankPath],@"delete removes the selected baseline version");
+    Assert([engine createBaselineBundle:@"com.example.state" error:&error]!=nil,@"deleted baseline version can be created again");
     engine = nil;
     Assert([NSFileManager.defaultManager removeItemAtPath:temp error:NULL],@"clean temporary test tree");
     printf("%lu assertions passed; no real app or keychain touched.\n",(unsigned long)passed);

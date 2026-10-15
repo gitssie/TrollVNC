@@ -27,6 +27,7 @@ static NSLock *tvLeaseLock;
 static NSMutableDictionary *tvLeases;
 static NSTimeInterval tvLastAttempt;
 static NSTimeInterval tvLastPrepare;
+static BOOL tvHTTPActive;
 
 static void tvUnlockInit(void) {
     static dispatch_once_t once;
@@ -79,7 +80,8 @@ BOOL tvScreenReadLocked(BOOL *locked) {
     return tvReadLock(locked, &passcode);
 }
 
-NSDictionary *tvScreenLock(NSString **error) {
+static NSDictionary *tvScreenLockImpl(NSString **error, BOOL (^active)(void)) {
+    if (!active()) { *error = @"Screen operation cancelled"; return nil; }
     BOOL locked, passcode, blanked;
     if (!tvReadLock(&locked, &passcode)) { *error = @"Cannot read screen lock state"; return nil; }
     // A lock command must never toggle an already locked phone awake.
@@ -91,11 +93,22 @@ NSDictionary *tvScreenLock(NSString **error) {
     // Send the HID action once; wait only for the resulting system state.
     for (int tick = 0; tick < 20; ++tick) {
         usleep(100000);
+        if (!active()) { *error = @"Screen operation cancelled"; return nil; }
         if (!tvReadLock(&locked, &passcode)) { *error = @"Cannot read screen lock state"; return nil; }
         if (locked) return tvScreenUnlockState(error);
     }
     *error = @"Screen did not lock";
     return nil;
+}
+
+NSDictionary *tvScreenLock(NSString **error) {
+    tvUnlockInit();
+    [tvLeaseLock lock]; BOOL busy = tvHTTPActive;
+    if (!busy) tvHTTPActive = YES;
+    [tvLeaseLock unlock];
+    if (busy) { *error = @"Screen operation busy"; return nil; }
+    @try { return tvScreenLockImpl(error, ^BOOL { return YES; }); }
+    @finally { [tvLeaseLock lock]; tvHTTPActive = NO; [tvLeaseLock unlock]; }
 }
 
 // AX reports either an empty value or a localized count for a secure field.
@@ -174,29 +187,34 @@ static BOOL tvNeedsPasscodePresentation(BOOL requireAbsentKeypad) {
         tvReadBlanked(&blanked) && !blanked;
 }
 
-NSDictionary *tvScreenUnlockPrepare(NSString **error) {
+static NSDictionary *tvScreenUnlockPrepareImpl(NSString **error, BOOL (^active)(void)) {
+    if (!active()) { *error = @"Screen operation cancelled"; return nil; }
     NSDictionary *state = tvScreenUnlockState(error);
     if (!state || ![state[@"locked"] boolValue]) return state;
     if (!tvScreenUnlockSupported()) { *error = @"Screen unlock is unavailable on this iOS version"; return nil; }
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
     // Idempotent polling must not continuously restart the presentation animation.
-    if (now - tvLastPrepare >= 3.0 && ![state[@"input_ready"] boolValue]) {
-        tvLastPrepare = now;
+    [tvLeaseLock lock];
+    BOOL prepare = now - tvLastPrepare >= 3.0 && ![state[@"input_ready"] boolValue];
+    if (prepare) tvLastPrepare = now;
+    [tvLeaseLock unlock];
+    if (prepare) {
         BOOL blanked;
         if (!tvReadBlanked(&blanked)) { *error = @"Cannot read display state"; return nil; }
         if (blanked) [[STHIDEventGenerator sharedGenerator] powerPress];
         // Wake before swiping. A power press when already lit would switch it off.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 800 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-            if (tvNeedsPasscodePresentation(NO)) {
+            if (active() && tvNeedsPasscodePresentation(NO)) {
                 dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+                    if (!active()) return;
                     [[STHIDEventGenerator sharedGenerator] swipeUpToPasscode];
                     // Home-button devices may ignore the swipe on the lock screen.
                     // Check the keypad after the gesture settles before pressing Home.
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC),
                                    dispatch_get_main_queue(), ^{
-                        if (tvNeedsPasscodePresentation(YES)) {
+                        if (active() && tvNeedsPasscodePresentation(YES)) {
                             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
-                                [[STHIDEventGenerator sharedGenerator] menuPress];
+                                if (active()) [[STHIDEventGenerator sharedGenerator] menuPress];
                             });
                         }
                     });
@@ -207,12 +225,17 @@ NSDictionary *tvScreenUnlockPrepare(NSString **error) {
     return state;
 }
 
+NSDictionary *tvScreenUnlockPrepare(NSString **error) {
+    return tvScreenUnlockPrepareImpl(error, ^BOOL { return YES; });
+}
+
 NSDictionary *tvScreenUnlockArm(rfbClientPtr client, NSUInteger digits, NSString **error) {
     tvUnlockInit();
     NSValue *key = [NSValue valueWithPointer:client];
     if (digits == 0) { tvScreenUnlockClose(client); return @{@"armed":@NO}; }
     if (digits != 6) { *error = @"Only 6 digit passcodes are supported"; return nil; }
     [tvLeaseLock lock];
+    if (tvHTTPActive) { [tvLeaseLock unlock]; *error = @"Screen operation busy"; return nil; }
     NSDictionary *state = tvScreenUnlockState(error);
     if (!state) { [tvLeaseLock unlock]; return nil; }
     if (![state[@"locked"] boolValue]) { [tvLeaseLock unlock]; return @{@"armed":@NO, @"locked":@NO}; }
@@ -232,6 +255,7 @@ NSDictionary *tvScreenUnlockArm(rfbClientPtr client, NSUInteger digits, NSString
 int tvScreenUnlockKey(rfbClientPtr client, BOOL down, uint32_t key) {
     tvUnlockInit();
     [tvLeaseLock lock];
+    if (tvHTTPActive) { [tvLeaseLock unlock]; return down ? -1 : 1; }
     NSMutableDictionary *lease = tvLeases[[NSValue valueWithPointer:client]];
     if (!lease) { [tvLeaseLock unlock]; return 0; }
     NSMutableSet *pressed = lease[@"pressed"];
@@ -256,3 +280,5 @@ void tvScreenUnlockClose(rfbClientPtr client) {
     [tvLeases removeObjectForKey:[NSValue valueWithPointer:client]];
     [tvLeaseLock unlock];
 }
+
+#include "ScreenHTTPControl.inc"

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 
-exec 3>&1 &>/dev/null
+exec 3>&1 >/dev/null
 
 if [ "$DPKG_MAINTSCRIPT_ARCH" == "iphoneos-arm64" ]; then
     DPKG_ROOT="/var/jb"
 fi
 
 if [ "$DPKG_MAINTSCRIPT_ARCH" = "iphoneos-arm64e" ]; then
-    /bin/sh /usr/libexec/trollvnc/configure-app-state.sh install || exit 1
+    /bin/sh /usr/libexec/trollvnc/configure-app-state.sh install >&3 || {
+        echo "TrollVNC: app-state configuration failed; see the error above." >&2
+        exit 1
+    }
 fi
 
 SERV_AGENT="$DPKG_ROOT/Library/LaunchDaemons/com.82flex.trollvnc.plist"

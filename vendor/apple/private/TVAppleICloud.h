@@ -7,6 +7,9 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 FOUNDATION_EXPORT BOOL TVAppleNativeEnableICloud(NSString *appleID, NSString *password,
     NSString *passcode, id<TVAppleVerificationCodeProvider> _Nullable provider, NSError **error);
+// Production flow runner; injectable flow/deadline permit native callback regression tests.
+FOUNDATION_EXPORT BOOL TVAppleRunICloudFlow(id flow, NSDictionary *authentication,
+    NSString *passcode, NSTimeInterval timeout, NSError **error);
 @interface TVAppleServices (ICloudWorker)
 - (void)enqueueEnableICloudAppleID:(NSString *)appleID password:(NSString *)password
                    devicePasscode:(NSString *)passcode

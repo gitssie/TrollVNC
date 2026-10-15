@@ -105,6 +105,7 @@ static NSUInteger localUnlockCalls;
 @property NSString *passcode;
 @property NSError *failure;
 @property BOOL closed;
+- (void)signInFlowController:(id)flow presentGenericTermsUIForAccount:(id)account completion:(void (^)(BOOL,id,NSError *))completion;
 - (void)cdpContext:(id)context promptForLocalSecretWithCompletion:(void (^)(id,NSError *))completion;
 - (void)cdpContext:(id)context promptForRecoveryKeyWithValidator:(id)validator completion:(void (^)(BOOL,NSError *))completion;
 - (void)cdpContext:(id)context promptForRecoveryKeyWithSecretValidator:(id)validator completion:(void (^)(BOOL,NSError *))completion;
@@ -113,6 +114,37 @@ static NSUInteger localUnlockCalls;
 - (void)cdpContext:(id)context promptForBeneficiaryAccessKeyWithCompletion:(void (^)(id,NSError *))completion;
 - (void)cdpContext:(id)context promptForEDPRecoveryTokenWithValidator:(id)validator successfulCDPRecoveryContinuationHandler:(void (^)(void))continuation;
 - (void)cdpRecoveryFlowContext:(id)context promptForRemoteSecretWithDevices:(id)devices validator:(id)validator;
+@end
+
+// Run the real native wait/close path with a framework that never sends its total completion.
+@interface FakeCloudFlow : NSObject
+@property TVAppleCloudInput *retainedInput;
+@property id delegate,cdpUIProvider;
+@property BOOL shouldAutomaticallySaveSignInResults;
+@property(copy) void(^pending)(BOOL,id,NSError *);
+@property NSString *mode;
+@end
+@implementation FakeCloudFlow
+- (void)signInWithIDMSAuthenticationResults:(NSDictionary *)results completion:(void (^)(BOOL,id,NSError *))completion {
+    (void)results;self.pending=completion;self.retainedInput=self.cdpUIProvider;
+    if([self.mode isEqual:@"terms"])
+        [self.delegate signInFlowController:self presentGenericTermsUIForAccount:nil completion:^(BOOL success,id account,NSError *error){(void)account;assert(!success&&error);}];
+    else if([self.mode isEqual:@"async_terms"]) {
+        TVAppleCloudInput *input=self.cdpUIProvider;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,20*NSEC_PER_MSEC),dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{
+            [input signInFlowController:nil presentGenericTermsUIForAccount:nil completion:^(BOOL success,id account,NSError *error){(void)account;assert(!success&&error);}];
+        });
+    }
+    else if([self.mode isEqual:@"passcode"])
+        [self.cdpUIProvider cdpContext:nil promptForLocalSecretWithCompletion:^(id value,NSError *error){assert(!value&&error);}];
+    else if([self.mode isEqual:@"native_error"])
+        completion(NO,nil,[NSError errorWithDomain:@"com.apple.appleaccount" code:403 userInfo:@{@"private_token":@"DO-NOT-EXPORT"}]);
+    else if([self.mode isEqual:@"success"]) {
+        completion(YES,[NSObject new],nil);
+        completion(NO,nil,[NSError errorWithDomain:@"late" code:99 userInfo:nil]);
+    }
+    else if([self.mode isEqual:@"missing_account"])completion(YES,nil,nil);
+}
 @end
 
 // Exercise the production removal call boundary, not a copied callback predicate.
@@ -197,7 +229,7 @@ static FakeAction *Action(NSString *name, BOOL destructive) {
 }
 - (BOOL)enableICloudAppleID:(NSString *)appleID password:(NSString *)password devicePasscode:(NSString *)passcode provider:(id<TVAppleVerificationCodeProvider>)provider error:(NSError **)error {
     (void)provider;assert([appleID isEqual:@"test@example.com"]&&[password isEqual:@"test-secret"]&&[passcode isEqual:@"123456"]);_cloudAttempts++;
-    if([_loginMode isEqual:@"cloud_rejected"]){*error=TVAppleError(TVAppleErrorAuthenticationFailed,@"rejected");return NO;}
+    if([_loginMode hasPrefix:@"cloud_rejected"]){*error=TVAppleError(TVAppleErrorAuthenticationFailed,@"rejected");return NO;}
     if(!_stale&&![[_records valueForKey:@"domain"]containsObject:@"icloud"])[_records addObject:@{@"identifier":@"new-cloud",@"apple_id":appleID,@"domain":@"icloud",@"selected":@YES,@"primary":@YES,@"enabled_dataclasses":@[@"com.apple.Dataclass.Contacts"]}];
     if([_loginMode isEqual:@"cloud_unknown"]){*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"partial native save");return NO;}
     if([_loginMode isEqual:@"cloud_findmy_after"])_findMy=YES;
@@ -347,6 +379,37 @@ int main(int argc, char **argv) {
             else assert(!prepared[@"removal_warning"]);
             printf("PASS %s\n",argv[1]);return 0;
         }
+        if([test hasPrefix:@"cloud_flow_"]) {
+            FakeCloudFlow *flow=[FakeCloudFlow new];
+            flow.mode=[test substringFromIndex:11];
+            if([flow.mode isEqual:@"passcode"])localUnlockOK=NO;
+            NSTimeInterval started=NSProcessInfo.processInfo.systemUptime;
+            NSError *error=nil;
+            BOOL ok=TVAppleRunICloudFlow(flow,@{@"fixture":@YES},@"123456",.3,&error);
+            NSTimeInterval elapsed=NSProcessInfo.processInfo.systemUptime-started;
+            if([flow.mode isEqual:@"success"])assert(ok&&!error);
+            else if([flow.mode isEqual:@"timeout"])assert(!ok&&error.code==TVAppleErrorOutcomeUnknown&&elapsed>=.25);
+            else if([flow.mode isEqual:@"missing_account"])assert(!ok&&error.code==TVAppleErrorOutcomeUnknown&&elapsed<.15);
+            else {
+                assert(!ok&&error);
+                assert(elapsed<.15);
+                assert(error.code==([flow.mode hasSuffix:@"terms"]?TVAppleErrorAccountNeedsReview:[flow.mode isEqual:@"native_error"]?TVAppleErrorNativeFailure:TVAppleErrorAuthenticationFailed));
+                if([flow.mode isEqual:@"native_error"]) {
+                    assert([error.userInfo[@"TVAppleNativeDomain"]isEqual:@"com.apple.appleaccount"]);
+                    assert([error.userInfo[@"TVAppleNativeCode"]integerValue]==403);
+                    assert(!error.userInfo[@"private_token"]);
+                }
+            }
+            assert(!flow.delegate&&!flow.cdpUIProvider);
+            NSUInteger unlocks=localUnlockCalls;
+            [flow.retainedInput cdpContext:nil promptForLocalSecretWithCompletion:^(id value,NSError *failure){assert(!value&&failure);}];
+            assert(localUnlockCalls==unlocks);
+            // A late success is not allowed to resurrect or overwrite the returned failure.
+            flow.pending(YES,[NSObject new],nil);
+            flow.pending(NO,nil,[NSError errorWithDomain:@"late" code:99 userInfo:nil]);
+            assert(![TVAppleDiagnosticMessage(error) containsString:@"DO-NOT-EXPORT"]);
+            printf("PASS %s\n",argv[1]);return 0;
+        }
         if([test hasPrefix:@"native_cloud_"]) {
             TVAppleCloudInput *input=[TVAppleCloudInput new];input.passcode=@"123456";
             if([test isEqual:@"native_cloud_recovery"]) {
@@ -382,7 +445,7 @@ int main(int argc, char **argv) {
             if([test isEqual:@"enable_cloud_conflict"])[backend.records addObject:Record(@"other",@"identity",@"other@example.com",YES)];
             backend.findMy=[test isEqual:@"enable_cloud_findmy_before"];
             backend.stale=[test isEqual:@"enable_cloud_stale"];
-            backend.failAfterRemoval=[test isEqual:@"enable_cloud_read_failure"];
+            backend.failAfterRemoval=[test isEqual:@"enable_cloud_read_failure"]||[test isEqual:@"enable_cloud_rejected_read_failure"];
             backend.loginMode=[test substringFromIndex:7];
             TVAppleServices *service=[[TVAppleServices alloc]initWithBackend:backend callbackQueue:dispatch_get_global_queue(QOS_CLASS_DEFAULT,0) verificationTimeout:0];
             dispatch_semaphore_t done=dispatch_semaphore_create(0);__block NSDictionary *result;__block NSError *error;
@@ -390,7 +453,8 @@ int main(int argc, char **argv) {
             assert(!dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)));
             if([@[@"enable_cloud_success",@"enable_cloud_already",@"enable_cloud_stale",@"enable_cloud_read_failure",@"enable_cloud_findmy_after"]containsObject:test]){assert(!error&&[result[@"outcome"]isEqual:@"succeeded"]);assert(backend.cloudAttempts==1);}
             else if([test isEqual:@"enable_cloud_conflict"]||[test isEqual:@"enable_cloud_invalid"]||(backend.findMy&&!backend.cloudAttempts)){assert(error&&!backend.cloudAttempts);}
-            else if([test isEqual:@"enable_cloud_rejected"]){assert(error.code==TVAppleErrorAuthenticationFailed&&[result[@"outcome"]isEqual:@"failed"]);}
+            else if([test hasPrefix:@"enable_cloud_rejected"]){assert(error.code==TVAppleErrorAuthenticationFailed&&[result[@"outcome"]isEqual:@"failed"]);
+                if(backend.failAfterRemoval)assert(![result[@"account_state_available"]boolValue]&&[result[@"account_state_may_be_partial"]boolValue]);}
             else {
                 assert(error.code==TVAppleErrorOutcomeUnknown&&[result[@"outcome"]isEqual:@"unknown"]);
                 if([test isEqual:@"enable_cloud_unknown"])assert([result[@"signed_in_domains"]containsObject:@"icloud"]);
@@ -466,6 +530,26 @@ int main(int argc, char **argv) {
             }
             printf("PASS %s\n",argv[1]);return 0;
         }
+        if([test isEqual:@"manual_invalidate_race"]) {
+            for(NSUInteger i=0;i<100;i++) {
+                TVAppleManualCodeProvider *provider=[[TVAppleManualCodeProvider alloc]initWithChallengeHandler:^(NSDictionary *event){(void)event;}];
+                NSObject *lock=[NSObject new];__block NSUInteger replies=0;
+                dispatch_group_t group=dispatch_group_create();dispatch_semaphore_t start=dispatch_semaphore_create(0);
+                dispatch_group_async(group,dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{
+                    dispatch_semaphore_wait(start,DISPATCH_TIME_FOREVER);
+                    [provider requestCodeForChallenge:@{} completion:^(NSString *code,NSError *error){assert(!code&&error);@synchronized(lock){replies++;}}];
+                });
+                dispatch_group_async(group,dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{
+                    dispatch_semaphore_wait(start,DISPATCH_TIME_FOREVER);[provider invalidate];
+                });
+                dispatch_semaphore_signal(start);dispatch_semaphore_signal(start);
+                assert(!dispatch_group_wait(group,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC)));
+                @synchronized(lock){assert(replies==1);}
+                [provider requestCodeForChallenge:@{} completion:^(NSString *code,NSError *error){assert(!code&&error);@synchronized(lock){replies++;}}];
+                @synchronized(lock){assert(replies==2);}
+            }
+            printf("PASS %s\n",argv[1]);return 0;
+        }
         if ([test hasPrefix:@"manual_"]) {
             dispatch_semaphore_t challenged = dispatch_semaphore_create(0), completed = dispatch_semaphore_create(0);
             __block NSDictionary *event = nil;
@@ -488,6 +572,13 @@ int main(int argc, char **argv) {
             assert(!dispatch_semaphore_wait(completed, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)));
             assert(![test isEqual:@"manual_code"] ? received != nil && !code : [code isEqual:@"123456"] && !received);
             assert(![provider submitCode:@"123456" forChallengeID:event[@"challenge_id"] error:&error]);
+            // Ending an authentication stage remains reusable; ending an operation does not.
+            [provider prepareForAuthentication:^(NSError *e){assert(!e);}];
+            [provider invalidate];
+            __block NSUInteger closedReplies=0;
+            [provider prepareForAuthentication:^(NSError *e){assert(e);closedReplies++;}];
+            [provider requestCodeForChallenge:@{} completion:^(NSString *v,NSError *e){assert(!v&&e);closedReplies++;}];
+            assert(closedReplies==2);
             printf("PASS %s\n", argv[1]); return 0;
         }
         if ([test hasPrefix:@"login_"]) {

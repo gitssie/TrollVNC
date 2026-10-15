@@ -53,6 +53,7 @@ static BOOL SessionFail(NSError **error, NSString *message) {
     if ([operation isEqual:@"catalog"]) {
         NSMutableDictionary *result=[@{@"entries":catalog,@"currentReference":current[@"reference"]?:@""} mutableCopy];
         result[@"restorePending"]=@(restorePending);
+        if(restorePending && association[@"pendingReference"])result[@"pendingReference"]=association[@"pendingReference"];
         if(identityMatches.count>1)result[@"duplicateIdentityReferences"]=[identityMatches valueForKey:@"reference"];
         return result;
     }
@@ -89,10 +90,11 @@ static BOOL SessionFail(NSError **error, NSString *message) {
         NSDictionary *destination=[self entry:reference catalog:catalog];
         if (!destination) { SessionFail(error,@"The selected backup is unavailable"); return nil; }
         if ([operation isEqual:@"edit"] || [operation isEqual:@"delete"]) {
-            if (![destination[@"kind"] isEqual:@"snapshot"]) { SessionFail(error,@"Account operation requires a snapshot"); return nil; }
             if ([operation isEqual:@"edit"]) {
+                if (![destination[@"kind"] isEqual:@"snapshot"]) { SessionFail(error,@"Account operation requires a snapshot"); return nil; }
                 if (!metadata || ![self.backend edit:reference metadata:metadata error:error]) return nil;
             } else {
+                if (restorePending && [association[@"pendingReference"] isEqual:reference]) { SessionFail(error,@"Complete the pending restore before deleting its archive"); return nil; }
                 if ([current[@"reference"] isEqual:reference]) { SessionFail(error,@"Switch away before deleting this account backup"); return nil; }
                 if (![self.backend remove:reference error:error]) return nil;
             }

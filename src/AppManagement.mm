@@ -4,6 +4,8 @@
 #import "AppManagementPolicy.h"
 #import "ScreenUnlock.h"
 #import "NotificationBridge.h"
+#import "ZXTouchControlAuth.h"
+#import "ZXTouchVNCPassword.h"
 #import "STHIDEventGenerator.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -28,6 +30,7 @@ static dispatch_queue_t tvAppQueue;
 static dispatch_queue_t tvAppEventQueue;
 static int tvAppControlPort;
 static NSMutableDictionary *tvAppClients;
+static ZXTouchControlAuth *tvAppHTTPAuth;
 static rfbScreenInfoPtr tvAppScreen;
 static pthread_mutex_t tvAppScreenMutex = PTHREAD_MUTEX_INITIALIZER;
 static BOOL tvAppRegistered;
@@ -442,9 +445,11 @@ static rfbBool tvAppEnable(rfbClientPtr cl, void **data, int encoding) {
     NSMutableDictionary *capabilities = [@{@"list":@([tvAppWorkspace() respondsToSelector:@selector(allInstalledApplications)]), @"launch":@(launch), @"terminate":@(terminate),
         @"restart":@(launch && terminate), @"foreground":@(tvAppForegroundFunction() != NULL),
         @"icons":@([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:scale:)]),
-        @"photo_tasks":@YES, @"clipboard_write":@YES, @"home":@YES, @"notifications":@(notifications), @"unlock":@(tvScreenUnlockSupported()), @"lock":@(tvScreenLockSupported()), @"control":@(!cl->viewOnly)} mutableCopy];
-    if (token && tvAppControlPort > 0)
-        capabilities[@"zx_control"] = @{@"version":@1, @"port":@(tvAppControlPort), @"token":token};
+        @"photo_tasks":@YES, @"clipboard_write":@YES, @"home":@YES, @"device_info":@YES, @"app_profile":@YES, @"notifications":@(notifications), @"http_screen_control":@YES, @"unlock":@(tvScreenUnlockSupported()), @"lock":@(tvScreenLockSupported()), @"control":@(!cl->viewOnly)} mutableCopy];
+    if (token && tvAppControlPort > 0) {
+        capabilities[@"zx_control"] = @{@"version":@2, @"protocol":@"http2", @"port":@(tvAppControlPort), @"token":token};
+        capabilities[@"http_karing_native"] = @(!TARGET_OS_SIMULATOR);
+    }
     BOOL ok = tvAppWrite(cl, state, 0, 0, 0, capabilities);
     if (ok) {
         @synchronized(state) {
@@ -536,15 +541,39 @@ static rfbProtocolExtension tvAppExtension = {
     .handleMessage = tvAppMessage, .close = tvAppClose,
 };
 
-NSData *tvAppZXTouchRequest(NSString *encoded, BOOL (^cancelled)(void)) {
-    NSDictionary *request = TVAppControlDecode(encoded);
-    if (!request) return [@"-1;;Invalid control request\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+NSDictionary *tvAppHTTPConnect(NSString *password) {
+    NSString *token = [tvAppHTTPAuth connectWithPassword:password];
+    if (!token) return nil;
+    BOOL launch = [tvAppWorkspace() respondsToSelector:@selector(openApplicationWithBundleID:)];
+    BOOL terminate = tvAppProcPath() != NULL;
+    return @{@"list":@([tvAppWorkspace() respondsToSelector:@selector(allInstalledApplications)]),
+        @"launch":@(launch), @"terminate":@(terminate), @"restart":@(launch && terminate),
+        @"foreground":@(tvAppForegroundFunction() != NULL),
+        @"icons":@([UIImage respondsToSelector:@selector(_applicationIconImageForBundleIdentifier:format:scale:)]),
+        @"control":@YES, @"home":@YES, @"clipboard_write":@YES, @"device_info":@YES,
+        @"app_profile":@YES, @"http_screen_control":@YES, @"unlock":@(tvScreenUnlockSupported()),
+        @"lock":@(tvScreenLockSupported()), @"http_karing_native":@(!TARGET_OS_SIMULATOR),
+        @"zx_control":@{@"version":@3, @"protocol":@"http2", @"port":@(tvAppControlPort), @"token":token}};
+}
+void tvAppHTTPDisconnect(NSString *token) { [tvAppHTTPAuth disconnect:token]; }
+NSDictionary *tvAppHTTPRequest(NSString *token, unsigned char op, NSDictionary *payload, BOOL (^cancelled)(void), NSString **failure) {
+    NSDictionary *request = @{@"token":token, @"op":@(op), @"payload":payload};
     __block NSDictionary *result = nil;
     __block NSString *error = nil;
     NSTimeInterval queuedAt = NSProcessInfo.processInfo.systemUptime;
     // The operation queue is shared with legacy VNC commands, but replies are
     // written on their own transport workers, outside this queue.
     dispatch_sync(tvAppQueue, ^{
+        if ([tvAppHTTPAuth authorize:token]) {
+            if (cancelled()) { error = @"Control request cancelled before execution"; return; }
+            if (NSProcessInfo.processInfo.systemUptime - queuedAt > 8.0) { error = @"Control request expired before execution"; return; }
+            @try {
+                result = op == 0 ? @{@"ok":@YES} : tvAppExecute(op, payload, &error, ^BOOL {
+                    return !cancelled() && [tvAppHTTPAuth authorize:token];
+                });
+            } @catch (NSException *exception) { (void)exception; error = @"Device operation failed"; }
+            return;
+        }
         rfbClientPtr owner = NULL;
         TVAppClient *state = nil;
         @synchronized(tvAppClients) {
@@ -569,7 +598,7 @@ NSData *tvAppZXTouchRequest(NSString *encoded, BOOL (^cancelled)(void)) {
             if (cancelled()) error = @"Control request cancelled before execution";
             else if (!valid || owner->sock == RFB_INVALID_SOCKET) error = @"Control authorization expired";
             else if (NSProcessInfo.processInfo.systemUptime - queuedAt > 8.0) error = @"Control request expired before execution";
-            else if (owner->viewOnly && TVAppControlMutation(op)) error = @"Device control is read-only";
+            else if (owner->viewOnly && (op == 0 || TVAppControlMutation(op))) error = @"Device control is read-only";
             else if (op == 0) result = @{@"ok":@YES};
             else result = tvAppExecute(op, request[@"payload"], &error, ^BOOL{
                 if (cancelled()) return NO;
@@ -582,7 +611,8 @@ NSData *tvAppZXTouchRequest(NSString *encoded, BOOL (^cancelled)(void)) {
             rfbDecrClientRef(owner);
         }
     });
-    return TVAppControlEncode(request, result, error);
+    if (failure) *failure = error;
+    return result;
 }
 void tvRegisterAppManagement(rfbScreenInfoPtr screen, int controlPort) {
     tvAppControlPort = controlPort;
@@ -596,6 +626,16 @@ void tvRegisterAppManagement(rfbScreenInfoPtr screen, int controlPort) {
     tvAppScreen = screen;
     tvAppRegistered = YES;
     pthread_mutex_unlock(&tvAppScreenMutex);
+    tvAppHTTPAuth = [[ZXTouchControlAuth alloc] initWithPasswordCheck:^BOOL(NSString *password) {
+        BOOL accepted = NO;
+        pthread_mutex_lock(&tvAppScreenMutex);
+        if (tvAppRegistered && tvAppScreen) {
+            accepted = ZXTouchVNCPasswordAccepted(password.UTF8String,
+                (const char *const *)tvAppScreen->authPasswdData, tvAppScreen->authPasswdFirstViewOnly);
+        }
+        pthread_mutex_unlock(&tvAppScreenMutex);
+        return accepted;
+    }];
     if (tvAppLockToken < 0) {
         // The system notification is only a trigger; query actual lock status.
         // Also used by Appium WebDriverAgent's XCUIDevice+FBHelpers.
@@ -611,6 +651,7 @@ void tvRegisterAppManagement(rfbScreenInfoPtr screen, int controlPort) {
     rfbRegisterProtocolExtension(&tvAppExtension);
 }
 void tvUnregisterAppManagement(void) {
+    [tvAppHTTPAuth invalidate];
     if (tvNotificationTimer) { dispatch_source_cancel(tvNotificationTimer); tvNotificationTimer = nil; }
     if (tvAppLockToken >= 0) { notify_cancel(tvAppLockToken); tvAppLockToken = -1; }
     pthread_mutex_lock(&tvAppScreenMutex);

@@ -1,11 +1,18 @@
+#import "ScreenUnlock.h"
 // SPDX-License-Identifier: GPL-2.0-only
 #import "TVNCZXTouchService.h"
 #import "TVNCAppleService.h"
 #import "TVNCAppStateService.h"
+#import "TVNCAppStateStream.h"
 #import "AppManagement.h"
-#import "ZXTouchTCPServer.h"
+#import "TVNCHTTPServer.h"
+#if !TARGET_OS_SIMULATOR
+#import "TVKaringNative.h"
+#endif
+#import "ZXTouchProtocol.hpp"
 #import "ZXTouchProcessRunner.h"
 #import "ZXTouchUIBridge.h"
+#import "ZXTouchDeviceInfo.h"
 #include <dlfcn.h>
 #import "ZXTouchImage.hpp"
 #import "STHIDEventGenerator.h"
@@ -33,15 +40,12 @@ static NSString *ZXString(const std::string &value) {
     ZXRequire(text != nil, @"Payload must be UTF-8");
     return text;
 }
-static NSString *ZXClean(NSString *text) {
-    return [[text ?: @"" stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"]
-        stringByReplacingOccurrencesOfString:@";;" withString:@"; "];
-}
+static NSString *ZXClean(NSString *text) { return text ?: @""; }
 static NSData *ZXReply(NSString *fields) {
-    return [[fields ? [NSString stringWithFormat:@"0;;%@\r\n", fields] : @"0\r\n" copy] dataUsingEncoding:NSUTF8StringEncoding];
+    return [NSJSONSerialization dataWithJSONObject:fields ? @{@"value":fields} : @{@"ok":@YES} options:0 error:nil];
 }
 static NSData *ZXError(NSString *message) {
-    return [[NSString stringWithFormat:@"-1;;%@\r\n", ZXClean(message)] dataUsingEncoding:NSUTF8StringEncoding];
+    return [NSJSONSerialization dataWithJSONObject:@{@"error":message ?: @"operation_failed"} options:0 error:nil];
 }
 static double ZXNumber(const std::string &value, double low, double high) {
     double result;
@@ -86,9 +90,12 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 }
 
 @implementation TVNCZXTouchService {
-    ZXTouchTCPServer *_server;
+    TVNCHTTPServer *_server;
     TVNCAppleService *_appleService;
     TVNCAppStateService *_appStateService;
+#if !TARGET_OS_SIMULATOR
+    TVKaringHelperClient *_karingNative;
+#endif
     ZXTouchProcessRunner *_processRunner;
     ZXTouchUIBridge *_uiBridge;
     BOOL _hasAppAdapter;
@@ -117,8 +124,17 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     _stopping = false;
     _appleService = [TVNCAppleService new];
     _appStateService = [TVNCAppStateService new];
+
+
     NSDictionary *paths = [ZXTouchProcessRunner runtimePaths];
     NSString *root = paths[@"root"], *modules = paths[@"modules"];
+#if !TARGET_OS_SIMULATOR
+    NSString *helper = [root stringByAppendingString:@"/usr/libexec/trollvnc/karing-native-helper"];
+    if (![NSFileManager.defaultManager fileExistsAtPath:helper])
+        helper = [[paths[@"executable"] stringByDeletingLastPathComponent]
+            stringByAppendingPathComponent:@"libexec/karing-native-helper"];
+    _karingNative = [[TVKaringHelperClient alloc] initWithExecutable:helper];
+#endif
     _processRunner = [[ZXTouchProcessRunner alloc] initWithRuntimeRoot:root modulePath:modules
         logPath:@"/var/mobile/Library/Logs/TrollVNC/zxtouch-process.log"];
     _hasAppAdapter = [NSFileManager.defaultManager fileExistsAtPath:[root stringByAppendingString:@"/Library/MobileSubstrate/DynamicLibraries/TVNCZXTouchAdapter.dylib"]];
@@ -131,12 +147,152 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         TVNCZXTouchService *strongSelf = weakSelf;
         if (strongSelf && update) ZXMain(^{ strongSelf->_orientation = update.orientation; });
     }];
-    _server = [[ZXTouchTCPServer alloc] initWithHandler:^NSData *(const zxtouch::Command &command, NSUInteger client) {
-        return [weakSelf execute:command client:client];
+    _server = [[TVNCHTTPServer alloc] initWithHandler:^TVNCHTTPResponse(NSString *path, NSData *body, NSString *token, NSUInteger client) {
+        TVNCZXTouchService *owner = weakSelf;
+        return owner ? [owner route:path body:body token:token client:client] : TVNCHTTPJSON(@{@"error":@"service_stopping"}, 503);
     } disconnected:^(NSUInteger client) { [weakSelf releaseClient:client]; }];
     if ([_server startOnHost:host port:port error:error]) return YES;
     [self stop];
     return NO;
+}
+- (TVNCHTTPResponse)route:(NSString *)path body:(NSData *)body token:(NSString *)token client:(NSUInteger)client {
+    if ([path isEqual:@"/api/control/connect"]) {
+        id input = body.length ? [NSJSONSerialization JSONObjectWithData:body options:0 error:nil] : nil;
+        if (![input isKindOfClass:NSDictionary.class] || ![input[@"password"] isKindOfClass:NSString.class])
+            return TVNCHTTPJSON(@{@"error":@"invalid_credentials"}, 400);
+        NSDictionary *caps = tvAppHTTPConnect(input[@"password"]);
+        return TVNCHTTPJSON(caps ? @{@"access_token":caps[@"zx_control"][@"token"], @"token_type":@"Bearer", @"expires_in":@3600, @"capabilities":caps} : @{@"error":@"authentication_failed"}, caps ? 200 : 401);
+    }
+    NSString *failure = nil;
+    NSDictionary *authorized = tvAppHTTPRequest(token, 0, @{}, ^BOOL { return self->_stopping; }, &failure);
+    if (!authorized) return TVNCHTTPJSON(@{@"error": failure ?: @"unauthorized"}, 401);
+    if ([path isEqual:@"/api/control/disconnect"]) { tvAppHTTPDisconnect(token); return TVNCHTTPJSON(@{@"ok":@YES}, 200); }
+    if ([path isEqual:@"/api/control/authorize"]) {
+        NSMutableDictionary *capabilities=[authorized mutableCopy];capabilities[@"app_state_stream"]=@1;
+        return TVNCHTTPJSON(capabilities,200);
+    }
+    if (_stopping) return TVNCHTTPJSON(@{@"error":@"service_stopping"}, 503);
+    id value = body.length ? [NSJSONSerialization JSONObjectWithData:body options:0 error:nil] : @{};
+    if (![value isKindOfClass:NSDictionary.class]) return TVNCHTTPJSON(@{@"error":@"invalid_json"}, 400);
+    NSDictionary *input = value;
+    if ([path isEqual:@"/api/app-state/stream"]) {
+        if(!([input[@"action"] isEqual:@"invoke"] || [input[@"action"] isEqual:@"result"]))
+            return TVNCHTTPJSON(@{@"error":@"invalid_request"},400);
+        return TVNCAppStateStreamResponse(_appStateService,input,^BOOL {
+            if(self->_stopping || ![self->_server isClientConnected:client])return NO;
+            NSString *error=nil;
+            return tvAppHTTPRequest(token,0,@{},^BOOL{return self->_stopping;},&error)!=nil;
+        });
+    }
+    if ([path hasPrefix:@"/api/karing-native/"]) {
+        NSString *operation = [path substringFromIndex:@"/api/karing-native/".length];
+        if (![@[@"config", @"profiles", @"status", @"reload"] containsObject:operation])
+            return TVNCHTTPJSON(@{@"error":@"route_unavailable"}, 404);
+        if (input.count) return TVNCHTTPJSON(@{@"error":@"unexpected_parameters"}, 400);
+        if (_stopping || ![_server isClientConnected:client])
+            return TVNCHTTPJSON(@{@"error":@"request_cancelled", @"outcome":@"not_sent"}, 409);
+#if !TARGET_OS_SIMULATOR
+        NSDictionary *result = [_karingNative request:operation];
+        int status = result[@"error"] ? ([result[@"outcome"] isEqual:@"unknown"] ? 504 : 503) : 200;
+        return TVNCHTTPJSON(result, status);
+#else
+        return TVNCHTTPJSON(@{@"error":@"native_unavailable"}, 503);
+#endif
+    }
+    if ([path isEqual:@"/api/device/unlock"] || [path isEqual:@"/api/device/lock"]) {
+        BOOL locking = [path isEqual:@"/api/device/lock"];
+        NSString *passcode = input[@"passcode"];
+        if (!locking && (![passcode isKindOfClass:NSString.class] || passcode.length != 6 ||
+            [passcode rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet]].location != NSNotFound))
+            return TVNCHTTPJSON(@{@"error":@"invalid_passcode"}, 400);
+        void *producer = NULL;
+        void *stream = tvnc_http_stream_new(&producer);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            @autoreleasepool {
+                @try {
+                    tvScreenHTTPControl(locking, passcode, ^BOOL {
+                        return !self->_stopping && tvnc_http_stream_open(producer) && [self->_server isClientConnected:client];
+                    }, ^BOOL {
+                        NSString *error = nil;
+                        return tvAppHTTPRequest(token, 0, @{}, ^BOOL { return self->_stopping; }, &error) != nil;
+                    }, ^BOOL(NSDictionary *event) {
+                        NSMutableData *bytes = [[NSJSONSerialization dataWithJSONObject:event options:0 error:nil] mutableCopy];
+                        [bytes appendBytes:"\n" length:1];
+                        return tvnc_http_stream_send(producer, (const unsigned char *)bytes.bytes, bytes.length);
+                    });
+                } @finally { tvnc_http_stream_release(producer); }
+            }
+        });
+        return {NULL, 0, 200, "application/x-ndjson", stream};
+    }
+    NSDictionary *appRoutes = @{@"/api/apps/list":@1, @"/api/apps/launch":@2, @"/api/apps/stop":@3,
+        @"/api/apps/restart":@4, @"/api/apps/foreground":@5, @"/api/apps/icon":@6,
+        @"/api/device/home":@12, @"/api/device/clipboard":@16};
+    NSNumber *op = appRoutes[path];
+    if (op) {
+        NSDictionary *result = tvAppHTTPRequest(token, op.unsignedCharValue, input, ^BOOL {
+            return self->_stopping || ![self->_server isClientConnected:client];
+        }, &failure);
+        return TVNCHTTPJSON(result ?: @{@"error":failure ?: @"operation_failed"}, result ? 200 : 400);
+    }
+    for (NSString *prefix in @[@"/api/apple/", @"/api/app-state/"]) {
+        if (![path hasPrefix:prefix]) continue;
+        NSString *method = [path substringFromIndex:prefix.length];
+        if (!method.length || [method containsString:@"/"]) return TVNCHTTPJSON(@{@"error":@"route_unavailable"}, 404);
+        NSDictionary *request;
+        if ([@[@"result", @"submit_code", @"cancel_challenge"] containsObject:method]) {
+            NSMutableDictionary *action = [input mutableCopy]; action[@"action"] = method; request = action;
+        } else request = @{@"action":@"invoke", @"method":method, @"params":input};
+        NSDictionary *result = [prefix isEqual:@"/api/apple/"] ? [_appleService request:request] : [_appStateService request:request];
+        return TVNCHTTPJSON(result, result[@"error"] ? 400 : 200);
+    }
+    if ([path isEqual:@"/api/device/info"]) {
+        __block NSDictionary *info;
+        ZXMain(^{
+            UIDevice *device = UIDevice.currentDevice;
+            info = ZXTouchDeviceInfo(device.name, device.systemName, device.systemVersion);
+        });
+        return TVNCHTTPJSON(info, 200);
+    }
+    NSDictionary *routes = @{@"/api/device/touch":@10, @"/api/device/keyboard":@24,
+        @"/api/device/screenshot":@30, @"/api/device/toast":@12, @"/api/device/vibrate":@22,
+        @"/api/device/alert":@26, @"/api/device/ocr":@27, @"/api/device/color":@23,
+        @"/api/device/colors":@28, @"/api/device/image-match":@21, @"/api/device/foreground-pid":@29,
+        @"/api/device/respring":@90, @"/api/scripts/shell":@13, @"/api/scripts/start":@19,
+        @"/api/scripts/stop":@20, @"/api/device/sleep":@18};
+    NSNumber *kind = routes[path];
+    if (!kind) return TVNCHTTPJSON(@{@"error":@"route_unavailable"}, 404);
+    // Fields are a JSON array. They never go through delimiter splitting/framing.
+    NSArray *fields = input[@"fields"] ?: @[];
+    if (![fields isKindOfClass:NSArray.class] || fields.count > 1024) return TVNCHTTPJSON(@{@"error":@"invalid_fields"}, 400);
+    zxtouch::Command command; command.task = kind.intValue;
+    if (kind.intValue == 10) {
+        NSArray *touches = input[@"touches"];
+        if (![touches isKindOfClass:NSArray.class] || !touches.count || touches.count > 20) return TVNCHTTPJSON(@{@"error":@"invalid_touches"}, 400);
+        for (id item in touches) {
+            if (![item isKindOfClass:NSDictionary.class]) return TVNCHTTPJSON(@{@"error":@"invalid_touches"}, 400);
+            for (NSString *key in @[@"type", @"finger", @"x", @"y"]) {
+                id n = item[key];
+                if (![n isKindOfClass:NSNumber.class] || !std::isfinite([n doubleValue])) return TVNCHTTPJSON(@{@"error":@"invalid_touches"}, 400);
+            }
+            double phase = [item[@"type"] doubleValue], finger = [item[@"finger"] doubleValue];
+            double x = [item[@"x"] doubleValue], y = [item[@"y"] doubleValue];
+            if (phase < 0 || phase > 2 || floor(phase) != phase || finger < 0 || finger > 19 || floor(finger) != finger || x < 0 || y < 0) return TVNCHTTPJSON(@{@"error":@"invalid_touches"}, 400);
+            command.touches.push_back({(int)phase, (int)finger, x, y});
+        }
+    }
+    for (id field in fields) {
+        if (![field isKindOfClass:NSString.class]) return TVNCHTTPJSON(@{@"error":@"invalid_fields"}, 400);
+        command.fields.emplace_back([field UTF8String], [field lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
+    }
+    // Native helpers still use payload for single-argument operations.
+    if (command.fields.size() == 1) command.payload = command.fields[0];
+    if (command.fields.empty()) command.fields.emplace_back("");
+    NSData *result = [self execute:command client:client];
+    if (kind.intValue == 30 && result.length && ((const uint8_t *)result.bytes)[0] == 0xff) return TVNCHTTPData(result, 200, "image/jpeg");
+    if (!result) return TVNCHTTPJSON(@{@"ok":@YES}, 200);
+    id object = [NSJSONSerialization JSONObjectWithData:result options:0 error:nil];
+    return TVNCHTTPData(result, [object isKindOfClass:NSDictionary.class] && object[@"error"] ? 400 : 200, "application/json");
 }
 - (void)stop {
     _stopping = true;
@@ -170,7 +326,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 }
 - (void)touch:(const zxtouch::Command &)command client:(NSUInteger)client {
     ZXMain(^{
-        if (self->_stopping) return;
+        ZXRequire(!self->_stopping && [self->_server isClientConnected:client], @"Touch connection closed before execution");
         CGSize native = [ScreenCapturer nativeScreenSize];
         // Use the same pixel dimensions as capture, including display zoom.
         double width = MIN(native.width, native.height), height = MAX(native.width, native.height);
@@ -512,11 +668,6 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
             }
             case 90: return [self ui:command client:client target:@"com.apple.springboard"];
             case 99: return ZXReply(@"TrollVNC ZXTouch");
-            case 31: return [_appleService handlePayload:ZXString(command.payload)];
-            case 32: return [_appStateService handlePayload:ZXString(command.payload)];
-            case 33: return tvAppZXTouchRequest(ZXString(command.payload), ^BOOL {
-                return self->_stopping || ![self->_server isClientConnected:client];
-            });
             case 24:
                 if (command.fields[0] == "2" || (_hasAppAdapter && ZXInteger(command.fields[0], 1, 7) <= 5)) return [self ui:command client:client target:[self foreground]];
                 return [self keyboard:command];
@@ -535,18 +686,15 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
                         ZXRequire(command.payload.empty(), @"Screenshot does not accept arguments");
                         NSData *jpeg = UIImageJPEGRepresentation(image, .85);
                         ZXRequire(jpeg.length > 0, @"Unable to encode screenshot");
-                        NSMutableData *response = [ZXReply([NSString stringWithFormat:@"image/jpeg;;%lu", (unsigned long)jpeg.length]) mutableCopy];
-                        [response appendData:jpeg];
-                        return response;
+                        return jpeg;
                     }
                 } @finally { dispatch_semaphore_signal(_imageSlot); }
             }
             default: return ZXError(@"Unsupported ZXTouch task");
         }
     } @catch (NSException *exception) {
-        // Touch has no reply in the original protocol. Release its fingers on
-        // invalid state rather than poisoning a following response.
-        if (command.task == 10) { [self releaseClient:client]; return nil; }
+        // Invalid touch state cancels owned fingers and returns an HTTP error.
+        if (command.task == 10) [self releaseClient:client];
         return ZXError(exception.reason ?: @"ZXTouch command failed");
     }
 }

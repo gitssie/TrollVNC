@@ -1,4 +1,4 @@
-export PACKAGE_VERSION := 3.2-315
+export PACKAGE_VERSION := 3.2-328
 export THEOS_PACKAGE_SCHEME
 
 ifeq ($(THEOS_DEVICE_SIMULATOR),1)
@@ -20,6 +20,10 @@ include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME += trollvncserver
 
+ifeq ($(THEOS_DEVICE_SIMULATOR),)
+include vendor/karing/native/native.mk
+endif
+
 trollvncserver_USE_MODULES := 0
 
 trollvncserver_FILES += src/trollvncserver.mm
@@ -30,8 +34,21 @@ trollvncserver_FILES += $(APPLE_MODULE_FILES)
 trollvncserver_CFLAGS += $(APPLE_MODULE_CFLAGS)
 APP_STATE_ROOT := vendor/app-state
 include $(APP_STATE_ROOT)/app-state.mk
-trollvncserver_FILES += $(APP_STATE_FILES) src/TVNCAppStateService.mm
+trollvncserver_FILES += $(APP_STATE_FILES) src/TVNCAppStateService.mm src/TVNCAppStateStream.mm
 trollvncserver_CFLAGS += $(APP_STATE_CFLAGS)
+
+ONETUN_ROOT := wgbridge-onetun
+include $(ONETUN_ROOT)/onetun.mk
+trollvncserver_CFLAGS += -I$(ONETUN_ROOT)/include
+
+trollvncserver_FILES += src/TVNCHTTPServer.mm src/TVNCKaringSettings.mm
+trollvncserver_CFLAGS += -Icontrol-http/include
+ifeq ($(THEOS_DEVICE_SIMULATOR),1)
+trollvncserver_OBJ_FILES += control-http/build/libtvnc_control_http-sim.a
+else
+trollvncserver_OBJ_FILES += control-http/build/libtvnc_control_http.a
+endif
+trollvncserver_FRAMEWORKS += SystemConfiguration
 trollvncserver_FRAMEWORKS += Security LocalAuthentication
 ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
 trollvncserver_CFLAGS += -DTVAS_ROOTHIDE=1
@@ -45,6 +62,7 @@ cazer-apple-searchparty-recover_CODESIGN_FLAGS := -S$(APPLE_MODULE_ROOT)/recover
 app-state-worker_FILES := $(APP_STATE_WORKER_FILES)
 app-state-worker_CFLAGS := $(APP_STATE_CFLAGS) -DTVAS_ROOTHIDE=1 -Wall -Wextra -Werror
 app-state-worker_FRAMEWORKS := Foundation Security LocalAuthentication
+app-state-worker_LIBRARIES := sqlite3
 app-state-worker_LDFLAGS := -lroothide
 app-state-worker_INSTALL_PATH := /usr/libexec/trollvnc
 app-state-worker_CODESIGN_FLAGS := -S$(APP_STATE_ROOT)/product/worker.entitlements
@@ -58,9 +76,10 @@ trollvncserver_FILES += src/TVNCAppleService.mm
 trollvncserver_FILES += src/TVNCZXTouchService.mm
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchProtocol.cpp
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchImage.cpp
-trollvncserver_FILES += vendor/zxtouch/src/ZXTouchTCPServer.mm
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchProcessRunner.mm
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchUIBridge.mm
+trollvncserver_FILES += vendor/zxtouch/src/ZXTouchDeviceInfo.m
+trollvncserver_FILES += vendor/zxtouch/src/ZXTouchControlAuth.m
 trollvncserver_CFLAGS += -Ivendor/zxtouch/include
 trollvncserver_FILES += src/FileManagement.c
 trollvncserver_FILES += src/AppManagement.mm
@@ -99,9 +118,7 @@ trollvncserver_LDFLAGS += -Llib-simulator
 trollvncserver_LDFLAGS += -FPrivateFrameworks
 else
 trollvncserver_CFLAGS += -Iinclude
-trollvncserver_LDFLAGS += -Llib -Lwgbridge/build
-# Keep the archive in link prerequisites so bridge changes relink the server.
-trollvncserver_OBJ_FILES += wgbridge/build/libtvncwg.a
+trollvncserver_LDFLAGS += -Llib
 endif
 
 ifeq ($(THEOS_DEVICE_SIMULATOR),1)
@@ -179,9 +196,11 @@ endif
 
 include $(THEOS_MAKE_PATH)/aggregate.mk
 
-ifeq ($(THEOS_DEVICE_SIMULATOR),)
 before-all::
-	@sh wgbridge/build-ios.sh
+ifeq ($(THEOS_DEVICE_SIMULATOR),1)
+	@sh control-http/build-ios.sh --simulator
+else
+	@sh control-http/build-ios.sh
 endif
 
 export THEOS_PACKAGE_SCHEME

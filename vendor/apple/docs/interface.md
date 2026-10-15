@@ -47,7 +47,7 @@ Success requires an active authenticated media record correlated to a new Accoun
 
 The manual provider separates credentials from verification input. Create `TVAppleManualCodeProvider` with a challenge handler, then pass it to the login call. When Apple requests a code, the handler receives `kind: apple_two_factor`, `verification_method: trusted_device`, `attempt: 1`, a unique `challenge_id`, and `expires_in: 90`. This adapter accepts trusted-device codes; SMS verification is not implemented. The host obtains the code externally and calls `submitCode:forChallengeID:error:` on the same provider. No URL, HTTP client, baseline read or polling exists inside the module.
 
-Submission accepts six ASCII digits and the pending identifier. A successful submission acknowledges delivery, not successful login; await the original login completion. Invalid format or mismatched identifier leaves the challenge pending. Duplicate, expired or cancelled submissions fail. `cancelChallengeID:error:` abandons a pending challenge. Native completion or timeout invalidates pending manual input through `cancelAuthentication`. Custom providers may implement the same optional cancellation method.
+Submission accepts six ASCII digits and the pending identifier. A successful submission acknowledges delivery, not successful login; await the original login completion. Invalid format or mismatched identifier leaves the challenge pending. Duplicate, expired or cancelled submissions fail. `cancelChallengeID:error:` abandons a pending challenge. Native completion or timeout invalidates pending manual input through `cancelAuthentication`. Custom providers may implement the same optional cancellation method. The operation adapter calls the manual provider's `invalidate` when the whole operation finishes or the service stops: this permanently closes it and immediately rejects late prepare/request calls. `cancelAuthentication` remains reusable across authentication stages within one operation.
 
 Preparation waits at most 30 seconds, Store attempts 120 seconds each, AuthKit 180 seconds and final verification 5 seconds. Timeouts do not cancel Apple daemon work. Login may establish phone identity; independent iCloud enablement is not implied. AuthKit uses the exact native command-line context with process-local adapters for owned contexts; unsupported prompt shapes fail closed. These adapters are not installed in Apple daemons.
 
@@ -173,3 +173,9 @@ Email verification recovery: after an OutcomeUnknown result from the submitted n
 用户明确要求以 Apple 原生修改接口的成功响应决定结果，覆盖历史文档中成功后 fresh 复核、缓存同步及超时后查询恢复的完成判据。姓名、邮箱验证、转发邮箱、SIWA 撤销、设备移除，以及 Services 层 Store/iCloud 登录退出、Find My 关闭不再因成功后的查询失败或缓存陈旧返回 code 6。成功写入返回 outcome=succeeded；不输出伪造的查询 settings/state，不重发写入。原生响应必须完整、无错误及拒绝提示；HTTP 200 本身不代表原生操作成功，超时仍保留原始错误。身份、输入、服务器提供的请求路由和下一个设备写入前的预检继续保留。
 
 RV 通过独立 queryAccountState 更新登录/退出菜单，Store 与 iCloud 分别判断，状态刷新不改写原操作结果。本次没有再次提交真机改名。
+
+## 2026-10-15 iCloud 明确失败与迟到回调
+
+CDP 输入 provider 的明确错误与总 completion 共用 first-terminal gate，条款/本机密码/恢复输入拒绝立即返回，不再等待 240 秒总 completion 兜底。总 completion 明确失败返回 `TVAppleErrorNativeFailure`（code 11），仅保留白名单 native domain/code；未收到 completion 的超时或成功回调缺失 account 仍为 code 6。失败结果可能带 `account_state_may_be_partial=true`，表示原生后台可能已有部分账户副作用，不改变明确失败的 outcome。后续账户读取失败不覆盖原始明确 iCloud 错误。
+
+ZXTouch adapter 始终记录 completed，并在缺少 result 时归一化 outcome 为 failed/unknown；完成后移除挑战、释放功能会话并永久关闭验证码 provider。重复或迟到回调不能覆盖终态或打开旧挑战。HTTP/2 可恢复状态流为独立设计，见 [设计文档](../../../docs/apple-operation-stream.md)，尚未实现或声明能力。

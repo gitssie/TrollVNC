@@ -15,6 +15,7 @@ typedef NS_ENUM(NSInteger, TVAppleErrorCode) {
     TVAppleErrorAuthenticationFailed,
     TVAppleErrorVerificationCode,
     TVAppleErrorAccountNeedsReview,
+    TVAppleErrorNativeFailure,
 };
 typedef NS_ENUM(NSInteger, TVAppleLocalDataPolicy) {
     TVAppleLocalDataRemove = 1,
@@ -40,6 +41,9 @@ typedef void (^TVAppleCodeCompletion)(NSString * _Nullable code, NSError * _Null
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;
 - (instancetype)initWithChallengeHandler:(void (^)(NSDictionary *challenge))handler;
+// Permanently closes this operation's provider; unlike cancelAuthentication,
+// it cannot be reused by a later native authentication stage.
+- (void)invalidate;
 - (BOOL)submitCode:(NSString *)code forChallengeID:(NSString *)challengeID
              error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)cancelChallengeID:(NSString *)challengeID error:(NSError * _Nullable * _Nullable)error;

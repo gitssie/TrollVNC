@@ -574,6 +574,32 @@ static void CopyVerified(NSString *source, NSString *destination, NSString *cont
         [manifest[@"kind"] isEqual:@"snapshot"] && [manifest[@"bundleID"] isEqual:bundleID],@"Invalid snapshot manifest");
     return manifest;
 }
+- (NSDictionary *)readSnapshot:(NSString *)reference bundleID:(NSString *)bundleID
+    reader:(NSDictionary *(^)(NSString *,NSDictionary *,NSArray *,NSError **))reader error:(NSError **)error {
+    BOOL locked=NO;
+    @try {
+        locked=[self lock]; Check(locked,@"Store is busy");
+        Check(SafeComponent(bundleID),@"Invalid Bundle ID");
+        NSArray *parts=[reference componentsSeparatedByString:@"/"];
+        Check(parts.count==3 && [parts[0] isEqual:bundleID] && [parts[1] isEqual:@"snapshots"] && SnapshotName(parts[2]),@"Invalid snapshot reference");
+        NSString *directory=[self storePath:reference];
+        NSDictionary *manifest=Load([directory stringByAppendingPathComponent:@"manifest.plist"]);
+        Check([manifest[@"formatVersion"] isEqual:@2] && [manifest[@"status"] isEqual:@"complete"] && [manifest[@"kind"] isEqual:@"snapshot"] && [manifest[@"bundleID"] isEqual:bundleID],@"Invalid snapshot manifest");
+        NSString *keychain=[self storePath:[reference stringByAppendingPathComponent:@"keychain/records.plist"]];
+        Check([FileDigest(keychain) isEqual:manifest[@"keychainSHA256"]],@"Keychain archive checksum differs");
+        NSArray *records=Load(keychain);
+        Check([records isKindOfClass:NSArray.class] && [manifest[@"keychainCount"] isEqual:@(records.count)],@"Keychain archive count differs");
+        NSError *failure=nil;
+        AdapterCheck([self.keychain validateRecords:records groups:manifest[@"keychainGroups"] error:&failure],failure,@"Invalid keychain scope");
+        for(NSString *key in manifest[@"containerIDs"]) {
+            Check(SafeComponent(key),@"Invalid container identifier");
+            NSString *path=[self storePath:[reference stringByAppendingFormat:@"/containers/%@",key]];
+            Check([ContentInventory(manifest[@"containerInventories"][key],NO) isEqual:ContentInventory(Inventory(path,@""),NO)],@"Container payload differs");
+        }
+        return reader(directory,manifest,records,error);
+    } @catch(NSException *exception) { [self publishError:exception error:error]; return nil; }
+    @finally { if(locked)[self unlock]; }
+}
 - (NSArray *)catalogBundle:(NSString *)bundleID error:(NSError **)error {
     BOOL locked=NO;
     @try {
@@ -636,17 +662,31 @@ static void CopyVerified(NSString *source, NSString *destination, NSString *cont
 - (BOOL)removeSnapshotPath:(NSString *)path error:(NSError **)error {
     return [NSFileManager.defaultManager removeItemAtPath:path error:error];
 }
-- (BOOL)deleteSnapshot:(NSString *)reference bundleID:(NSString *)bundleID error:(NSError **)error {
+- (BOOL)deleteArchive:(NSString *)reference bundleID:(NSString *)bundleID baseline:(BOOL)baseline error:(NSError **)error {
     BOOL locked=NO,attempted=NO;
-    @try{locked=[self lock];Check(locked,@"Store is busy");[self snapshotManifest:reference bundleID:bundleID];
+    @try{locked=[self lock];Check(locked,@"Store is busy");
+        if(baseline) {
+            Check(SafeComponent(bundleID) && SafeComponent(reference.lastPathComponent) &&
+                [reference isEqual:[NSString stringWithFormat:@"%@/baselines/%@",bundleID,reference.lastPathComponent]],@"Invalid baseline reference");
+            NSDictionary *manifest=Load([self storePath:[reference stringByAppendingPathComponent:@"manifest.plist"]]);
+            Check([manifest[@"formatVersion"] isEqual:@2] && [manifest[@"status"] isEqual:@"complete"] &&
+                [manifest[@"kind"] isEqual:@"baseline"] && [manifest[@"bundleID"] isEqual:bundleID] &&
+                [manifest[@"version"] isEqual:reference.lastPathComponent],@"Invalid baseline manifest");
+        } else [self snapshotManifest:reference bundleID:bundleID];
         NSString *path=[self storePath:reference];attempted=YES;
         NSError *deletionError=nil;BOOL ok=[self removeSnapshotPath:path error:&deletionError];
-        AdapterCheck(ok,deletionError,@"Cannot remove selected snapshot");return YES;
+        AdapterCheck(ok,deletionError,@"Cannot remove selected archive");return YES;
     }@catch(NSException *e){
         [self publishError:e error:error];
         if(attempted && error && *error){NSMutableDictionary *info=[(*error).userInfo mutableCopy];info[@"archiveMayBePartial"]=@YES;*error=[NSError errorWithDomain:(*error).domain code:(*error).code userInfo:info];}
         return NO;
     }@finally{if(locked)[self unlock];}
+}
+- (BOOL)deleteSnapshot:(NSString *)reference bundleID:(NSString *)bundleID error:(NSError **)error {
+    return [self deleteArchive:reference bundleID:bundleID baseline:NO error:error];
+}
+- (BOOL)deleteBaseline:(NSString *)reference bundleID:(NSString *)bundleID error:(NSError **)error {
+    return [self deleteArchive:reference bundleID:bundleID baseline:YES error:error];
 }
 - (NSDictionary *)captureBundle:(NSString *)bundleID kind:(NSString *)kind name:(NSString *)name replacingSnapshot:(BOOL)replace metadata:(NSDictionary *)metadata error:(NSError **)error {
     BOOL locked = NO,archiveChanged=NO; NSString *stage = nil;
@@ -767,6 +807,10 @@ static void CopyVerified(NSString *source, NSString *destination, NSString *cont
             Check([FileDigest(kp) isEqual:manifest[@"keychainSHA256"]],@"Keychain archive checksum differs"); desired = Load(kp);
         } else Check(![manifest[@"keychainIncluded"] boolValue] && ![manifest[@"identityIncluded"] boolValue],@"Baseline contains identity or keychain");
         NSError *adapterError = nil;
+        if(!baseline && self.restoredKeychainFilter) {
+            desired=self.restoredKeychainFilter(manifest,desired,&adapterError);
+            AdapterCheck(desired!=nil,adapterError,@"Session supplement validation failed");
+        }
         AdapterCheck([self.keychain validateRecords:desired groups:target[@"keychainGroups"] error:&adapterError],adapterError,@"Invalid keychain archive");
         BOOL keychainReady=baseline?[self.keychain validateBaselineResetGroups:target[@"keychainGroups"] error:&adapterError]:
             [self.keychain validateReplacement:desired groups:target[@"keychainGroups"] error:&adapterError];

@@ -114,12 +114,14 @@ static NSDictionary *Methods(void) {
             // cancel a submitted mutation; its result remains independently queryable.
             NSString *emailOwner = [method isEqual:@"beginAddingContactEmail"] ? AppleID(params[@"apple_id"]) : nil;
             TVAppleCompletion completion = ^(NSDictionary *result, NSError *error) {
+                TVAppleManualCodeProvider *finishedProvider=nil;
                 @synchronized (self) {
                     if (![self->_active containsObject:identifier]) return;
                     NSMutableDictionary *op = self->_operations[identifier];
                     op[@"status"] = @"completed";
                     [op removeObjectForKey:@"challenge"];
                     if (result) op[@"result"] = result;
+                    else op[@"result"] = @{@"outcome": error && [error.domain isEqual:TVAppleErrorDomain] && error.code!=TVAppleErrorOutcomeUnknown ? @"failed" : @"unknown"};
                     if ([method isEqual:@"beginAddingContactEmail"] && [result[@"outcome"] isEqual:@"requires_email_verification"]) {
                         self->_emailChallenge = result[@"challenge_id"];
                         self->_emailAppleID = emailOwner;
@@ -132,13 +134,30 @@ static NSDictionary *Methods(void) {
                         NSMutableDictionary *details = [@{@"domain": error.domain, @"code": @(error.code)} mutableCopy];
                         NSString *message = TVAppleDiagnosticMessage(error);
                         if (message.length) details[@"message"] = message;
+                        // Only module-produced diagnostics cross the wire; never native userInfo.
+                        if ([error.domain isEqual:TVAppleErrorDomain]) {
+                            NSString *stage=error.userInfo[@"TVAppleFailureStage"];
+                            if ([stage isEqual:@"icloud_cdp"]) {
+                                details[@"stage"]=stage;
+                                details[@"native_completion_received"]=@([error.userInfo[@"TVAppleNativeCompletionReceived"]boolValue]);
+                            }
+                            NSString *nativeDomain=error.userInfo[@"TVAppleNativeDomain"];
+                            NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"];
+                            if ([nativeDomain isKindOfClass:NSString.class] && nativeDomain.length && nativeDomain.length<=128 && [nativeDomain rangeOfCharacterFromSet:allowed.invertedSet].location==NSNotFound && [error.userInfo[@"TVAppleNativeCode"]isKindOfClass:NSNumber.class]) {
+                                details[@"native_domain"]=nativeDomain;details[@"native_code"]=error.userInfo[@"TVAppleNativeCode"];
+                            }
+                        }
                         op[@"error"] = details;
                     }
                     if (!result && !error) op[@"error"] = @{@"code": @"missing_result"};
                     self->_finished[identifier] = @(NSProcessInfo.processInfo.systemUptime);
+                    finishedProvider=self->_providers[identifier];
                     [self->_active removeObject:identifier]; [self->_providers removeObjectForKey:identifier];
                     [self->_domains removeObjectForKey:domain];
                 }
+                // Release any pending input only after terminalizing the operation.
+                // Its synchronous cancellation callback cannot revive or replace it.
+                [finishedProvider invalidate];
             };
             @try { [self invoke:method params:params provider:provider completion:completion]; }
             @catch (__unused NSException *exception) {
@@ -194,6 +213,6 @@ static NSDictionary *Methods(void) {
     return Wire([self request:request]);
 }
 - (void)stop {
-    @synchronized (self) { _stopped = YES; for (TVAppleManualCodeProvider *provider in _providers.allValues) [provider cancelAuthentication]; }
+    @synchronized (self) { _stopped = YES; for (TVAppleManualCodeProvider *provider in _providers.allValues) [provider invalidate]; }
 }
 @end

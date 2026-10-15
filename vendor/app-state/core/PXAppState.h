@@ -41,11 +41,17 @@ FOUNDATION_EXPORT NSString *const PXAppStateErrorDomain;
 @interface PXAppStateEngine : NSObject
 // Advisory operation-thread events; no secrets or archive paths. Never determines success.
 @property (nonatomic, copy, nullable) void (^progressHandler)(NSDictionary *event);
+// Worker-only strategy seams. Neither paths nor credentials are exposed to HTTP.
+@property (nonatomic, copy, nullable) NSArray * _Nullable (^restoredKeychainFilter)(NSDictionary *manifest, NSArray *records, NSError **error);
+- (nullable NSDictionary *)readSnapshot:(NSString *)reference bundleID:(NSString *)bundleID
+    reader:(NSDictionary * _Nullable (^)(NSString *directory, NSDictionary *manifest, NSArray *records, NSError **error))reader
+    error:(NSError **)error;
 // Hold the same store lock across a save-then-restore sequence. Nested calls
 // from this block are allowed on its thread; all other workers/CLIs fail busy.
 - (nullable id)performExclusive:(id _Nullable (^)(NSError **error))operation error:(NSError **)error;
 - (nullable NSArray<NSDictionary *> *)catalogBundle:(NSString *)bundleID error:(NSError **)error;
 - (BOOL)updateSnapshot:(NSString *)reference bundleID:(NSString *)bundleID metadata:(NSDictionary *)metadata error:(NSError **)error;
+- (BOOL)deleteBaseline:(NSString *)reference bundleID:(NSString *)bundleID error:(NSError **)error;
 - (BOOL)deleteSnapshot:(NSString *)reference bundleID:(NSString *)bundleID error:(NSError **)error;
 - (nullable instancetype)initWithRoot:(NSString *)root
                             resolver:(id<PXASResolver>)resolver

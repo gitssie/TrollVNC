@@ -3,6 +3,8 @@
 /.deploy/
 compile_commands.json
 /packages
+**/.stamp
+**/tests/reports/
 /refs
 prefs/TrollVNCPrefs/Resources/Managed.plist
 

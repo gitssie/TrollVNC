@@ -13,3 +13,6 @@ NSDictionary *tvScreenUnlockArm(rfbClientPtr client, NSUInteger digits, NSString
 // 0: ordinary key; 1: private unlock key; -1: reject. Never log private keys.
 int tvScreenUnlockKey(rfbClientPtr client, BOOL down, uint32_t key);
 void tvScreenUnlockClose(rfbClientPtr client);
+
+// Blocking worker operation; events contain no passcode. Returning NO from emit cancels.
+void tvScreenHTTPControl(BOOL locking, NSString *passcode, BOOL (^active)(void), BOOL (^authorized)(void), BOOL (^emit)(NSDictionary *));

@@ -5,6 +5,7 @@
     TVAppleCodeCompletion _pending;
     NSString *_challengeID;
     NSTimeInterval _deadline;
+    BOOL _invalidated;
 }
 - (instancetype)initWithChallengeHandler:(void (^)(NSDictionary *))handler {
     NSParameterAssert(handler);
@@ -14,7 +15,8 @@
 - (void)prepareForAuthentication:(void (^)(NSError *))completion {
     NSError *error = nil;
     @synchronized (self) {
-        if (_pending) error = TVAppleError(TVAppleErrorConflict, @"A verification challenge is already pending.");
+        if (_invalidated) error = TVAppleError(TVAppleErrorVerificationCode, @"The operation's verification provider is closed.");
+        else if (_pending) error = TVAppleError(TVAppleErrorConflict, @"A verification challenge is already pending.");
     }
     completion(error);
 }
@@ -22,7 +24,8 @@
     NSString *identifier = NSUUID.UUID.UUIDString;
     NSError *error = nil;
     @synchronized (self) {
-        if (_pending) error = TVAppleError(TVAppleErrorConflict, @"A verification challenge is already pending.");
+        if (_invalidated) error = TVAppleError(TVAppleErrorVerificationCode, @"The operation's verification provider is closed.");
+        else if (_pending) error = TVAppleError(TVAppleErrorConflict, @"A verification challenge is already pending.");
         else {
             _challengeID = identifier; _pending = [completion copy];
             _deadline = NSProcessInfo.processInfo.systemUptime + 90;
@@ -64,6 +67,13 @@
     TVAppleCodeCompletion reply = nil;
     @synchronized (self) { reply = _pending; _pending = nil; _challengeID = nil; }
     if (reply) reply(nil, TVAppleError(TVAppleErrorVerificationCode, @"Authentication finished; the challenge is no longer available."));
+}
+- (void)invalidate {
+    TVAppleCodeCompletion reply=nil;
+    @synchronized(self) {
+        _invalidated=YES;reply=_pending;_pending=nil;_challengeID=nil;
+    }
+    if(reply)reply(nil,TVAppleError(TVAppleErrorVerificationCode,@"The operation's verification provider is closed."));
 }
 - (BOOL)cancelChallengeID:(NSString *)identifier error:(NSError **)error {
     TVAppleCodeCompletion reply = nil;
