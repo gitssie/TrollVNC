@@ -64,7 +64,7 @@ static NSDictionary *FixtureStatus(NSString *bindHost) {
             if ([page isEqualToString:@"wireguard"]) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                     TVNCNetworkController *network = (TVNCNetworkController *)navigation.topViewController;
-                    [network tableView:network.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:2 inSection:2]];
+                    [network tableView:network.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:2]];
                 });
             }
         }

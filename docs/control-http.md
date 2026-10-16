@@ -58,6 +58,22 @@ Generic native helpers retain their existing argument order as a JSON array; the
 
 Long operations return an operation record with `operation_id`, then clients query `/result`, or subscribe to the App-state stream below. Disconnect does not replay a submitted write. RV explicitly disables HTTP retries and redirects, uses finite native request deadlines and reports interrupted mutations as unknown.
 
+## Generic OCR-frame-bound tap (3.2-331)
+
+`POST /api/control/authorize` advertises `device_tap:1`. Coordinate OCR replies include `frame:{width,height,orientation}` captured with the image; orientation is the ZXTouch normalized quadrant0–3. Independent authenticated `POST /api/device/tap` takes `{x,y,frame}` in those native screenshot pixels, validates the frame against current orientation/size on main, and presses/releases once using the shared native HID generator. No VNC input or Photos method is invoked. Success is `{ok:true}`; execution rejection is `{error:reason}` (inspect the body, not HTTP200 alone). Invalid parameters return400. In-flight response ownership permits checking request cancellation before dispatching touch-down; a dispatched finger is still released on cancellation.
+
+RV's Photos deletion observer is host-side orchestration: FileTransfer submits/queries deletion, separate HTTP/2 OCR/tap handles a matching confirmation dialog. No task ID, asset ID or Photos-delete state is sent to the generic tap endpoint. RV stops the observer on the original operation's terminal result/disconnect and never replays a mutation. Only explicit Photos delete starts this observer; ordinary file deletion is unchanged. Unsupported capabilities/unrecognized prompts remain manually confirmable. The new endpoint awaits device acceptance.
+
+## App-state error diagnostics (3.2-330)
+
+Completed failures include the bounded native localized `error.message` plus original worker `source_domain` and `source_code` when available. These fields preserve the specific error behind facade code2; arbitrary NSError userInfo and operation payloads are not exported. Native descriptions may contain relevant filesystem paths. The delete progress stages are `delete/validate` and `delete/remove`; the initial `prepare/prepare` snapshot alone does not identify a failed step. RV records the error fields and operation ID to its existing console logger.
+
+## App-state failure recovery (3.2-329)
+
+Completed native codes2/3 report a definite failure, including partial filesystem changes; code4 reports an unknown outcome. These outcomes terminate the individual operation and never permanently block later explicit requests. Actual active execution still excludes concurrent mutations, and late lifecycle completion releases its pending gate. Unknown operations are never automatically replayed. Restore copy errors may include safe reason `file_copy_failed` and bounded numeric `posix_code`.
+
+Deleting a backup or baseline removes its archive only. Current/pending references are detached when applicable; incomplete live data retains `restorePending`, so it cannot overwrite a complete backup. Switching with `discard_current` can explicitly recover that live state.
+
 ## App-state progress stream (3.2-328)
 
 `/api/control/authorize` advertises `app_state_stream: 1`. Authenticated `POST /api/app-state/stream` accepts the native request envelope: `{"action":"invoke","method":"save","params":{"bundle_id":"…","name":"…"}}`, or `{"action":"result","operation_id":"…"}` to observe an existing operation without executing it again. The response is HTTP/2 `application/x-ndjson`, with `{"event":"state","record":{…}}` and five-second `{"event":"heartbeat"}` records. An HTTP 200 starts observation; only the completed operation record establishes the outcome. Initial state and subscription are atomic. Completed cached results return immediately, and the first terminal result remains final despite late callbacks.

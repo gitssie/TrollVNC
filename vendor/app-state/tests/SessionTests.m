@@ -24,7 +24,7 @@ static void Check(BOOL ok, const char *message) { if (!ok) { fprintf(stderr,"FAI
 - (BOOL)createBaseline:(NSError **)error { (void)error;[self.calls addObject:@"baseline"];[self.entries addObject:@{@"reference":@"test/baselines/1.0",@"kind":@"baseline",@"version":@"1.0"}];return YES; }
 - (NSDictionary *)association:(NSError **)error { (void)error; return self.current; }
 - (BOOL)writeAssociation:(NSDictionary *)association error:(NSError **)error {
-    (void)error; self.current=association; [self.calls addObject:[association[@"restorePending"] boolValue]?[@"pending:" stringByAppendingString:association[@"pendingReference"]]:(association?[@"associate:" stringByAppendingString:association[@"reference"]]:@"clear")]; return YES;
+    (void)error; self.current=association; [self.calls addObject:[association[@"restorePending"] boolValue]?[@"pending:" stringByAppendingString:association[@"pendingReference"]?:@""]:(association?[@"associate:" stringByAppendingString:association[@"reference"]]:@"clear")]; return YES;
 }
 - (NSDictionary *)captureName:(NSString *)name replace:(BOOL)replace metadata:(NSDictionary *)metadata error:(NSError **)error {
     self.lastMetadata=metadata;
@@ -46,7 +46,7 @@ static void Check(BOOL ok, const char *message) { if (!ok) { fprintf(stderr,"FAI
     return !self.failRestore;
 }
 - (BOOL)edit:(NSString *)reference metadata:(NSDictionary *)metadata error:(NSError **)error { (void)metadata; (void)error; [self.calls addObject:[@"edit:" stringByAppendingString:reference]]; return YES; }
-- (BOOL)remove:(NSString *)reference error:(NSError **)error { (void)error; [self.calls addObject:[@"delete:" stringByAppendingString:reference]]; return YES; }
+- (BOOL)remove:(NSString *)reference error:(NSError **)error { (void)error; [self.calls addObject:[@"delete:" stringByAppendingString:reference]]; for(NSDictionary *entry in [self.entries copy])if([entry[@"reference"]isEqual:reference])[self.entries removeObject:entry]; return YES; }
 @end
 static NSDictionary *Association(Fixture *f, NSString *name) { return @{@"reference":[@"test/snapshots/" stringByAppendingString:name],@"containers":f.roots}; }
 int main(void) { @autoreleasepool {
@@ -78,7 +78,7 @@ int main(void) { @autoreleasepool {
     result=[session perform:@{@"operation":@"switch",@"reference":@"test/snapshots/20261006-01",@"account":metadata} error:&error];
     Check(result!=nil && [f.current[@"reference"] hasSuffix:@"-01"],"save-first unassigned switch preserves new account before restoring old");
     [f.calls removeAllObjects];
-    Check([session perform:@{@"operation":@"delete",@"reference":@"test/snapshots/20261006-01"} error:&error]==nil && f.calls.count==0,"active backup cannot be deleted"); error=nil;
+    Check([session perform:@{@"operation":@"delete",@"reference":@"test/snapshots/20261006-01"} error:&error]!=nil && [f.calls isEqual:@[@"delete:test/snapshots/20261006-01",@"clear"]] && !f.current,"deleting active archive clears its link without capture or live restore"); error=nil;
     f.current=@{@"reference":@"test/snapshots/20261006-01",@"containers":@{@"data":@"/old-installation"}};
     result=[session perform:@{@"operation":@"catalog"} error:&error];
     Check([result[@"currentReference"] isEqual:@""] && !f.current,"reinstallation invalidates the old association");
@@ -148,10 +148,10 @@ int main(void) { @autoreleasepool {
     Fixture *cleanup=[Fixture new];PXAppStateSession *cleanupSession=[[PXAppStateSession alloc]initWithBackend:cleanup];
     error=nil;Check([cleanupSession perform:@{@"operation":@"delete",@"reference":@"test/baselines/1.0"} error:&error]!=nil &&
         [cleanup.calls isEqual:@[@"delete:test/baselines/1.0"]],"baseline deletion does not save or restore live data");
-    [cleanup.calls removeAllObjects];cleanup.current=@{@"reference":@"",@"containers":cleanup.roots,@"restorePending":@YES,@"pendingReference":@"test/baselines/1.0"};
-    error=nil;Check([cleanupSession perform:@{@"operation":@"delete",@"reference":@"test/baselines/1.0"} error:&error]==nil && !cleanup.calls.count,
-        "pending restore baseline cannot be deleted");
+    cleanup=[Fixture new];cleanupSession=[[PXAppStateSession alloc]initWithBackend:cleanup];cleanup.current=@{@"reference":@"",@"containers":cleanup.roots,@"restorePending":@YES,@"pendingReference":@"test/baselines/1.0"};
+    error=nil;Check([cleanupSession perform:@{@"operation":@"delete",@"reference":@"test/baselines/1.0"} error:&error]!=nil && [cleanup.calls.firstObject isEqual:@"delete:test/baselines/1.0"],
+        "finished failed restore does not permanently pin its archive");
     error=nil;NSDictionary *pendingCatalog=[cleanupSession perform:@{@"operation":@"catalog"} error:&error];
-    Check([pendingCatalog[@"pendingReference"] isEqual:@"test/baselines/1.0"],"catalog preserves the exact pending restore archive");
+    Check(!pendingCatalog[@"pendingReference"] && [pendingCatalog[@"restorePending"]boolValue],"deleted restore target is detached while partial live data cannot overwrite a complete archive");
     printf("%lu session assertions passed.\n",(unsigned long)count);
 } return 0; }

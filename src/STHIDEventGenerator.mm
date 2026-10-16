@@ -1233,6 +1233,7 @@ static inline uint32_t hidUsageCodeForCharacter(NSString *key) {
 - (void)dispatchNormalizedTouches:(NSArray<NSDictionary *> *)touches {
     [self dispatchEventWithInfo:@{HIDEventInputType: HIDEventInputTypeHand, HIDEventTouchesKey: touches}];
 }
+- (BOOL)hasActiveTouches { return _activePointCount > 0; }
 
 - (void)performKeyboardSequence:(dispatch_block_t)block {
     @synchronized(_activeKeyCodes) { block(); }

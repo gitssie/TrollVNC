@@ -328,3 +328,51 @@
 "%.0f s" = "%.0f 秒";
 "%.3f s" = "%.3f 秒";
 "Loading service status…" = "正在读取服务状态…";
+
+"Tap VNC or ZXTouch to copy its connection address." = "点击 VNC 或 ZXTouch 复制对应的连接地址。";
+
+"Copy %@ address" = "复制 %@ 地址";
+
+"Remote control, file and photo transfer, and device automation. Connect over your local network or WireGuard." = "提供远程控制、文件与照片传输及设备自动化功能，支持通过本地网络或 WireGuard 连接。";
+
+"This project is licensed under GPLv2. Author: Lessica." = "本项目基于 GPLv2 协议发布。原作者：Lessica。";
+
+"Add configuration" = "添加配置";
+
+"Use WireGuard for VNC and ZXTouch." = "通过 WireGuard 连接 VNC 和 ZXTouch。";
+
+"Changes to ports or listen address require Restart on Home." = "修改端口或监听地址后，需在首页点击 Restart。";
+
+"Restarting services automatically. No need to restart from Home." = "正在自动重启服务，无需返回首页点击 Restart。";
+
+"WireGuard changes restart services automatically. Existing connections briefly disconnect." = "更改 WireGuard 后会自动重启服务，现有连接会短暂断开。";
+
+"Restarting services…" = "正在重启服务…";
+
+"WireGuard enabled. Services restarted automatically." = "WireGuard 已启用，服务已自动重启。";
+
+"WireGuard disabled. Services restarted automatically." = "WireGuard 已关闭，服务已自动重启。";
+
+"Restart not confirmed. Pull to refresh; if services remain stopped, use Restart on Home." = "尚未确认重启完成。请下拉刷新；若服务仍未运行，请在首页点击 Restart。";
+
+"Settings saved. Start TrollVNC from Home to apply them." = "设置已保存。请在首页启动 TrollVNC，使设置生效。";
+
+"Saved. Services restart automatically. No need to restart from Home." = "已保存，服务会自动重启，无需返回首页点击 Restart。";
+
+"Saved. Services restart automatically; WireGuard stays off." = "已保存，服务会自动重启；WireGuard 保持关闭。";
+
+"Services stopped" = "服务未运行";
+
+"Copy IP address" = "复制 IP 地址";
+
+"Restart from Home to apply." = "在首页重启后生效。";
+
+"Changes restart services automatically." = "更改后自动重启服务。";
+
+"Restart unconfirmed. Refresh or restart from Home." = "尚未确认重启，请刷新或在首页重启。";
+
+"Saved. Start services from Home." = "已保存，请在首页启动服务。";
+
+"Saved. WireGuard stays off." = "已保存，WireGuard 保持关闭。";
+
+"Saved. Restarting services…" = "已保存，正在重启服务…";

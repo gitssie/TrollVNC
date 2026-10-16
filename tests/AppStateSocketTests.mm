@@ -50,14 +50,17 @@ int main(int argc,const char **argv){@autoreleasepool{
     CHECK([fake.request[@"reference"]isEqual:@"test.app/snapshots/20261006-01"]);
     CHECK([Invoke(s,@"list",@{@"bundle_id":@"test.app"})[@"error"][@"code"]isEqual:@"busy"]);
     NSDictionary *state=Call(s,@{@"action":@"result",@"operation_id":op});CHECK([state[@"progress"]count]==2);
-    fake.pending(nil,[NSError errorWithDomain:@"TVAppStateServices" code:2 userInfo:@{@"stateMayBePartial":@YES,@"password":@"SECRET"}]);
+    fake.pending(nil,[NSError errorWithDomain:@"TVAppStateServices" code:2 userInfo:@{@"stateMayBePartial":@YES,@"password":@"SECRET",NSLocalizedDescriptionKey:@"Container copy failed",@"posixCode":@28,@"sourceDomain":@"PXAppState",@"sourceCode":@1}]);
     state=Call(s,@{@"action":@"result",@"operation_id":op});CHECK([state[@"error"][@"state_may_be_partial"]boolValue] && !state[@"error"][@"password"]);
+    CHECK([state[@"error"][@"reason"]isEqual:@"file_copy_failed"] && [state[@"error"][@"posix_code"]integerValue]==28);
+    CHECK([state[@"error"][@"message"]isEqual:@"Container copy failed"] && [state[@"error"][@"source_domain"]isEqual:@"PXAppState"] && [state[@"error"][@"source_code"]intValue]==1);
     // Known finished partial restore can be retried; durable session prevents saving it.
     op=Invoke(s,@"switch",@{@"bundle_id":@"test.app",@"backup_id":@"snapshot:20261006-01"})[@"operation_id"];CHECK(op);
     fake.pending(nil,[NSError errorWithDomain:@"TVAppStateServices" code:4 userInfo:@{@"stateMayBePartial":@YES}]);
-    CHECK([Invoke(s,@"save",@{@"bundle_id":@"test.app"})[@"error"][@"code"]isEqual:@"outcome_unknown"]);
-    CHECK([Invoke(s,@"launch",@{@"bundle_id":@"test.app"})[@"error"][@"code"]isEqual:@"outcome_unknown"]);
-    CHECK([Invoke(s,@"stop",@{@"bundle_id":@"test.app"})[@"error"][@"code"]isEqual:@"outcome_unknown"]);
+    for(NSString *method in @[@"save",@"launch",@"stop"]) {
+        op=Invoke(s,method,@{@"bundle_id":@"test.app"})[@"operation_id"];CHECK(op);
+        fake.pending(@{@"bundle_id":@"test.app"},nil);
+    }
     op=Invoke(s,@"status",@{@"bundle_id":@"test.app"})[@"operation_id"];CHECK(op && [fake.request[@"operation"]isEqual:@"status"]);fake.pending(@{@"bundle_id":@"test.app",@"running":@NO},nil);
     op=Invoke(s,@"list",@{@"bundle_id":@"test.app"})[@"operation_id"];CHECK(op);fake.pending(@{@"backups":@[]},nil);
     // Duplicate completion cannot overwrite a finished result.

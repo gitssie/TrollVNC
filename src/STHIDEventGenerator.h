@@ -111,6 +111,7 @@ __used NS_INLINE void STAccurateSleep(NSTimeInterval seconds) {
 @property (nonatomic) NSTimeInterval keepAliveInterval;
 
 /* MARK: --- Touches --- */
+- (BOOL)hasActiveTouches;
 
 - (void)touchDown:(CGPoint)location;
 - (void)liftUp:(CGPoint)location;

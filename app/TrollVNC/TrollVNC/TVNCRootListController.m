@@ -675,13 +675,6 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     }
 }
 
-- (void)source {
-    NSURL *url = [NSURL URLWithString:@"https://github.com/owngoal-dev/TrollVNC"];
-    if ([[UIApplication sharedApplication] canOpenURL:url]) {
-        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
-    }
-}
-
 #pragma mark - Dashboard
 
 - (UIViewController *)actionPresenter { return self.navigationController.topViewController ?: self; }
@@ -771,8 +764,10 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
     if (sender.tag == 0) [self viewLogs];
     else if (sender.tag == 1) [self resetDefaults];
     else {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"TrollVNC" message:[self defaultFooterText] preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:[self uiText:@"View Source Code"] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { [self source]; }]];
+        NSString *message = [NSString stringWithFormat:@"%@\n\n%@\n\n%@", [self defaultFooterText],
+            [self uiText:@"Remote control, file and photo transfer, and device automation. Connect over your local network or WireGuard."],
+            [self uiText:@"This project is licensed under GPLv2. Author: Lessica."]];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"TrollVNC" message:message preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:[self uiText:@"OK"] style:UIAlertActionStyleCancel handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
     }

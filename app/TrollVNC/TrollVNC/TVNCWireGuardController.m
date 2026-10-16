@@ -3,6 +3,7 @@
 #import "TVNCUtil.h"
 #import "TVNCWireGuardConfig.h"
 #import "TVNCServiceStatus.h"
+#import "TVNCServiceState.h"
 
 @interface TVNCWireGuardController () <UITextViewDelegate>
 @property(nonatomic, strong) UIBarButtonItem *saveButton;
@@ -321,7 +322,7 @@
     NSDictionary *previousConfiguration = self.savedConfiguration;
     NSNumber *previousEnabled = [self.preferences objectForKey:@"WireGuardEnabled"];
     [self.preferences setObject:configuration forKey:@"WireGuardConfig"];
-    if (!previousConfiguration) [self.preferences setBool:YES forKey:@"WireGuardEnabled"];
+    if (!previousConfiguration) [self.preferences setBool:NO forKey:@"WireGuardEnabled"];
     if (![self.preferences synchronize]) {
         if (previousConfiguration) [self.preferences setObject:previousConfiguration forKey:@"WireGuardConfig"];
         else [self.preferences removeObjectForKey:@"WireGuardConfig"];
@@ -334,10 +335,11 @@
     self.editingConfiguration = NO;
     self.configurationEditor.text = @"";
     [self updateSummary];
-    TVNCRestartVNCService();
-    [self showNotice:TVNCWGShouldStart(configuration, [self.preferences objectForKey:@"WireGuardEnabled"]) ?
-        @"Saved. TrollVNC is restarting both services with the shared network configuration." :
-        @"Saved. WireGuard remains off until enabled in Network settings."];
+    BOOL enabled = TVNCWGShouldStart(configuration, [self.preferences objectForKey:@"WireGuardEnabled"]);
+    BOOL serviceWasRunning = TVNCServiceSnapshotProcessAlive([TVNCServiceState sharedState].status);
+    if (enabled && serviceWasRunning) TVNCRestartVNCService();
+    [self showNotice:!enabled ? @"Saved. WireGuard stays off." :
+        serviceWasRunning ? @"Saved. Restarting services…" : @"Saved. Start services from Home."];
 }
 
 @end

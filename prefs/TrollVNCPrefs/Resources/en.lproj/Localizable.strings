@@ -325,3 +325,51 @@
 "Invalid setting" = "Invalid setting";
 "Invalid text" = "Invalid text";
 "Loading service status…" = "Loading service status…";
+
+"Tap VNC or ZXTouch to copy its connection address." = "Tap VNC or ZXTouch to copy its connection address.";
+
+"Copy %@ address" = "Copy %@ address";
+
+"Remote control, file and photo transfer, and device automation. Connect over your local network or WireGuard." = "Remote control, file and photo transfer, and device automation. Connect over your local network or WireGuard.";
+
+"This project is licensed under GPLv2. Author: Lessica." = "This project is licensed under GPLv2. Author: Lessica.";
+
+"Add configuration" = "Add configuration";
+
+"Use WireGuard for VNC and ZXTouch." = "Use WireGuard for VNC and ZXTouch.";
+
+"Changes to ports or listen address require Restart on Home." = "Changes to ports or listen address require Restart on Home.";
+
+"Restarting services automatically. No need to restart from Home." = "Restarting services automatically. No need to restart from Home.";
+
+"WireGuard changes restart services automatically. Existing connections briefly disconnect." = "WireGuard changes restart services automatically. Existing connections briefly disconnect.";
+
+"Restarting services…" = "Restarting services…";
+
+"WireGuard enabled. Services restarted automatically." = "WireGuard enabled. Services restarted automatically.";
+
+"WireGuard disabled. Services restarted automatically." = "WireGuard disabled. Services restarted automatically.";
+
+"Restart not confirmed. Pull to refresh; if services remain stopped, use Restart on Home." = "Restart not confirmed. Pull to refresh; if services remain stopped, use Restart on Home.";
+
+"Settings saved. Start TrollVNC from Home to apply them." = "Settings saved. Start TrollVNC from Home to apply them.";
+
+"Saved. Services restart automatically. No need to restart from Home." = "Saved. Services restart automatically. No need to restart from Home.";
+
+"Saved. Services restart automatically; WireGuard stays off." = "Saved. Services restart automatically; WireGuard stays off.";
+
+"Services stopped" = "Services stopped";
+
+"Copy IP address" = "Copy IP address";
+
+"Restart from Home to apply." = "Restart from Home to apply.";
+
+"Changes restart services automatically." = "Changes restart services automatically.";
+
+"Restart unconfirmed. Refresh or restart from Home." = "Restart unconfirmed. Refresh or restart from Home.";
+
+"Saved. Start services from Home." = "Saved. Start services from Home.";
+
+"Saved. WireGuard stays off." = "Saved. WireGuard stays off.";
+
+"Saved. Restarting services…" = "Saved. Restarting services…";

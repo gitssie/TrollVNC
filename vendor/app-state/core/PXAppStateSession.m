@@ -94,9 +94,14 @@ static BOOL SessionFail(NSError **error, NSString *message) {
                 if (![destination[@"kind"] isEqual:@"snapshot"]) { SessionFail(error,@"Account operation requires a snapshot"); return nil; }
                 if (!metadata || ![self.backend edit:reference metadata:metadata error:error]) return nil;
             } else {
-                if (restorePending && [association[@"pendingReference"] isEqual:reference]) { SessionFail(error,@"Complete the pending restore before deleting its archive"); return nil; }
-                if ([current[@"reference"] isEqual:reference]) { SessionFail(error,@"Switch away before deleting this account backup"); return nil; }
                 if (![self.backend remove:reference error:error]) return nil;
+                // Deleting an archive never removes live App data. Drop only its association;
+                // an incomplete live restore remains marked incomplete until explicitly restored.
+                if ([current[@"reference"] isEqual:reference] && ![self.backend writeAssociation:nil error:error]) return nil;
+                if (restorePending && [association[@"pendingReference"] isEqual:reference]) {
+                    NSMutableDictionary *pending=[association mutableCopy];[pending removeObjectForKey:@"pendingReference"];
+                    if(![self.backend writeAssociation:pending error:error])return nil;
+                }
             }
         } else if (![current[@"reference"] isEqual:reference]) {
             if(![request[@"discardCurrent"] boolValue] && identityMatches.count>1 && (current || metadata)) {SessionFail(error,@"Multiple backups share the current IDFV. Keep one before updating this environment.");return nil;}

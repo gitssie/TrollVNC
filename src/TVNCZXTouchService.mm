@@ -169,12 +169,54 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     if ([path isEqual:@"/api/control/disconnect"]) { tvAppHTTPDisconnect(token); return TVNCHTTPJSON(@{@"ok":@YES}, 200); }
     if ([path isEqual:@"/api/control/authorize"]) {
         NSMutableDictionary *capabilities=[authorized mutableCopy];capabilities[@"app_state_stream"]=@1;
+        capabilities[@"device_tap"]=@1;
         return TVNCHTTPJSON(capabilities,200);
     }
     if (_stopping) return TVNCHTTPJSON(@{@"error":@"service_stopping"}, 503);
     id value = body.length ? [NSJSONSerialization JSONObjectWithData:body options:0 error:nil] : @{};
     if (![value isKindOfClass:NSDictionary.class]) return TVNCHTTPJSON(@{@"error":@"invalid_json"}, 400);
     NSDictionary *input = value;
+    if ([path isEqual:@"/api/device/tap"]) {
+        // op0 authorization above rejects read-only control tokens.
+        NSNumber *x=input[@"x"],*y=input[@"y"];NSDictionary *frame=input[@"frame"];
+        if(input.count!=3 || ![x isKindOfClass:NSNumber.class] || ![y isKindOfClass:NSNumber.class] ||
+            !std::isfinite(x.doubleValue) || !std::isfinite(y.doubleValue) || ![frame isKindOfClass:NSDictionary.class] || frame.count!=3)
+            return TVNCHTTPJSON(@{@"error":@"invalid_tap"},400);
+        for(NSString *key in @[@"width",@"height",@"orientation"])
+            if(![frame[key]isKindOfClass:NSNumber.class] || !std::isfinite([frame[key]doubleValue]))return TVNCHTTPJSON(@{@"error":@"invalid_frame"},400);
+        void *producer=NULL;void *stream=tvnc_http_stream_new(&producer);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            @autoreleasepool { @try {
+                __block NSString *tapError=nil;__block CGPoint point=CGPointZero;__block BOOL pressed=NO;
+                ZXMain(^{
+                    CGSize native=[ScreenCapturer nativeScreenSize];
+                    double width=MIN(native.width,native.height),height=MAX(native.width,native.height);
+                    int q=ZXQuad(self->_orientation);double sw=q%2?height:width,sh=q%2?width:height;
+                    double nx=x.doubleValue,ny=y.doubleValue;
+                    if([frame[@"width"]doubleValue]!=sw || [frame[@"height"]doubleValue]!=sh || [frame[@"orientation"]doubleValue]!=q){tapError=@"frame_changed";return;}
+                    if(nx<0 || ny<0 || nx>=sw || ny>=sh){tapError=@"touch_outside_screen";return;}
+                    STHIDEventGenerator *generator=[STHIDEventGenerator sharedGenerator];
+                    BOOL otherTouches=NO;for(NSDictionary *touches in self->_clients.allValues)if(touches.count)otherTouches=YES;
+                    if(self->_stopping || !tvnc_http_stream_open(producer) || ![self->_server isClientConnected:client]){tapError=@"request_cancelled";return;}
+                    if(otherTouches || [generator hasActiveTouches]){tapError=@"touch_busy";return;}
+                    if(q==1){nx=y.doubleValue;ny=height-1-x.doubleValue;}
+                    else if(q==2){nx=width-1-x.doubleValue;ny=height-1-y.doubleValue;}
+                    else if(q==3){nx=width-1-y.doubleValue;ny=x.doubleValue;}
+                    point=CGPointMake(std::clamp(nx,0.0,width-1),std::clamp(ny,0.0,height-1));
+                    // Native HID only: this is an independent ZXTouch HTTP/2 request.
+                    [generator touchDown:point];pressed=YES;
+                });
+                if(pressed) {
+                    usleep(80000);
+                    // Always release a dispatched finger, including cancellation.
+                    ZXMain(^{[[STHIDEventGenerator sharedGenerator]liftUp:point];});
+                }
+                NSData *data=[NSJSONSerialization dataWithJSONObject:tapError?@{@"error":tapError}:@{@"ok":@YES} options:0 error:nil];
+                tvnc_http_stream_send(producer,(const unsigned char *)data.bytes,data.length);
+            } @finally {tvnc_http_stream_release(producer);} }
+        });
+        return {NULL,0,200,"application/json",stream};
+    }
     if ([path isEqual:@"/api/app-state/stream"]) {
         if(!([input[@"action"] isEqual:@"invoke"] || [input[@"action"] isEqual:@"result"]))
             return TVNCHTTPJSON(@{@"error":@"invalid_request"},400);
@@ -374,7 +416,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         [[STHIDEventGenerator sharedGenerator] dispatchNormalizedTouches:changed];
     });
 }
-- (UIImage *)snapshot {
+- (UIImage *)snapshotWithFrame:(NSDictionary **)frame {
+    __block NSDictionary *capturedFrame=nil;
     __block UIImage *result = nil;
     ZXMain(^{
         if (self->_stopping) return;
@@ -385,6 +428,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         UIImage *source = [UIImage imageWithCGImage:image scale:1 orientation:orientations[q]];
         CGSize size = CGSizeMake(CGImageGetWidth(image), CGImageGetHeight(image));
         if (q % 2) size = CGSizeMake(size.height, size.width);
+        capturedFrame=@{@"width":@(size.width),@"height":@(size.height),@"orientation":@(q)};
         UIGraphicsBeginImageContextWithOptions(size, YES, 1);
         [source drawInRect:CGRectMake(0, 0, size.width, size.height)];
         result = UIGraphicsGetImageFromCurrentImageContext();
@@ -392,6 +436,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         CGImageRelease(image);
     });
     ZXRequire(result.CGImage != NULL, @"Unable to capture screen");
+    if(frame)*frame=capturedFrame;
     return result;
 }
 - (void)emitKeyboard:(dispatch_block_t)block {
@@ -536,7 +581,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     }
     return ZXError(@"Template image not found on screen");
 }
-- (NSData *)ocr:(const zxtouch::Command &)command image:(UIImage *)image {
+- (NSData *)ocr:(const zxtouch::Command &)command image:(UIImage *)image frame:(NSDictionary *)frame {
     auto &f = command.fields;
     int task = ZXInteger(f[0], 1, 2);
     ZXRequire((task == 2 && f.size() == 2) || (task == 1 && f.size() == 8), @"Invalid OCR arguments");
@@ -594,7 +639,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         if (![NSFileManager.defaultManager createDirectoryAtPath:debugPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:&error] ||
             ![data writeToFile:debugPath options:NSDataWritingAtomic error:&error]) return ZXError(error.localizedDescription ?: @"Cannot write debug image");
     }
-    return ZXReply([result componentsJoinedByString:@";;"]);
+    return [NSJSONSerialization dataWithJSONObject:@{@"value":[result componentsJoinedByString:@";;"],@"frame":frame?:@{}} options:0 error:nil];
 }
 - (NSString *)foreground {
     typedef CFStringRef (*CopyForeground)(void);
@@ -679,10 +724,11 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
                 @try {
                     @autoreleasepool {
                         if (_stopping) return ZXError(@"ZXTouch service is stopping");
-                        UIImage *image = (command.task == 27 && command.fields[0] == "2") ? nil : [self snapshot];
+                        NSDictionary *frame=nil;
+                        UIImage *image = (command.task == 27 && command.fields[0] == "2") ? nil : [self snapshotWithFrame:&frame];
                         if (command.task == 21) return [self match:command image:image];
                         if (command.task == 23 || command.task == 28) return [self color:command image:image];
-                        if (command.task == 27) return [self ocr:command image:image];
+                        if (command.task == 27) return [self ocr:command image:image frame:frame];
                         ZXRequire(command.payload.empty(), @"Screenshot does not accept arguments");
                         NSData *jpeg = UIImageJPEGRepresentation(image, .85);
                         ZXRequire(jpeg.length > 0, @"Unable to encode screenshot");

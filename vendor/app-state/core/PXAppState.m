@@ -674,6 +674,7 @@ static void CopyVerified(NSString *source, NSString *destination, NSString *cont
                 [manifest[@"version"] isEqual:reference.lastPathComponent],@"Invalid baseline manifest");
         } else [self snapshotManifest:reference bundleID:bundleID];
         NSString *path=[self storePath:reference];attempted=YES;
+        if(self.progressHandler)self.progressHandler(@{@"phase":@"delete",@"stage":@"remove"});
         NSError *deletionError=nil;BOOL ok=[self removeSnapshotPath:path error:&deletionError];
         AdapterCheck(ok,deletionError,@"Cannot remove selected archive");return YES;
     }@catch(NSException *e){
@@ -782,6 +783,7 @@ static void CopyVerified(NSString *source, NSString *destination, NSString *cont
 - (NSDictionary *)restoreReference:(NSString *)reference bundleID:(NSString *)bundleID
     restoreIdentity:(BOOL)restoreIdentity error:(NSError **)error {
     BOOL locked = NO, mutationStarted = NO;
+    int restoreCopyErrno = 0;
     NSDictionary *target = nil;
     __block unsigned long long copiedBytes=0; __block NSUInteger copiedFiles=0;
     void (^copiedFile)(unsigned long long)=^(unsigned long long size) {
@@ -868,6 +870,7 @@ static void CopyVerified(NSString *source, NSString *destination, NSString *cont
                 copyfile_state_set(copyState,COPYFILE_STATE_STATUS_CTX,(__bridge void *)copyContext);
                 int copied=copyfile(childSource.fileSystemRepresentation,[destination stringByAppendingPathComponent:child].fileSystemRepresentation,copyState,
                     COPYFILE_ALL|COPYFILE_RECURSIVE|COPYFILE_NOFOLLOW);
+                if(copied!=0)restoreCopyErrno=errno;
                 copyfile_state_free(copyState); Check(copied==0,@"Container copy failed");
                 struct stat directFile;
                 if(lstat(childSource.fileSystemRepresentation,&directFile)==0 && S_ISREG(directFile.st_mode) &&
@@ -910,9 +913,11 @@ static void CopyVerified(NSString *source, NSString *destination, NSString *cont
         return @{@"status":@"complete",@"reference":reference,@"keychainCount":@(desired.count),
             @"identityRestored":@(restoreIdentity),@"identityRegenerated":@(baseline)};
     } @catch (NSException *e) {
-        if (error) *error = [NSError errorWithDomain:PXAppStateErrorDomain code:2
-            userInfo:@{NSLocalizedDescriptionKey:e.reason ?: @"Restore failed",
-                @"stateMayBePartial":@(mutationStarted)}];
+        if (error) {
+            NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:e.reason ?: @"Restore failed",@"stateMayBePartial":@(mutationStarted)} mutableCopy];
+            if(restoreCopyErrno>0)info[@"posixCode"]=@(restoreCopyErrno);
+            *error = [NSError errorWithDomain:PXAppStateErrorDomain code:2 userInfo:info];
+        }
         return nil;
     } @finally { if (locked) [self unlock]; }
 }

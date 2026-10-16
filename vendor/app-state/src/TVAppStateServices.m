@@ -26,8 +26,8 @@ static dispatch_queue_t OperationQueue(void) {
     dispatch_once(&once,^{queue=dispatch_queue_create("com.weaponx.app-state",DISPATCH_QUEUE_SERIAL);});
     return queue;
 }
-// Listener restarts must not bypass a still-running native call or its unknown outcome.
-static BOOL LifecyclePending=NO, LifecycleUnknown=NO;
+// Only actual outstanding native work owns the process-wide execution gate.
+static BOOL LifecyclePending=NO;
 static NSObject *LifecycleGate(void) {
     static NSObject *gate;static dispatch_once_t once;dispatch_once(&once,^{gate=[NSObject new];});return gate;
 }
@@ -45,7 +45,7 @@ static NSObject *LifecycleGate(void) {
 - (NSDictionary *)runLifecycle:(NSString *)method bundle:(NSString *)bundle error:(NSError **)error {
     BOOL mutation=![method isEqual:@"status"];
     @synchronized(LifecycleGate()) {
-        if(LifecyclePending || (mutation && LifecycleUnknown)){if(error)*error=[NSError errorWithDomain:@"TVAppStateServices" code:mutation?4:1 userInfo:@{@"stateMayBePartial":@(mutation)}];return nil;}
+        if(LifecyclePending){FailService(error,@"App operation is still running");return nil;}
         LifecyclePending=YES;
     }
     dispatch_semaphore_t done=dispatch_semaphore_create(0);NSMutableDictionary *outcome=[NSMutableDictionary new];
@@ -54,11 +54,10 @@ static NSObject *LifecycleGate(void) {
         @try {result=[[self lifecycle]execute:method bundle:bundle error:&failure];}
         @catch(__unused NSException *exception){failure=[NSError errorWithDomain:@"TVAppStateServices" code:mutation?4:1 userInfo:@{@"stateMayBePartial":@(mutation)}];}
         @synchronized(outcome){if(result)outcome[@"result"]=result;if(failure)outcome[@"error"]=failure;}
-        @synchronized(LifecycleGate()){if(mutation && [failure.domain isEqual:@"TVAppStateServices"] && failure.code>=3)LifecycleUnknown=YES;LifecyclePending=NO;}
+        @synchronized(LifecycleGate()){LifecyclePending=NO;}
         dispatch_semaphore_signal(done);
     }});
     if(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,(int64_t)([self lifecycleTimeout]*NSEC_PER_SEC)))!=0) {
-        @synchronized(LifecycleGate()){if(mutation)LifecycleUnknown=YES;}
         if(error)*error=[NSError errorWithDomain:@"TVAppStateServices" code:mutation?4:1 userInfo:@{@"stateMayBePartial":@(mutation)}];return nil;
     }
     @synchronized(outcome){if(error)*error=outcome[@"error"];return outcome[@"result"];}
@@ -82,8 +81,8 @@ static NSObject *LifecycleGate(void) {
     if (![self isMobile]) { FailService(error,@"App-state operations must run as mobile"); return nil; }
     BOOL readOnly=[@[@"catalog",@"describe",@"status",@"profile"] containsObject:request[@"operation"]];
     @synchronized(LifecycleGate()) {
-        if(!readOnly && (LifecyclePending || LifecycleUnknown)) {
-            if(error)*error=[NSError errorWithDomain:@"TVAppStateServices" code:4 userInfo:@{@"stateMayBePartial":@YES}];return nil;
+        if(!readOnly && LifecyclePending) {
+            FailService(error,@"App operation is still running");return nil;
         }
     }
     if ([@[@"launch",@"stop",@"status"] containsObject:request[@"operation"]])
@@ -162,6 +161,9 @@ static NSObject *LifecycleGate(void) {
                 [response[@"message"] isKindOfClass:NSString.class]?response[@"message"]:@"App-state operation failed",
                 @"stateMayBePartial":@([response[@"stateMayBePartial"] boolValue]),@"archiveMayBePartial":@([response[@"archiveMayBePartial"] boolValue])} mutableCopy];
                 if ([response[@"pendingCaptureReference"] isKindOfClass:NSString.class]) info[@"pendingCaptureReference"]=response[@"pendingCaptureReference"];
+                if([response[@"posixCode"] isKindOfClass:NSNumber.class])info[@"posixCode"]=response[@"posixCode"];
+                if([response[@"errorDomain"] isKindOfClass:NSString.class])info[@"sourceDomain"]=response[@"errorDomain"];
+                if([response[@"errorCode"] isKindOfClass:NSNumber.class])info[@"sourceCode"]=response[@"errorCode"];
                 *error=[NSError errorWithDomain:@"TVAppStateServices" code:2 userInfo:info];
             } else FailService(error,@"App-state worker returned an incomplete response");
         }

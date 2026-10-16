@@ -11,17 +11,7 @@
 #import <sys/stat.h>
 #import <unistd.h>
 
-@interface TVPhotoJob : NSObject
-@property(nonatomic, copy) NSString *result;
-@property(nonatomic, copy) NSString *error;
-@property(nonatomic, assign) BOOL finished;
-@property(nonatomic, assign) BOOL cancelled;
-@property(nonatomic, strong) NSDate *created;
-@property(nonatomic, copy) NSString *checksum;
-@property(nonatomic, assign) BOOL durable;
-@end
-@implementation TVPhotoJob
-@end
+#import "PhotoJobRegistry.inc"
 
 static NSMutableDictionary<NSString *, TVPhotoJob *> *tvJobs;
 static dispatch_queue_t tvPhotoQueue;
@@ -496,16 +486,11 @@ int tvPhotoStart(unsigned char op, const char *root, const char *value,
             TVPhotoJob *previous = tvJobs[identifier] ?: tvLoadReceipt(identifier);
             if (previous) {
                 if (![previous.checksum isEqualToString:expected]) {snprintf(error,error_capacity,"Photo task checksum changed");return -1;}
-                tvJobs[identifier] = previous; snprintf(token,token_capacity,"%s",identifier.UTF8String);return 0;
+                snprintf(token,token_capacity,"%s",identifier.UTF8String);return 0;
             }
         }
-        for (NSString *key in tvJobs.allKeys) {
-            TVPhotoJob *old = tvJobs[key];
-            if (old.finished && [old.created timeIntervalSinceNow] < -600)
-                [tvJobs removeObjectForKey:key];
-        }
-        if (tvJobs.count >= 64) {
-            snprintf(error, error_capacity, "Photos queue is full");
+        if (!tvPhotoCanStart(tvJobs)) {
+            snprintf(error, error_capacity, "Too many active Photos operations");
             return -1;
         }
         if (durable && !tvSaveReceipt(identifier,job)) {snprintf(error,error_capacity,"Cannot persist photo task receipt");return -1;}
@@ -549,7 +534,6 @@ int tvPhotoPoll(const char *token, char **payload, char **error) {
     TVPhotoJob *job = nil;
     @synchronized(tvJobs) {
         job = tvJobs[identifier] ?: tvLoadReceipt(identifier);
-        if (job) tvJobs[identifier] = job;
     }
     if (!job) {
         *error = strdup("Photos job not found");

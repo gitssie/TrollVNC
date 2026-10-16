@@ -61,6 +61,7 @@ static void Check(BOOL value,const char *message) { if (!value) { fprintf(stderr
     if ([self.mode isEqual:@"timeout"]) { if (error) *error=[NSError errorWithDomain:@"runner" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Timed out"}]; return NO; }
     if ([self.mode isEqual:@"invalid"]) { if (output) *output=[@"invalid response" dataUsingEncoding:NSUTF8StringEncoding]; return YES; }
     NSMutableDictionary *response=[@{@"ok":@YES,@"result":@{@"entries":@[],@"currentReference":@""}} mutableCopy];
+    if([self.mode isEqual:@"copy-failure"])response=[@{@"ok":@NO,@"message":@"Container copy failed",@"stateMayBePartial":@YES,@"posixCode":@28,@"errorDomain":@"PXAppState",@"errorCode":@1}mutableCopy];
     if ([self.mode isEqual:@"partial"] || [self.mode isEqual:@"cleanup"]) {
         response=[@{@"ok":@NO,@"message":@"Publication failed",@"archiveMayBePartial":@YES,@"stateMayBePartial":@NO,
             @"pendingCaptureReference":@"test.app/snapshots/.capture-test"} mutableCopy];
@@ -95,6 +96,8 @@ int main(void) { @autoreleasepool {
     NSError *error=nil;
     NSDictionary *result=[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error];
     Check(result!=nil && error==nil,"scoped worker success is parsed");
+    service.runner.mode=@"copy-failure";error=nil;
+    Check(![service runBundle:@"test.app" request:@{@"operation":@"switch"} error:&error] && error.code==2 && [error.userInfo[@"posixCode"]intValue]==28 && [error.userInfo[@"sourceDomain"]isEqual:@"PXAppState"] && [error.userInfo[@"sourceCode"]intValue]==1,"known copy failure preserves finite file error metadata without becoming an unknown outcome");error=nil;
     Check([NSFileManager.defaultManager contentsOfDirectoryAtPath:service.paths[@"root"] error:NULL].count==0,"operation artifacts removed after success");
     service.runner.mode=@"progress-final";
     __block BOOL finished=NO;NSMutableArray *events=[NSMutableArray array];
@@ -124,7 +127,16 @@ int main(void) { @autoreleasepool {
     Check(![timed runBundle:@"test.app" request:@{@"operation":@"status"} error:&timeoutError] && timeoutError.code==1,"no second native lifecycle call while previous call remains outstanding");
     TimedService *second=[TimedService new];second.fake=timed.fake;
     Check(![second runBundle:@"test.app" request:@{@"operation":@"status"} error:&timeoutError] && timeoutError.code==1,"new facade cannot launch another read while native call remains outstanding");
-    Check(![second runBundle:@"test.app" request:@{@"operation":@"switch"} error:&timeoutError] && timeoutError.code==4,"new facade cannot bypass process-wide unknown mutation fence");
+    Check(![second runBundle:@"test.app" request:@{@"operation":@"switch"} error:&timeoutError] && timeoutError.code==1,"only actual outstanding native work prevents a concurrent mutation");
     dispatch_semaphore_signal(timed.fake.gate);
+    second.fake=[BlockingLifecycle new];second.fake.gate=dispatch_semaphore_create(0);dispatch_semaphore_signal(second.fake.gate);
+    NSDate *releaseDeadline=[NSDate dateWithTimeIntervalSinceNow:2];NSDictionary *ready=nil;
+    while(!ready && releaseDeadline.timeIntervalSinceNow>0) {
+        timeoutError=nil;ready=[second runBundle:@"test.app" request:@{@"operation":@"status"} error:&timeoutError];
+        if(!ready)[NSThread sleepForTimeInterval:.005];
+    }
+    Check(ready!=nil,"late native completion releases the execution gate");
+    dispatch_semaphore_signal(second.fake.gate);timeoutError=nil;
+    Check([second runBundle:@"test.app" request:@{@"operation":@"launch"} error:&timeoutError]!=nil && !timeoutError,"past timeout does not permanently block the next explicit mutation");
     printf("%lu app-state service assertions passed; no device authority used.\n",(unsigned long)checks);
 } return 0; }

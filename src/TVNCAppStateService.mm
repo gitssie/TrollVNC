@@ -13,7 +13,6 @@ static NSData *Wire(NSDictionary *value) {
     NSString *_active;
     NSMutableDictionary<NSString *,NSDictionary *> *_observers;
     BOOL _stopped;
-    BOOL _uncertain;
 }
 - (instancetype)init {return [self initWithServices:[TVAppStateServices new]];}
 - (instancetype)initWithServices:(TVAppStateServices *)services {
@@ -50,9 +49,7 @@ static NSData *Wire(NSDictionary *value) {
         NSError *error=nil;NSDictionary *native=TVASRequest(request[@"method"],request[@"params"],&error);
         if(!native)return Fail(@"invalid_request");
         NSString *method=request[@"method"],*bundle=request[@"params"][@"bundle_id"];
-        BOOL readOnly=[@[@"list",@"describe",@"status",@"profile"]containsObject:method];
         if(_stopped)return Fail(@"service_stopping");
-        if(_uncertain && !readOnly)return Fail(@"outcome_unknown");
         if(_active)return Fail(@"busy");
         if(_operations.count>=64)return Fail(@"result_capacity");
         NSString *identifier=NSUUID.UUID.UUIDString;_active=identifier;
@@ -76,28 +73,39 @@ static NSData *Wire(NSDictionary *value) {
                             @"Retry restoration before backing up this incomplete environment":@"restore_pending",
                             @"Name this account before its first backup":@"name_required",
                             @"Store is busy":@"store_busy",
+                            @"App operation is still running":@"operation_busy",
+                            @"Container copy failed":@"file_copy_failed",
                             @"The selected backup is unavailable":@"archive_unavailable",
                             @"Invalid snapshot manifest":@"invalid_archive",
                             @"Invalid baseline manifest":@"invalid_archive",
                             @"Container payload differs":@"invalid_archive",
                             @"Keychain archive checksum differs":@"invalid_archive",
                             @"Cannot restore keychain":@"keychain_failed",
-                            @"Cannot restore identity":@"identity_failed"};
+                            @"Keychain restore failed":@"keychain_failed",
+                            @"Cannot restore identity":@"identity_failed",
+                            @"Identity restore failed":@"identity_failed"};
                         NSString *reason=reasons[failure.localizedDescription];if(reason)safe[@"reason"]=reason;
-                        if([@"TVAppStateServices" isEqual:failure.domain] && failure.code>=3)self->_uncertain=YES;
+                        // Preserve the native failure explanation, never arbitrary userInfo or payloads.
+                        NSString *message=failure.localizedDescription;
+                        if(message.length)safe[@"message"]=[message substringToIndex:MIN(message.length,2048)];
+                        if([failure.userInfo[@"sourceDomain"] isKindOfClass:NSString.class])safe[@"source_domain"]=failure.userInfo[@"sourceDomain"];
+                        if([failure.userInfo[@"sourceCode"] isKindOfClass:NSNumber.class])safe[@"source_code"]=failure.userInfo[@"sourceCode"];
+                        NSNumber *posix=failure.userInfo[@"posixCode"];
+                        if([posix isKindOfClass:NSNumber.class] && posix.integerValue>0 && posix.integerValue<=255)safe[@"posix_code"]=posix;
                         NSString *pending=failure.userInfo[@"pendingCaptureReference"];
                         NSString *prefix=[bundle stringByAppendingString:@"/snapshots/.capture-"];
                         if([pending isKindOfClass:NSString.class] && [pending hasPrefix:prefix] && [[NSUUID alloc]initWithUUIDString:[pending substringFromIndex:prefix.length]])safe[@"pending_capture_id"]=[@"capture:" stringByAppendingString:[pending substringFromIndex:prefix.length]];
                         op[@"error"]=safe;
                     }
-                    if(!result && !failure){op[@"error"]=@{@"code":@"missing_result"};if(!readOnly)self->_uncertain=YES;}
+                    if(!result && !failure)op[@"error"]=@{@"code":@"missing_result"};
                     self->_finished[identifier]=@(NSProcessInfo.processInfo.systemUptime);self->_active=nil;
                     [self publish:identifier];
                 }
             }];
         } @catch(__unused NSException *exception){
-            _uncertain=YES;_stopped=YES;_active=nil;
+            _active=nil;
             _operations[identifier][@"status"]=@"completed";_operations[identifier][@"error"]=@{@"code":@"outcome_unknown"};_finished[identifier]=@(NSProcessInfo.processInfo.systemUptime);
+            [self publish:identifier];
         }
         return [_operations[identifier]copy];
     }

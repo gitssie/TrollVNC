@@ -155,6 +155,7 @@ static BOOL RefreshPreferences(NSDictionary *target, NSDictionary *before, NSErr
     return [self.engine updateSnapshot:reference bundleID:self.bundleID metadata:metadata error:error];
 }
 - (BOOL)remove:(NSString *)reference error:(NSError **)error {
+    if(self.progress)self.progress(@{@"phase":@"delete",@"stage":@"validate"});
     NSArray *parts=[reference componentsSeparatedByString:@"/"];
     if(parts.count==3 && [parts[1] isEqual:@"baselines"])return [self.engine deleteBaseline:reference bundleID:self.bundleID error:error];
     return [self.engine deleteSnapshot:reference bundleID:self.bundleID error:error];
@@ -248,6 +249,8 @@ int main(int argc, const char **argv) { @autoreleasepool {
     NSMutableDictionary *response=[(result?@{@"ok":@YES,@"result":result}:@{@"ok":@NO,@"message":error.localizedDescription?:@"App-state operation failed",
         @"stateMayBePartial":@([error.userInfo[@"stateMayBePartial"] boolValue]),@"archiveMayBePartial":@([error.userInfo[@"archiveMayBePartial"] boolValue])}) mutableCopy];
     if ([error.userInfo[@"pendingCaptureReference"] isKindOfClass:NSString.class]) response[@"pendingCaptureReference"]=error.userInfo[@"pendingCaptureReference"];
+    if([error.userInfo[@"posixCode"] isKindOfClass:NSNumber.class])response[@"posixCode"]=error.userInfo[@"posixCode"];
+    if(error){response[@"errorDomain"]=error.domain;response[@"errorCode"]=@(error.code);}
     NSData *data=[NSPropertyListSerialization dataWithPropertyList:response format:NSPropertyListBinaryFormat_v1_0 options:0 error:NULL];
     if (!data) return 1;
     fwrite(data.bytes,1,data.length,stdout); return 0;
