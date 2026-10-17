@@ -1,3 +1,18 @@
+## 2026-10-17: remove location privacy module
+
+User removed `vendor/privacy-guard` because location manipulation is outside
+TrollVNC's project scope. Its source/tests, locationd injection, CLI, settings
+bridge/switch/translations, build integration and sudoers installer are removed.
+Earlier privacy implementation instructions are superseded. No device cleanup or
+repository publication is implied by this source change; already installed versions
+retain their behavior until updated and their loaded module is unloaded/restarted.
+
+Validation: five installer regressions and settings-model checks (37 retained
+settings) pass; plist/localization and maintainer-script syntax checks pass. Clean
+RootHide package build passes; all 216 archive entries have numeric owner 0:0,
+with no removed-module filenames or symbols in control/data payloads. Independent
+removal review found no important blockers. Local build only, no publication.
+
 ## 2026-10-16 / 3.2-335: explicit WireGuard activation and final lifecycle fixes
 
 User clarified network IP rows must have one icon-only button copying the raw IP, not duplicate VNC/ZXTouch endpoint actions. Removed copy/add explanatory captions and shortened restart notes. First configuration save explicitly leaves WireGuardEnabled=NO; editing preserves the existing switch state. Disabled saves only persist configuration, with no service restart; editing an enabled configuration restarts running services once. Only the network switch enables/disables the interface.
