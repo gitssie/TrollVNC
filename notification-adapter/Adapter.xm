@@ -1,5 +1,6 @@
 // Independent implementation: capture BulletinBoard events without network work in SpringBoard's callback.
 #import <Foundation/Foundation.h>
+#import "../src/NotificationPaths.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
@@ -98,15 +99,14 @@ static void tvServe(int socket) {
     close(socket);
 }
 static void tvStart(void) {
-    NSString *root = access("/rootfs/var/mobile", F_OK) == 0 ? @"/rootfs/var/mobile" : @"/var/mobile";
-    NSString *directory = [root stringByAppendingString:@"/Library/Caches/com.82flex.trollvnc.notifications"];
+    NSString *directory = tvNotificationDirectory();
     if (mkdir(directory.fileSystemRepresentation, 0700) != 0 && errno != EEXIST) return;
     struct stat directoryInfo;
     if (lstat(directory.fileSystemRepresentation, &directoryInfo) != 0 || !S_ISDIR(directoryInfo.st_mode)
         || directoryInfo.st_uid != getuid() || chmod(directory.fileSystemRepresentation, 0700) != 0) return;
-    NSString *path = [directory stringByAppendingString:@"/relay.sock"];
+    NSString *path = tvNotificationSocketPath();
     struct sockaddr_un address = {}; address.sun_family = AF_UNIX;
-    if (path.length >= sizeof(address.sun_path)) return;
+    if (strlen(path.fileSystemRepresentation) >= sizeof(address.sun_path)) return;
     strlcpy(address.sun_path, path.fileSystemRepresentation, sizeof(address.sun_path));
     struct stat previous;
     if (lstat(address.sun_path, &previous) == 0) {
@@ -117,6 +117,18 @@ static void tvStart(void) {
     // The private parent directory protects the socket during bind/chmod without changing SpringBoard umask.
     int bound = bind(fd, (struct sockaddr *)&address, sizeof(address));
     if (bound != 0 || chmod(address.sun_path, 0600) != 0 || listen(fd, 4) != 0) { close(fd); return; }
+    // On the first launch after upgrade, retire the old endpoint. Never remove
+    // unknown files or follow a symlink. Notification payloads were never stored.
+    NSString *legacyRoot = access("/rootfs/var/mobile", F_OK) == 0 ? @"/rootfs" : @"";
+    NSString *legacyDirectory = [legacyRoot stringByAppendingString:@"/var/mobile/Library/Caches/com.82flex.trollvnc.notifications"];
+    struct stat legacyInfo;
+    if (lstat(legacyDirectory.fileSystemRepresentation, &legacyInfo) == 0
+        && S_ISDIR(legacyInfo.st_mode) && legacyInfo.st_uid == getuid()) {
+        NSString *legacySocket = [legacyDirectory stringByAppendingPathComponent:@"relay.sock"];
+        if (lstat(legacySocket.fileSystemRepresentation, &legacyInfo) == 0
+            && S_ISSOCK(legacyInfo.st_mode) && legacyInfo.st_uid == getuid()) unlink(legacySocket.fileSystemRepresentation);
+        rmdir(legacyDirectory.fileSystemRepresentation);
+    }
     fcntl(fd, F_SETFL, O_NONBLOCK);
     tvListener = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, tvCaptureQueue);
     dispatch_source_set_event_handler(tvListener, ^{

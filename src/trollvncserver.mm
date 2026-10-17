@@ -4455,7 +4455,7 @@ static void cleanupAndExit(int code) {
 
 #ifdef THEBOOTSTRAP
 #define SINGLETON_PARENT_NAME "trollvncmanager"
-#define SINGLETON_MARKER_PATH "/var/mobile/Library/Caches/com.82flex.trollvnc.server.pid"
+#import "SingletonLock.h"
 
 static void monitorParentProcess(void) {
     if (isatty(STDIN_FILENO)) {
@@ -4519,11 +4519,8 @@ static void ensureSingleton(const char *argv[]) {
 
     monitorSelfAndRestartIfVnodeDeleted(argv[0]);
 
-    NSString *markerPath = @SINGLETON_MARKER_PATH;
-    const char *cMarkerPath = [markerPath fileSystemRepresentation];
-
     // Open file for read/write, create if doesn't exist
-    static int lockFD = open(cMarkerPath, O_RDWR | O_CREAT, 0644);
+    static int lockFD = tvOpenSingletonLock("server.pid");
     if (lockFD == -1) {
         TVPrintError("Failed to open lock file: %s", strerror(errno));
         exit(EXIT_FAILURE);
@@ -4560,7 +4557,6 @@ static void ensureSingleton(const char *argv[]) {
 
     // Keep the file descriptor open to maintain the lock
     // It will be automatically closed when the process exits
-    fchown(lockFD, 501, 501);
 }
 #endif
 

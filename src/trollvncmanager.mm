@@ -36,7 +36,7 @@
 #import "TRWatchDog.h"
 #import "libproc.h"
 
-#define SINGLETON_MARKER_PATH "/var/mobile/Library/Caches/com.82flex.trollvnc.manager.pid"
+#import "SingletonLock.h"
 
 BOOL tvncLoggingEnabled = YES;
 BOOL tvncVerboseLoggingEnabled = NO;
@@ -171,11 +171,8 @@ int main(int argc, const char *argv[]) {
     /* Singleton */
     monitorSelfAndRestartIfVnodeDeleted(argv[0]);
 
-    NSString *markerPath = @SINGLETON_MARKER_PATH;
-    const char *cMarkerPath = [markerPath fileSystemRepresentation];
-
     // Open file for read/write, create if doesn't exist
-    static int lockFD = open(cMarkerPath, O_RDWR | O_CREAT, 0644);
+    static int lockFD = tvOpenSingletonLock("manager.pid");
     if (lockFD == -1) {
         fprintf(stderr, "Failed to open lock file: %s\n", strerror(errno));
         return EXIT_FAILURE;
@@ -212,7 +209,6 @@ int main(int argc, const char *argv[]) {
 
     // Keep the file descriptor open to maintain the lock
     // It will be automatically closed when the process exits
-    fchown(lockFD, 501, 501);
 
     @autoreleasepool {
         NSString *executablePath = [NSString stringWithUTF8String:argv[0]];

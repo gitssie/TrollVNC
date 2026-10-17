@@ -6,7 +6,6 @@
 @property(nonatomic, assign) BOOL cancelled;
 @property(nonatomic, strong) NSDate *created;
 @property(nonatomic, copy) NSString *checksum;
-@property(nonatomic, assign) BOOL durable;
 @end
 @implementation TVPhotoJob
 @end

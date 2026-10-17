@@ -13,6 +13,21 @@ RootHide package build passes; all 216 archive entries have numeric owner 0:0,
 with no removed-module filenames or symbols in control/data payloads. Independent
 removal review found no important blockers. Local build only, no publication.
 
+## 2026-10-16 / 3.2-338: no Cache storage
+
+User explicitly removed disk photo receipts: Photos tasks/results now live only in
+the existing bounded memory registry. Restart/expiry yields an unavailable/unknown
+result, deliberately different from RV's old exact TaskNotFound error so a missing
+memory entry cannot imply an import was never submitted. Never auto-replay imports.
+Notification contents remain memory-only; shared socket path now resolves inside
+RootHide's /var/mobile/.tvnc-run/n.sock, with adapter/server sharing one definition.
+Verified phone bootstrap /var/mobile resolves inside bootstrap, not real mobile.
+New adapter retires only the owned legacy cache socket after binding successfully;
+adapter reload/respring is needed after update. Old photo receipt directory may be
+cleared in varClean after update; no more receipts are created. Singleton markers
+also leave Caches: validated uid-private temporary directory, openat/O_NOFOLLOW,
+owner/type/nlink/mode checks and no privilege-crossing fchown. Adversarial tests pass.
+
 ## 2026-10-16 / 3.2-335: explicit WireGuard activation and final lifecycle fixes
 
 User clarified network IP rows must have one icon-only button copying the raw IP, not duplicate VNC/ZXTouch endpoint actions. Removed copy/add explanatory captions and shortened restart notes. First configuration save explicitly leaves WireGuardEnabled=NO; editing preserves the existing switch state. Disabled saves only persist configuration, with no service restart; editing an enabled configuration restarts running services once. Only the network switch enables/disables the interface.

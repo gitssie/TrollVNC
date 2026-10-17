@@ -1,4 +1,5 @@
 #import "NotificationBridge.h"
+#import "NotificationPaths.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
@@ -9,11 +10,6 @@
 #include <poll.h>
 #include <errno.h>
 
-static NSString *tvSocketPath(void) {
-    return access("/rootfs/var/mobile", F_OK) == 0
-        ? @"/rootfs/var/mobile/Library/Caches/com.82flex.trollvnc.notifications/relay.sock"
-        : @"/var/mobile/Library/Caches/com.82flex.trollvnc.notifications/relay.sock";
-}
 static BOOL tvRead(int fd, void *bytes, size_t length) {
     char *out = (char *)bytes;
     while (length) { ssize_t n = read(fd, out, length); if (n <= 0) return NO; out += n; length -= n; }
@@ -21,7 +17,9 @@ static BOOL tvRead(int fd, void *bytes, size_t length) {
 }
 NSDictionary *tvNotificationSnapshot(NSString **error) {
     struct sockaddr_un address = {}; address.sun_family = AF_UNIX;
-    strlcpy(address.sun_path, tvSocketPath().fileSystemRepresentation, sizeof(address.sun_path));
+    const char *path = tvNotificationSocketPath().fileSystemRepresentation;
+    if (strlen(path) >= sizeof(address.sun_path)) { *error = @"Notification socket path is too long"; return nil; }
+    strlcpy(address.sun_path, path, sizeof(address.sun_path));
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) { *error = @"Cannot create notification adapter connection"; return nil; }
     struct timeval timeout = {0, 250000};
