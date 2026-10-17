@@ -2,8 +2,8 @@
 NS_ASSUME_NONNULL_BEGIN
 NSArray<NSString *> * _Nullable PXASKeychainGroupsFromEntitlements(NSDictionary *entitlements, NSString *bundleID, NSError **error);
 
-// Standalone physical-path adapter. Product integration must use PXRootHidePath
-// and the existing worker signer instead of giving the UIKit process groups.
+// Standalone physical-path adapter. Product integration resolves rootless paths
+// and uses the scoped worker signer instead of giving the UIKit process groups.
 @interface PXASLaunchServicesResolver : NSObject <PXASResolver>
 @end
 @interface PXASSecurityKeychain : NSObject <PXASKeychain>

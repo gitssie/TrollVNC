@@ -4183,9 +4183,8 @@ static void setupRfbFileTransferExtension(void) {
     rfbRegisterTightVNCFileTransferExtension();
     gFileTransferRegistered = YES;
     // Both extensions must interpret / as the same directory. The TightVNC
-    // default is the effective user's home, which can differ under RootHide.
-    const char *fileRoot = access("/rootfs/var/mobile", F_OK) == 0
-        ? "/rootfs/var/mobile" : "/var/mobile";
+    // default is the real mobile data directory for the Dopamine 3 daemon.
+    const char *fileRoot = "/var/mobile";
     if (!SetFtpRoot((char *)fileRoot)) {
         TVLog(@"Cannot set file transfer root to %s", fileRoot);
         return;

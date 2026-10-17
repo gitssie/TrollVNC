@@ -1,16 +1,14 @@
 #!/bin/bash
-
-THEOS="$HOME/theos"
-if [ ! -d "$THEOS" ]; then
-  THEOS="$GITHUB_WORKSPACE/theos"
+# Dopamine 3 production build. Source from the repository root.
+if [ -z "${THEOS:-}" ]; then
+  if [ -d "$HOME/theos" ]; then
+    export THEOS="$HOME/theos"
+  elif [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE/theos" ]; then
+    export THEOS="$GITHUB_WORKSPACE/theos"
+  else
+    export THEOS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../theos" && pwd -P)"
+  fi
 fi
-if [ ! -d "$THEOS" ]; then
-  THEOS="$GITHUB_WORKSPACE/theos-roothide"
-fi
-
-export THEOS
 export THEOS_PACKAGE_SCHEME=rootless
-export THEOS_DEVICE_IP=127.0.0.1
-export THEOS_DEVICE_PORT=58422
 export THEOS_DEVICE_SIMULATOR=
 export THEBOOTSTRAP=

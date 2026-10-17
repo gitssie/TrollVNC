@@ -1,3 +1,9 @@
+## Dopamine 3 migration (2026-10-17)
+
+Production helpers now use the standard rootless bootstrap and real App Group
+container paths, with no RootHide library or `/rootfs` fallback. Historical device
+results below predate this migration and require fresh Dopamine 3 acceptance.
+
 # Karing module instructions
 
 Current production: `/api/karing/*` remains the raw HTTP/2 reverse proxy.

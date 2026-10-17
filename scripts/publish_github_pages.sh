@@ -22,7 +22,7 @@ usage() {
     cat <<'EOF'
 Usage: scripts/publish_github_pages.sh [--dry-run] publish
 
-Build a fresh Dopamine RootHide package, validate a complete Sileo repository
+Build a fresh Dopamine 3 package, validate a complete Sileo repository
 and website, then commit and push an isolated gh-pages branch without force.
 
 The first publication requires GitHub Pages to be set to gh-pages /(root).
@@ -81,8 +81,8 @@ assert_main
 release_head=$local_sha
 
 if [ -z "${THEOS:-}" ]; then
-    THEOS=$(CDPATH= cd -- "$root/../../theos-roothide" 2>/dev/null && pwd -P) ||
-        fail "set THEOS to the RootHide Theos checkout"
+    THEOS=$(CDPATH= cd -- "$root/../../theos" 2>/dev/null && pwd -P) ||
+        fail "set THEOS to the standard Theos checkout"
 fi
 export THEOS
 [ -f "$THEOS/makefiles/common.mk" ] || fail "THEOS has no makefiles/common.mk"
@@ -93,13 +93,13 @@ version=$(awk '$1 == "export" && $2 == "PACKAGE_VERSION" && $3 == ":=" {print $4
 case "$package_id:$version" in
     *[!A-Za-z0-9.+:~_-]*) fail "package identity contains unsafe characters" ;;
 esac
-package="$root/packages/${package_id}_${version}_iphoneos-arm64e.deb"
+package="$root/packages/${package_id}_${version}_iphoneos-arm64.deb"
 [ ! -L "$package" ] || fail "expected package path must not be a symlink"
 rm -f -- "$package"
 umask 022
-make -C "$root" clean package THEOS_PACKAGE_SCHEME=roothide THEBOOTSTRAP= THEOS_DEVICE_SIMULATOR=
+make -C "$root" clean package THEOS_PACKAGE_SCHEME=rootless THEBOOTSTRAP= THEOS_DEVICE_SIMULATOR=
 umask 077
-[ -f "$package" ] && [ ! -L "$package" ] || fail "fresh RootHide package was not produced"
+[ -f "$package" ] && [ ! -L "$package" ] || fail "fresh Dopamine 3 package was not produced"
 
 mkdir -p "$root/.deploy/tmp"
 temporary=$(mktemp -d "$root/.deploy/tmp/github-pages.XXXXXX")

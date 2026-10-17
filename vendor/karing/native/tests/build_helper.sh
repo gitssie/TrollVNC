@@ -7,9 +7,6 @@ extra_flags=()
 if [[ ${KARING_NATIVE_DIAGNOSTICS:-0} == 1 ]]; then
   extra_flags+=(-DTVKARING_DIAGNOSTICS=1)
 fi
-if [[ ${KARING_NATIVE_ROOTHIDE:-1} == 1 ]]; then
-  extra_flags+=(-DTVAS_ROOTHIDE=1)
-fi
 xcrun clang -target arm64-apple-ios15.0 -isysroot "$sdk_path" \
   -fobjc-arc -Wall -Wextra -Werror -framework Foundation -framework NetworkExtension \
   -I"$module_root/include" "$module_root/src/main.m" "$module_root/src/Helper.m" \

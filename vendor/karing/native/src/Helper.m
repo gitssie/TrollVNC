@@ -5,9 +5,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <mach-o/dyld.h>
-#if defined(TVAS_ROOTHIDE)
-#include <dlfcn.h>
-#endif
 
 @protocol TVKaringConfigurationLoading
 - (void)loadConfigurationsWithCompletionQueue:(dispatch_queue_t)queue handler:(void (^)(NSArray *, NSError *))handler;
@@ -85,38 +82,11 @@ static NSString *RuntimeRoot(void) {
     NSRange usr = [path rangeOfString:@"/usr/" options:NSBackwardsSearch];
     return usr.location == NSNotFound ? @"" : [path substringToIndex:usr.location];
 }
-#if defined(TVAS_ROOTHIDE)
-static NSString *MappedPath(NSString *path, BOOL system) {
-    // Resolve the library at runtime: Karing's identity cannot rely on dyld
-    // environment overrides or RootHide's virtual .jbroot loader symlink.
-    static void *library;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSString *location = [RuntimeRoot() stringByAppendingString:@"/usr/lib/libroothide.dylib"];
-        library = dlopen(location.fileSystemRepresentation, RTLD_NOW | RTLD_LOCAL);
-    });
-    const char *(*jailbreak)(const char *) = library ? dlsym(library, "jbroot") : NULL;
-    const char *(*root)(const char *) = library ? dlsym(library, "rootfs") : NULL;
-    if (!jailbreak || !root) return nil;
-    const char *converted = system ? root(path.fileSystemRepresentation) : path.fileSystemRepresentation;
-    if (!converted) return nil;
-    NSString *relative = @(converted);
-    const char *mapped = jailbreak(relative.fileSystemRepresentation);
-    return mapped ? @(mapped) : nil;
-}
-#endif
 static NSString *Container(void) {
     NSFileManager *files = NSFileManager.defaultManager;
     NSURL *group = [files containerURLForSecurityApplicationGroupIdentifier:@"group.com.nebula.karing"];
     if (group && [files fileExistsAtPath:[group.path stringByAppendingPathComponent:@"service_core.json"]]) return group.path;
-    NSMutableArray *roots = [@[@"/var/mobile/Containers/Shared/AppGroup", @"/rootfs/var/mobile/Containers/Shared/AppGroup"] mutableCopy];
-#if defined(TVAS_ROOTHIDE)
-    NSString *mapped = MappedPath(@"/var/mobile/Containers/Shared/AppGroup", YES);
-    if (mapped) [roots insertObject:mapped atIndex:0];
-#else
-    NSString *runtime = RuntimeRoot();
-    if (runtime.length) [roots insertObject:[runtime stringByAppendingString:@"/rootfs/var/mobile/Containers/Shared/AppGroup"] atIndex:0];
-#endif
+    NSArray *roots = @[@"/var/mobile/Containers/Shared/AppGroup"];
     for (NSString *root in roots) {
         for (NSString *entry in [files contentsOfDirectoryAtPath:root error:nil]) {
             NSString *path = [root stringByAppendingPathComponent:entry];
@@ -128,14 +98,6 @@ static NSString *Container(void) {
 }
 NSDictionary *TVKaringNativeRequest(NSString *operation) {
     if (!NSThread.isMainThread) return @{@"error":@"invalid_execution_context"};
-#if defined(TVKARING_DIAGNOSTICS) && defined(TVAS_ROOTHIDE)
-    if ([operation isEqual:@"diagnostics"]) {
-        NSString *mapped = MappedPath(@"/var/mobile/Containers/Shared/AppGroup", YES);
-        return @{@"runtimeRoot":RuntimeRoot(), @"mappedGroup":mapped ?: @"unavailable",
-            @"entries":@([NSFileManager.defaultManager contentsOfDirectoryAtPath:mapped ?: @"/nonexistent" error:nil].count),
-            @"libraryReadable":@(access([RuntimeRoot() stringByAppendingString:@"/usr/lib/libroothide.dylib"].fileSystemRepresentation, R_OK) == 0)};
-    }
-#endif
     if ([operation isEqual:@"config"] || [operation isEqual:@"profiles"]) {
         NSString *container = Container();
         if (!container) return @{@"error":@"karing_container_unavailable"};
@@ -154,10 +116,6 @@ NSDictionary *TVKaringNativeRequest(NSString *operation) {
     if ([operation isEqual:@"status"]) return Message(manager, NO);
     // Serializes reloads across independently spawned helpers; no global write gate.
     NSString *lockPath = [RuntimeRoot() stringByAppendingString:@"/tmp/trollvnc-karing-reload.lock"];
-#if defined(TVAS_ROOTHIDE)
-    lockPath = MappedPath(@"/tmp/trollvnc-karing-reload.lock", NO);
-    if (!lockPath) return @{@"error":@"path_conversion_unavailable", @"outcome":@"not_sent"};
-#endif
     int lock = open(lockPath.fileSystemRepresentation, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (lock < 0) return @{@"error":@"reload_lock_unavailable", @"outcome":@"not_sent"};
     if (flock(lock, LOCK_EX | LOCK_NB) != 0) { close(lock); return @{@"error":@"reload_busy", @"outcome":@"not_sent"}; }

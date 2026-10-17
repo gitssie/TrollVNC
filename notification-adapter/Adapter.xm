@@ -119,8 +119,7 @@ static void tvStart(void) {
     if (bound != 0 || chmod(address.sun_path, 0600) != 0 || listen(fd, 4) != 0) { close(fd); return; }
     // On the first launch after upgrade, retire the old endpoint. Never remove
     // unknown files or follow a symlink. Notification payloads were never stored.
-    NSString *legacyRoot = access("/rootfs/var/mobile", F_OK) == 0 ? @"/rootfs" : @"";
-    NSString *legacyDirectory = [legacyRoot stringByAppendingString:@"/var/mobile/Library/Caches/com.82flex.trollvnc.notifications"];
+    NSString *legacyDirectory = @"/var/mobile/Library/Caches/com.82flex.trollvnc.notifications";
     struct stat legacyInfo;
     if (lstat(legacyDirectory.fileSystemRepresentation, &legacyInfo) == 0
         && S_ISDIR(legacyInfo.st_mode) && legacyInfo.st_uid == getuid()) {

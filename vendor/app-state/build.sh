@@ -5,7 +5,7 @@ umask 077
 mkdir -p "$root/build"
 case "${1:-test}" in
     test)
-        xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -DTVAS_ROOTHIDE=1 -I "$root/tests/runtime" \
+        xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -DTVAS_DOPAMINE3=1 -I "$root/tests/runtime" \
             "$root/src/TVASRuntime.m" "$root/tests/RuntimePathsTests.m" -framework Foundation -o "$root/build/runtime-path-tests"
         "$root/build/runtime-path-tests"
         xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -I "$root/profiles" \

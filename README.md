@@ -6,6 +6,11 @@
 
 TrollVNC is a VNC server for iOS devices, allowing remote access and control of the device’s screen.
 
+This branch targets **Dopamine 3 only**, using standard rootless packaging
+(`iphoneos-arm64`, `/var/jb`, iOS 15+). Dopamine 2 RootHide, rootful and
+standalone TrollStore packages are no longer supported. Simulator tooling is for
+host development only. Build and device validation details: [Dopamine 3](docs/dopamine3.md).
+
 <img width="763" alt="screenshot tiny" src="https://github.com/user-attachments/assets/2d2cd457-a3d2-475a-b391-e3232d747f48" />
 
 ## Features
@@ -28,7 +33,7 @@ TrollVNC is a VNC server for iOS devices, allowing remote access and control of 
 
 1. Fork this repo and run GitHub workflow “Build TrollVNC”.
 2. Download “TrollVNC” from Releases and install it on your iOS device.
-3. Configure the VNC server settings from “Settings” → “TrollVNC” or the standalone “TrollVNC” app as needed.
+3. Configure the VNC server settings from “Settings” → “TrollVNC” as needed.
 4. Or, run the following command on iOS device or simulator:
 
 ```sh
@@ -563,7 +568,7 @@ TrollVNC can be preconfigured via a bundled `Managed.plist` for supervised or fl
 - Booleans:
   - `ClipboardEnabled`, `ViewOnly`, `OrientationSync`, `OrientationPadFix`, `NaturalScroll`, `ServerCursor`, `AsyncSwap`, `KeyLogging`, `AutoAssistEnabled`, `BonjourEnabled`, `FileTransferEnabled`, `SingleNotifEnabled`, `ClientNotifsEnabled`
 
-- `LaunchAtLogin`: `true` | `false` | custom app ID (e.g., `com.zqbb.Dopamine-roothide`)
+- `LaunchAtLogin`: `true` | `false` | custom app ID (e.g., `com.opa334.Dopamine`)
   - Whether to start TrollVNC at login; if set to a custom app ID, it launches that app instead.
 
 **Notes**:
@@ -641,7 +646,7 @@ TrollVNC can be preconfigured via a bundled `Managed.plist` for supervised or fl
 
 ## Local Sileo Development Repository
 
-`scripts/deploy_sileo.sh` publishes the current TrollVNC `iphoneos-arm64e`
+`scripts/deploy_sileo.sh` publishes the current TrollVNC `iphoneos-arm64`
 package as a small, unsigned local APT repository. It binds the Mac HTTP server
 to `0.0.0.0`, so a phone on the same Wi-Fi can connect to the Mac's LAN IP.
 
@@ -669,11 +674,11 @@ from the old SSH deployment, run `scripts/deploy_sileo.sh stop` before editing
 
 ## Public Sileo Source on GitHub Pages
 
-The XenSpace RootHide package is published at
+The existing XenSpace source is hosted at
 `https://gitssie.github.io/TrollVNC`. Add that URL to Sileo, or use
 `sileo://source/https://gitssie.github.io/TrollVNC` on your device.
 
-The publication script builds a fresh `iphoneos-arm64e` deb locally, checks
+After an explicitly requested publication, this branch targets Dopamine 3. The publication script builds a fresh `iphoneos-arm64` deb locally, checks
 the package identity and metadata, renders a static website and APT indexes,
 then pushes only the generated files to `gh-pages`. It does not switch the
 current `main` worktree or run the device tunnel.
@@ -745,8 +750,8 @@ For advanced tuning (HTTP/TLS, wheel tuning, dirty detection, etc.), commit your
 ### Artifacts and Releases
 
 - Each run uploads artifacts per scheme:
-  - `packages-default`, `packages-rootless`, `packages-roothide`, `packages-bootstrap`
-  - `dsym-default`, `dsym-rootless`, `dsym-roothide`, `dsym-bootstrap`
+  - `packages-rootless`
+  - `dsym-rootless`
 - Download them from the run page → `Artifacts`.
 - If you push to the `release` branch (and the workflow runs there), a GitHub Release is created automatically with packaged files attached.
 

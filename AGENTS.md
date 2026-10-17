@@ -1,3 +1,42 @@
+## 2026-10-17 / 4.0-2: first Dopamine 3 device install
+
+User explicitly authorized installation on the USB-forwarded phone. Verified
+previously pinned SSH key, iPhone9,2/iOS15.8.8 and Dopamine basebin3.0.11.
+4.0-1 exposed Procursus visudo missing its private library search path; visudo
+itself is installed/functional.4.0-2 scopes DYLD_LIBRARY_PATH to the fixed
+/var/jb/usr/libexec/sudo directory for visudo only, checks library existence,
+retains sudoers validation/atomic replacement and adds no trustcache workaround.
+Ten installer regressions and independent fix review pass; package build passes.
+
+Installed4.0-2 plus missing ldid/libplist3 dependencies; dpkg install ok installed,
+sudoers parsed OK. One SpringBoard reload. Service persists with one launch/no
+exit; VNC handshake348x620, HTTP2auth/authorize/info/apps/screenshot/disconnect,
+actual scoped-worker read-only Karing catalog and native Karing config/status pass.
+Notification socket mobile-owned0700parent/0600socket. No new startup/probe error
+lines. No account writes, backups/restores/IDFV mutation, Karing reload, Photos
+writes or input/delivery acceptance. Detailed evidence:docs/dopamine3.md.
+Credentials/tokens held only in memory; uploaded installers/temp probes removed,
+SSH/control sessions closed. Installed service left running. No repo publication.
+
+## 2026-10-17: Dopamine 3 only development
+
+This branch targets Dopamine 3 standard rootless only (first development package
+4.0-1, iphoneos-arm64). Use standard `/opt/workspace/github/theos`, with
+`THEOS_PACKAGE_SCHEME=rootless`, `THEBOOTSTRAP=` and `THEOS_DEVICE_SIMULATOR=`.
+Do not reuse historical RootHide build, install, trust or device-acceptance claims
+below. Reference source is `/opt/workspace/github/Dopamine`, 448ff1a (3.0.11).
+Package paths use rootless resolution; real system/container/backup paths stay on
+`/var`. Scoped workers no longer need `.jbroot` dependency anchors. Notification
+socket uses the short `/var/jb/var/mobile/.tvnc-run/n.sock` alias on both ends.
+See `docs/dopamine3.md`. No publication, phone installation or restart in this task.
+Final standard-Theos build/package passed:218 entries numeric0:0,172 regular
+control/data files match staging bytes/modes, all payload under/var/jb. Recovery
+helper4755, other helpers0755; both adapters have arm64+arm64e, no RootHide dylib
+dependency. Actual package repository rendering validates in a temporary directory.
+Installer/maintainer9, repository7, App-state native/socket, Apple and Karing native
+host suites pass; two independent reviews found no important blockers. Device
+runtime acceptance remains pending; do not infer it from host/build evidence.
+
 ## 2026-10-17: remove location privacy module
 
 User removed `vendor/privacy-guard` because location manipulation is outside

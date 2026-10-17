@@ -23,7 +23,7 @@ SPEC.loader.exec_module(pages)
 class GitHubPagesPublicationTests(unittest.TestCase):
     def make_deb(
         self, root: Path, author: str = "XenSpace", bad_permissions: bool = False,
-        architecture: str = "iphoneos-arm64e", payload_prefix=None
+        architecture: str = "iphoneos-arm64", payload_prefix=None
     ) -> Path:
         source = pages.fields_from_control((ROOT / "layout/DEBIAN/control").read_bytes())
         version = pages.expected_version()
@@ -113,9 +113,16 @@ class GitHubPagesPublicationTests(unittest.TestCase):
             output = root / "site"
             pages.render(package, output)
             self.assertIn("Architectures: iphoneos-arm64\n", (output / "Release").read_text())
-            self.assertIn("Dopamine rootless", (output / "index.html").read_text())
+            self.assertIn("Dopamine 3", (output / "index.html").read_text())
             self.assertNotIn("RootHide", (output / "index.html").read_text())
             pages.validate_site(output, package)
+
+    def test_rejects_roothide_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = self.make_deb(root, architecture="iphoneos-arm64e")
+            with self.assertRaisesRegex(pages.PublicationError, "Dopamine 3 rootless arm64"):
+                pages.render(package, root / "site")
 
     def test_rootless_package_rejects_unrelocated_payload(self):
         with tempfile.TemporaryDirectory() as temporary:

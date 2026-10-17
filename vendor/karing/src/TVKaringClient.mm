@@ -141,7 +141,7 @@ public:
     NSURL *group = [files containerURLForSecurityApplicationGroupIdentifier:@"group.com.nebula.karing"];
     if (group) [containers addObject:group.path];
     // The daemon lacks App Group entitlement. Identify only Karing's container.
-    for (NSString *root in @[@"/var/mobile/Containers/Shared/AppGroup", @"/rootfs/var/mobile/Containers/Shared/AppGroup"]) {
+    for (NSString *root in @[@"/var/mobile/Containers/Shared/AppGroup"]) {
         for (NSString *name in [files contentsOfDirectoryAtPath:root error:nil]) {
             NSString *path = [root stringByAppendingPathComponent:name];
             NSDictionary *metadata = [NSDictionary dictionaryWithContentsOfFile:[path stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"]];

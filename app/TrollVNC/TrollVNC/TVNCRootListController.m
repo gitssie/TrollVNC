@@ -393,26 +393,7 @@ NS_INLINE BOOL TVNCIsValidBindHostLiteral(NSString *host) {
 }
 
 - (NSString *)jbrootPath {
-    if (!_jbrootPath) {
-        NSString *rootPath = [self.bundle bundlePath];
-        do {
-            if ([rootPath hasSuffix:@"/procursus"] || [rootPath hasSuffix:@"/var/jb"] ||
-                [[rootPath lastPathComponent] hasPrefix:@".jbroot-"]) {
-                // Found the jailbreak root
-                break;
-            }
-            if ([rootPath hasPrefix:@"/private/preboot/"] && [rootPath hasSuffix:@"/jb"]) {
-                // Found the jailbreak root (NathanLR)
-                break;
-            }
-            if ([rootPath isEqualToString:@"/"] || !rootPath.length) {
-                // Reached the root without finding jailbreak root
-                break;
-            }
-            rootPath = [rootPath stringByDeletingLastPathComponent];
-        } while (YES);
-        _jbrootPath = rootPath;
-    }
+    if (!_jbrootPath) _jbrootPath = @"/var/jb";
     return _jbrootPath;
 }
 

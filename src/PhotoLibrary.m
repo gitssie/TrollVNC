@@ -78,9 +78,6 @@ static int tvOpenRemote(const char *root, const char *path) {
 }
 
 static NSString *tvIncomingReal(void) {
-    NSString *rootfs = @"/rootfs/private/var/mobile/Media/DCIM/.MISC/Incoming";
-    if (access(rootfs.fileSystemRepresentation, F_OK) == 0)
-        return rootfs;
     return @"/private/var/mobile/Media/DCIM/.MISC/Incoming";
 }
 

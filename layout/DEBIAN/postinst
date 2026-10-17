@@ -1,17 +1,18 @@
-#!/usr/bin/env bash
+#!/var/jb/bin/sh
 
 exec 3>&1 >/dev/null
 
-if [ "$DPKG_MAINTSCRIPT_ARCH" == "iphoneos-arm64" ]; then
-    DPKG_ROOT="/var/jb"
+if [ "${DPKG_MAINTSCRIPT_ARCH:-}" != "iphoneos-arm64" ]; then
+    echo "TrollVNC: only Dopamine 3 rootless packages are supported." >&2
+    exit 1
 fi
+DPKG_ROOT="/var/jb"
+export PATH="/var/jb/usr/bin:/var/jb/usr/sbin:/var/jb/bin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-if [ "$DPKG_MAINTSCRIPT_ARCH" = "iphoneos-arm64e" ]; then
-    /bin/sh /usr/libexec/trollvnc/configure-app-state.sh install >&3 || {
-        echo "TrollVNC: app-state configuration failed; see the error above." >&2
-        exit 1
-    }
-fi
+/var/jb/bin/sh /var/jb/usr/libexec/trollvnc/configure-app-state.sh install >&3 || {
+    echo "TrollVNC: app-state configuration failed; see the error above." >&2
+    exit 1
+}
 
 SERV_AGENT="$DPKG_ROOT/Library/LaunchDaemons/com.82flex.trollvnc.plist"
 

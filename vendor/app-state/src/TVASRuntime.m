@@ -1,19 +1,19 @@
 #import "TVASRuntime.h"
-#if defined(TVAS_ROOTHIDE)
-#import <roothide.h>
+#if defined(TVAS_DOPAMINE3)
+#import <rootless.h>
 #endif
 NSDictionary *TVASRuntimePaths(void) {
-#if defined(TVAS_ROOTHIDE)
-    NSString *data=jbroot(@"/var/mobile/Library/TrollVNC/AppState");
+#if defined(TVAS_DOPAMINE3)
+    NSString *data=ROOT_PATH_NS(@"/var/mobile/Library/TrollVNC/AppState");
     return @{@"root":[data stringByAppendingPathComponent:@"Operations"],
-        @"worker":jbroot(@"/usr/libexec/trollvnc/app-state-worker"),
-        @"vendor":jbroot(@"/usr/libexec/trollvnc/app-state-idfv-worker"),
-        @"bootstrap":jbroot(@"/"),@"ldid":jbroot(@"/usr/bin/ldid"),@"sudo":jbroot(@"/usr/bin/sudo"),
-        @"backup":jbroot(rootfs(@"/var/mobile/Media/AppStateBackups")),
-        @"system_groups":jbroot(rootfs(@"/var/containers/Shared/SystemGroup")),
+        @"worker":ROOT_PATH_NS(@"/usr/libexec/trollvnc/app-state-worker"),
+        @"vendor":ROOT_PATH_NS(@"/usr/libexec/trollvnc/app-state-idfv-worker"),
+        @"bootstrap":ROOT_PATH_NS(@"/"),@"ldid":ROOT_PATH_NS(@"/usr/bin/ldid"),@"sudo":ROOT_PATH_NS(@"/usr/bin/sudo"),
+        @"backup":@"/var/mobile/Media/AppStateBackups",
+        @"system_groups":@"/var/containers/Shared/SystemGroup",
         @"association":[data stringByAppendingPathComponent:@"associations.plist"]};
 #else
-    // RootHide-only native integration. Tests inject explicit physical paths.
+    // Dopamine 3 device integration. Tests inject explicit physical paths.
     return @{};
 #endif
 }

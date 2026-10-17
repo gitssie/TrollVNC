@@ -5,8 +5,5 @@ karing-native-helper_CFLAGS := -fobjc-arc -Wall -Wextra -Werror -I$(KARING_NATIV
 karing-native-helper_FRAMEWORKS := Foundation NetworkExtension
 karing-native-helper_INSTALL_PATH := /usr/libexec/trollvnc
 karing-native-helper_CODESIGN_FLAGS := -S$(KARING_NATIVE_ROOT)/helper.entitlements
-ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
-karing-native-helper_CFLAGS += -DTVAS_ROOTHIDE=1
-endif
 trollvncserver_FILES += $(KARING_NATIVE_ROOT)/src/Client.m
 trollvncserver_CFLAGS += -I$(KARING_NATIVE_ROOT)/include

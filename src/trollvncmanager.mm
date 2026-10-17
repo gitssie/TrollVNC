@@ -233,8 +233,7 @@ int main(int argc, const char *argv[]) {
 
         NSString *rootPath = executablePath;
         do {
-            if ([rootPath hasSuffix:@"/procursus"] || [rootPath hasSuffix:@"/var/jb"] ||
-                [[rootPath lastPathComponent] hasPrefix:@".jbroot-"]) {
+            if ([rootPath hasSuffix:@"/procursus"] || [rootPath hasSuffix:@"/var/jb"]) {
                 // Found the jailbreak root
                 break;
             }

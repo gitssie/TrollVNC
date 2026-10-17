@@ -39,7 +39,7 @@ def main():
             subprocess.run(["bash", str(MODULE / "tests/build_helper.sh"), str(helper)], check=True)
             sdk = subprocess.check_output(["xcrun", "--sdk", "iphoneos", "--show-sdk-path"], text=True).strip()
             subprocess.run(["xcrun", "clang", "-target", "arm64-apple-ios15.0", "-isysroot", sdk,
-                            "-fobjc-arc", "-DTVAS_ROOTHIDE=1", "-Wall", "-Wextra", "-Werror", "-framework", "Foundation",
+                            "-fobjc-arc", "-Wall", "-Wextra", "-Werror", "-framework", "Foundation",
                             "-I" + str(MODULE / "include"), str(MODULE / "tests/DeviceDriver.m"),
                             str(MODULE / "src/Client.m"), "-o", str(driver)], check=True)
             subprocess.run(["ldid", "-S" + str(PROJECT / "src/trollvncserver.entitlements"), str(driver)], check=True)

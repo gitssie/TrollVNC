@@ -49,6 +49,7 @@ static void Check(BOOL value,const char *message) { if (!value) { fprintf(stderr
         if ([arguments.firstObject isEqual:@"-e"] && output) *output=[NSData dataWithContentsOfFile:[arguments.lastObject stringByAppendingPathExtension:@"entitlements.plist"]];
         return YES;
     }
+    Check(![NSFileManager.defaultManager fileExistsAtPath:[executable.stringByDeletingLastPathComponent stringByAppendingPathComponent:@".jbroot"]],"copied worker has no RootHide dependency anchor");
     self.launches++;
     if([self.mode isEqual:@"progress-final"]) {
         NSString *path=[executable.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"progress.plist"];

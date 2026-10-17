@@ -24,7 +24,7 @@ usage() {
 Usage: scripts/deploy_sileo.sh [--dry-run] COMMAND
 
 Commands:
-  deploy   Validate the current arm64e package, publish it, start, and verify.
+  deploy   Validate the current arm64 package, publish it, start, and verify.
   start    Start or reuse the LAN HTTP server.
   verify   Verify the local repository and HTTP endpoint.
   status   Report repository and HTTP server health.
@@ -312,7 +312,7 @@ load_source_identity() {
     EXPECTED_PACKAGE=$(control_field Package "$control") || fail "source control has invalid Package metadata"
     source_arch=$(control_field Architecture "$control") || fail "source control has invalid Architecture metadata"
     [[ "$source_arch" == iphoneos-arm ]] || fail "source control Architecture must be iphoneos-arm"
-    EXPECTED_ARCH="${source_arch}64e"
+    EXPECTED_ARCH="${source_arch}64"
     EXPECTED_VERSION=$(awk '
         $1 == "export" && $2 == "PACKAGE_VERSION" && $3 == ":=" && NF == 4 {
             value = $4; count++
@@ -336,7 +336,7 @@ select_package() {
     else
         candidate="$packages_dir/${EXPECTED_PACKAGE}_${EXPECTED_VERSION}_${EXPECTED_ARCH}.deb"
     fi
-    [[ ! -L "$candidate" && -f "$candidate" && -r "$candidate" ]] || fail "current arm64e package is missing, unreadable, or a symlink"
+    [[ ! -L "$candidate" && -f "$candidate" && -r "$candidate" ]] || fail "current arm64 package is missing, unreadable, or a symlink"
     parent=$(CDPATH= cd -- "$(dirname -- "$candidate")" && pwd -P) || fail "selected package parent is unavailable"
     [[ "$parent" == "$packages_dir" ]] || fail "selected package must remain directly inside TrollVNC/packages"
     SELECTED_BASENAME=$(basename -- "$candidate")
@@ -373,7 +373,7 @@ validate_package_identity() {
     local field
     [[ "$(control_field Package "$PACKAGE_CONTROL")" == "$EXPECTED_PACKAGE" ]] || fail "package identifier does not match source control"
     [[ "$(control_field Version "$PACKAGE_CONTROL")" == "$EXPECTED_VERSION" ]] || fail "package version does not match Makefile PACKAGE_VERSION"
-    [[ "$(control_field Architecture "$PACKAGE_CONTROL")" == "$EXPECTED_ARCH" ]] || fail "package architecture is not the source-derived arm64e architecture"
+    [[ "$(control_field Architecture "$PACKAGE_CONTROL")" == "$EXPECTED_ARCH" ]] || fail "package architecture is not the source-derived arm64 architecture"
     for field in Filename Size MD5sum SHA1 SHA256; do
         ! awk -v requested="$field" 'index($0, requested ":") == 1 {found = 1} END {exit found ? 0 : 1}' "$PACKAGE_CONTROL" ||
             fail "package control unexpectedly contains repository field: $field"

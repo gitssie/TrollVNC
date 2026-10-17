@@ -22,5 +22,5 @@ APPLE_MODULE_CFLAGS := -fobjc-arc -I$(APPLE_MODULE_ROOT)/include -I$(APPLE_MODUL
 APPLE_MODULE_FRAMEWORKS := Foundation
 
 # TVAppleSearchPartyRecovery.c is a separate privileged executable; never link
-# its main() into the host. RootHide package builds it as a separate tool;
+# its main() into the host. Dopamine 3 package builds it as a separate tool;
 # tests/build_service_recovery.sh remains the standalone probe builder.

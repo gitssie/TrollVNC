@@ -1,4 +1,14 @@
-export PACKAGE_VERSION := 3.2-338
+export PACKAGE_VERSION := 4.0-2
+# Device releases target Dopamine 3's standard rootless bootstrap only.
+ifeq ($(THEOS_DEVICE_SIMULATOR),)
+THEOS_PACKAGE_SCHEME ?= rootless
+ifneq ($(THEOS_PACKAGE_SCHEME),rootless)
+$(error Only Dopamine 3 rootless packages are supported)
+endif
+ifneq ($(THEBOOTSTRAP),)
+$(error Standalone/bootstrap packages are no longer supported)
+endif
+endif
 export THEOS_PACKAGE_SCHEME
 
 ifeq ($(THEOS_DEVICE_SIMULATOR),1)
@@ -7,11 +17,7 @@ TARGET := simulator:clang:latest:15.0
 IPHONE_SIMULATOR_ROOT := $(shell devkit/sim-root.sh)
 else
 ARCHS := arm64
-ifeq ($(THEOS_PACKAGE_SCHEME),)
-TARGET := iphone:clang:16.5:14.0
-else
 TARGET := iphone:clang:16.5:15.0
-endif
 endif
 
 GO_EASY_ON_ME := 1
@@ -50,9 +56,8 @@ trollvncserver_OBJ_FILES += control-http/build/libtvnc_control_http.a
 endif
 trollvncserver_FRAMEWORKS += SystemConfiguration
 trollvncserver_FRAMEWORKS += Security LocalAuthentication
-ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
-trollvncserver_CFLAGS += -DTVAS_ROOTHIDE=1
-trollvncserver_LDFLAGS += -lroothide
+ifeq ($(THEOS_DEVICE_SIMULATOR),)
+trollvncserver_CFLAGS += -DTVAS_DOPAMINE3=1 -DTVAPPLE_DOPAMINE3=1
 TOOL_NAME += app-state-worker app-state-idfv-worker
 TOOL_NAME += cazer-apple-searchparty-recover
 cazer-apple-searchparty-recover_FILES := $(APPLE_MODULE_ROOT)/src/icloud/TVAppleSearchPartyRecovery.c
@@ -60,10 +65,9 @@ cazer-apple-searchparty-recover_CFLAGS := -Wall -Wextra -Werror
 cazer-apple-searchparty-recover_INSTALL_PATH := /usr/bin
 cazer-apple-searchparty-recover_CODESIGN_FLAGS := -S$(APPLE_MODULE_ROOT)/recovery.entitlements
 app-state-worker_FILES := $(APP_STATE_WORKER_FILES)
-app-state-worker_CFLAGS := $(APP_STATE_CFLAGS) -DTVAS_ROOTHIDE=1 -Wall -Wextra -Werror
+app-state-worker_CFLAGS := $(APP_STATE_CFLAGS) -DTVAS_DOPAMINE3=1 -Wall -Wextra -Werror
 app-state-worker_FRAMEWORKS := Foundation Security LocalAuthentication
 app-state-worker_LIBRARIES := sqlite3
-app-state-worker_LDFLAGS := -lroothide
 app-state-worker_INSTALL_PATH := /usr/libexec/trollvnc
 app-state-worker_CODESIGN_FLAGS := -S$(APP_STATE_ROOT)/product/worker.entitlements
 app-state-idfv-worker_FILES := $(APP_STATE_ROOT)/cli/VendorWorker.m

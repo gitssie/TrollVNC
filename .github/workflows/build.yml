@@ -74,7 +74,7 @@ jobs:
 
     strategy:
       matrix:
-        scheme: ["default", "rootless", "roothide", "bootstrap"]
+        scheme: ["rootless"]
 
     steps:
       - name: Checkout repository
@@ -87,19 +87,18 @@ jobs:
           # Install 7zip for compression
           brew install xcbeautify ldid-procursus p7zip make
 
-      - name: Checkout roothide/theos
+      - name: Checkout theos/theos
         uses: actions/checkout@v4
         with:
-          repository: roothide/theos
-          path: theos-roothide
+          repository: theos/theos
+          path: theos
           submodules: recursive
 
       - name: Install iOS SDKs
         run: |
-          export THEOS=$GITHUB_WORKSPACE/theos-roothide
-          cd theos-roothide
+          export THEOS=$GITHUB_WORKSPACE/theos
+          cd theos
           ./bin/install-sdk iPhoneOS16.5
-          ./bin/install-sdk iPhoneOS14.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -157,11 +156,7 @@ jobs:
 
           # Copy packages
           if [ -d "packages" ]; then
-            if [ "${{ matrix.scheme }}" == "bootstrap" ]; then
-              cp -r packages/*.tipa artifacts/packages-${{ matrix.scheme }}/
-            else
-              cp -r packages/*.deb artifacts/packages-${{ matrix.scheme }}/
-            fi
+            cp -rf packages/*_iphoneos-arm64.deb artifacts/packages-${{ matrix.scheme }}/
           fi
 
       - name: Upload dSYM artifacts

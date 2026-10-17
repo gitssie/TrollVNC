@@ -5,7 +5,6 @@
 #include <mach-o/dyld.h>
 #include <limits.h>
 #include <string.h>
-#include <pwd.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <signal.h>
@@ -36,7 +35,7 @@ int main(int argc,char **argv){
     if(geteuid()!=0)return 77;
 
     // Resolve the adjacent bootstrap launchctl through the kernel executable path.
-    // RootHide's /usr/bin shell view is not the native filesystem namespace.
+    // Dopamine's launchctl is installed beside this helper in the rootless bootstrap.
     char executable[PATH_MAX],path[PATH_MAX];uint32_t size=sizeof(executable);
     if(_NSGetExecutablePath(executable,&size)!=0||!realpath(executable,path))return 80;
     char *end=strrchr(path,'/');if(!end)return 79;
@@ -44,12 +43,8 @@ int main(int argc,char **argv){
     // Every parent of the root command must be owned by root and not writable
     // by group/others. Do not trust argv[0], cwd, PATH or caller environment.
     char parent[PATH_MAX];strcpy(parent,path);struct stat directory;
-    // RootHide lives under Apple's _installd-owned Application directory.
-    // Accept that protected system principal, never mobile or writable parents.
-    struct passwd *installer=getpwnam("_installd");
-    uid_t installerUID=installer?installer->pw_uid:(uid_t)-1;
     for(;;){
-        if(lstat(parent,&directory)!=0||!S_ISDIR(directory.st_mode)||(directory.st_uid!=0&&directory.st_uid!=installerUID)||(directory.st_mode&0022))return 81;
+        if(lstat(parent,&directory)!=0||!S_ISDIR(directory.st_mode)||directory.st_uid!=0||(directory.st_mode&0022))return 81;
         char *slash=strrchr(parent,'/');if(!slash||slash==parent)break;*slash=0;
     }
     if(strlen(path)+sizeof("/launchctl")>sizeof(path))return 79;

@@ -1,3 +1,10 @@
+## Dopamine 3 migration (2026-10-17)
+
+Production packaging now targets Dopamine 3 standard rootless only. The SearchParty
+helper is resolved with `rootless.h`; RootHide `.jbroot` loader anchors are unused.
+The recovery helper accepts only protected root-owned command ancestry. Historical
+RootHide/iOS validation below does not establish Dopamine 3 device acceptance.
+
 2026-10-11 native REVIEW-ONLY success: row23 arikuhicmyjl, native AuthKit SMS (not GSA PET), owned iPhone, canSetActiveAccount=NO in isolated copied module; native fields/SAP proof/validate0/final0 full details; post-Review Store login SKIPPED. Independent SSAccountStore active=nil before/after, exit0/stderr0. Converted; never replay final. Production unchanged. Diagnostic-only patch tests/review-only-process.patch and state source tests/review-media-state.m; docs/native-store-review.md + review-only-result-20261011.json. Different credential/network/native context from preceding Mac test; do not assign unique root cause.
 
 2026-10-11 SAME-ACCOUNT NATIVE FINAL SUCCESS after Intel final fraud rejection: row18 lavonrathxpa reused same GSA PET source/device, same tool-generated Jacksonville FL address/phone, None/terms. Native validate and one final conversion HTTP200/status0/details; subsequent Store attempt0/review_required0, exit0. Account converted: NEVER replay final Review. Native/Intel final URL same, ordinary form fields same by native parameters vs labeled Intel source reconstruction; device GUID/serial/SAP/session/network remain different, exact root unknown. Not pure Intel conversion success; no production deployment. See AppleServices/docs/store-first-use-review-research.md from workspace.

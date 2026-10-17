@@ -129,8 +129,8 @@ def expected_version() -> str:
 def validate_package(package: Path) -> dict[str, str]:
     source = fields_from_control((ROOT / "layout/DEBIAN/control").read_bytes())
     fields = deb_control(package)
-    if fields.get("Architecture") not in ("iphoneos-arm64", "iphoneos-arm64e"):
-        raise PublicationError("deb Architecture must be rootless arm64 or RootHide arm64e")
+    if fields.get("Architecture") != "iphoneos-arm64":
+        raise PublicationError("deb Architecture must be Dopamine 3 rootless arm64")
     expected = {
         "Package": source.get("Package", ""),
         "Name": "TrollVNC",
@@ -180,7 +180,7 @@ def control_stanza(fields: dict[str, str], package: Path) -> bytes:
 def release_file(output: Path) -> bytes:
     date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     architecture = fields_from_control((output / "Packages").read_bytes())["Architecture"]
-    target = "Dopamine rootless" if architecture == "iphoneos-arm64" else "Dopamine RootHide"
+    target = "Dopamine 3"
     lines = [
         "Origin: XenSpace",
         "Label: TrollVNC",
@@ -286,7 +286,7 @@ def render(package: Path, output: Path) -> dict[str, str]:
         "PACKAGE_URL": SOURCE_URL + "/pool/" + package.name,
         "VERSION": fields["Version"],
         "ARCHITECTURE": fields["Architecture"],
-        "PACKAGE_TARGET": "Dopamine rootless" if fields["Architecture"] == "iphoneos-arm64" else "Dopamine RootHide",
+        "PACKAGE_TARGET": "Dopamine 3",
         "PACKAGE_SIZE": f"{len(package_data) / 1024 / 1024:.2f} MB",
         "SHA256": digest(package_data, "sha256"),
     }

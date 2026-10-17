@@ -1,3 +1,13 @@
+## Dopamine 3 migration (2026-10-17)
+
+This branch supersedes the historical RootHide-only integration requirements below.
+Production uses standard Theos rootless packaging and `rootless.h` for package-owned
+paths. Real system/container/backup paths stay on `/var`, with no rootfs wrapping.
+Copied scoped workers use standard rootless rpaths; do not recreate `.jbroot`
+anchors. Keep the same private operation directories and exact target authority.
+Host tests model the bootstrap separately from real system data. Device behavior
+must be verified on Dopamine 3; old RootHide results are historical evidence only.
+
 # App state module instructions
 
 The user explicitly authorized the authenticated `profile` route to export the selected snapshot's scoped access/refresh token pair to RV for host-side offline tasks. This narrowly overrides the token-export restriction below. Never log the reply or export arbitrary keychain records. `sessionSupplement` stores an exact Bundle+IDFV token pair in an independent checksum-protected plist for explicit restoration. No business HTTP requests or offline task execution belong on the phone.

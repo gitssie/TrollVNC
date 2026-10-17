@@ -95,7 +95,7 @@ static NSObject *LifecycleGate(void) {
     NSFileManager *fm=NSFileManager.defaultManager;
     NSDictionary *paths=[self operationPaths];
     NSString *logicalRoot=paths[@"root"];
-    if (!logicalRoot.length) { FailService(error,@"RootHide app-state integration is unavailable"); return nil; }
+    if (!logicalRoot.length) { FailService(error,@"Dopamine 3 app-state integration is unavailable"); return nil; }
     if (![fm createDirectoryAtPath:logicalRoot withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error]) return nil;
     NSString *root=PhysicalPath(logicalRoot); struct stat rootInfo;
     if (!root || lstat(logicalRoot.fileSystemRepresentation,&rootInfo)!=0 || !S_ISDIR(rootInfo.st_mode) ||
@@ -107,9 +107,8 @@ static NSObject *LifecycleGate(void) {
     dispatch_source_t progressTimer=nil;
     NSMutableDictionary *progressState=[NSMutableDictionary dictionary];
     @try {
-        NSString *anchor=[directory stringByAppendingPathComponent:@".jbroot"];
-        NSString *bootstrap=PhysicalPath(paths[@"bootstrap"]);
-        BOOL prepared=bootstrap && [fm createSymbolicLinkAtPath:anchor withDestinationPath:bootstrap error:error];
+        // Standard rootless rpaths resolve dependencies after copying the worker.
+        BOOL prepared=YES;
         NSString *worker=[directory stringByAppendingPathComponent:@"worker"];
         if (prepared) prepared=[fm copyItemAtPath:paths[@"worker"] toPath:worker error:error];
         if (prepared) prepared=chmod(worker.fileSystemRepresentation,0700)==0;
@@ -147,7 +146,6 @@ static NSObject *LifecycleGate(void) {
                 }
             }); dispatch_resume(progressTimer);
         }
-        if (prepared && ![PhysicalPath(anchor) isEqual:bootstrap]) prepared=FailService(error,@"RootHide dependency anchor changed");
         NSData *data=nil;
         executionStarted=prepared;
         if (prepared && [runner runExecutable:worker arguments:@[requestPath] timeout:600 standardOutput:&data error:error]) {

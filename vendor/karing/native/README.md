@@ -46,10 +46,10 @@ checks and an 8 MiB per-document limit. They are not normalized or rewritten.
 The module currently reads configuration and reloads it; it does not implement
 subscription downloads, node edits, chain edits or VPN start/stop.
 
-RootHide builds resolve its path-conversion library from the physical bootstrap
-inside the helper; they do not depend on inherited dyld environment overrides.
-Theos stages the helper with mode 0755; it is not setuid. Bootstrap app packaging
-retains it in `TrollVNC.app/libexec` with its independent signature.
+Dopamine 3 uses real App Group container paths and a helper installed in the
+rootless bootstrap. There is no RootHide path-conversion library or `/rootfs`
+fallback. The helper retains its independent signature and mode 0755; it is not
+setuid. Device evidence below predates the Dopamine 3 migration.
 
 ## Retained tests
 

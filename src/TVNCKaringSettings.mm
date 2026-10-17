@@ -1,13 +1,7 @@
 #import "TVNCHTTPServer.h"
-#if defined(TVAS_ROOTHIDE)
-#import <roothide.h>
-#endif
 NSDictionary *TVNCKaringDeviceSettings(void) {
     NSFileManager *files = NSFileManager.defaultManager;
     NSString *overridePath = @"/var/mobile/Library/ZXTouch/config/tweak/karing.plist";
-#if defined(TVAS_ROOTHIDE)
-    overridePath = jbroot(overridePath);
-#endif
     NSDictionary *override = [NSDictionary dictionaryWithContentsOfFile:overridePath];
     NSString *secret = [override[@"secret"] isKindOfClass:NSString.class] ? override[@"secret"] : nil;
     NSInteger port = 3057;
@@ -15,10 +9,7 @@ NSDictionary *TVNCKaringDeviceSettings(void) {
     NSURL *group = [files containerURLForSecurityApplicationGroupIdentifier:@"group.com.nebula.karing"];
     if (group) [containers addObject:group.path];
     // The daemon lacks App Group entitlement. Identify only Karing's container.
-    NSMutableArray *roots = [@[@"/var/mobile/Containers/Shared/AppGroup", @"/rootfs/var/mobile/Containers/Shared/AppGroup"] mutableCopy];
-#if defined(TVAS_ROOTHIDE)
-    [roots insertObject:jbroot(rootfs(@"/var/mobile/Containers/Shared/AppGroup")) atIndex:0];
-#endif
+    NSArray *roots = @[@"/var/mobile/Containers/Shared/AppGroup"];
     for (NSString *root in roots) {
         for (NSString *name in [files contentsOfDirectoryAtPath:root error:nil]) {
             NSString *path = [root stringByAppendingPathComponent:name];

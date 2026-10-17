@@ -1,4 +1,7 @@
 #import "TVAppleSearchParty.h"
+#if defined(TVAPPLE_DOPAMINE3)
+#import <rootless.h>
+#endif
 #import <dlfcn.h>
 #import <spawn.h>
 #import <sys/stat.h>
@@ -80,15 +83,9 @@ TVAppleServiceHealth TVAppleSearchPartyProbeManager(id manager,NSTimeInterval ti
     // Optional fixed-purpose root helper. No shell, arguments from callers, password,
     // sudo, or daemon kill from this library. Provision it separately under root.
     NSString *helper=@"/usr/bin/cazer-apple-searchparty-recover";
-    // Jailbreak bootstrap shell paths differ from native paths under RootHide.
-    // Use the loader's image location and its standard .jbroot link, never a
-    // caller-controlled env variable or a cached randomized jailbreak root.
-    Dl_info image;char nativePath[PATH_MAX];
-    if(dladdr((const void *)&TVApplePrepareSearchParty,&image)&&image.dli_fname){
-        NSString *directory=[[NSString stringWithUTF8String:image.dli_fname]stringByDeletingLastPathComponent];
-        NSString *candidate=[directory stringByAppendingPathComponent:@".jbroot/usr/bin/cazer-apple-searchparty-recover"];
-        if(realpath(candidate.fileSystemRepresentation,nativePath))helper=[NSString stringWithUTF8String:nativePath];
-    }
+#if defined(TVAPPLE_DOPAMINE3)
+    helper=ROOT_PATH_NS_VAR(helper);
+#endif
     const char *path=helper.fileSystemRepresentation;
     struct stat info;
     if(lstat(path,&info)!=0||!S_ISREG(info.st_mode)||info.st_uid!=0||
