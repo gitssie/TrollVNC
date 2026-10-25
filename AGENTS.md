@@ -1,3 +1,33 @@
+## 2026-10-24 / 4.0-5: ZXTouch input delivery verified
+
+User explicitly authorized compilation and deployment to the current phone,
+iPhone14,5 / iOS16.3. This is a different device from the historical iPhone9,2
+below. SSH endpoint identity was checked against the public host key read through
+the authenticated phone HTTP service; credentials stayed in process memory.
+
+VNC canvas input reached SDK Probe, while HTTP normalized touch returned success
+without UIKit callbacks. Actual production-builder host tests first exposed
+different parent/finger masks: VNC began/end0x22, move0x44; normalized began/end
+parent0x02/child0x03, move parent0x00/child0x04. These masks are now aligned.
+Stopping no longer returns the successful-touch nil sentinel, and explicit
+control disconnect releases that connection's fingers before revoking its token.
+
+Device A/B:4.0-3 mask alignment alone still yielded0callbacks;4.0-4 with hand/finger
+identity2 and contact indices32+ still yielded0.4.0-5 reserves unique contact
+indices10..29, keeps the working finger identity2, and yielded59original SDK
+callbacks after clearing the display and sending one RV-generated stroke, ending
+with touchUp. User independently confirmed the RV toolbar icon now produces new
+touchMove callbacks. This proves delivery on this device, not a universal iOS
+contact-index limit or third-party server acceptance. No VNC transport fallback.
+
+Production-method host tests cover masks, portrait/landscape coordinates,
+phase validation, atomic rejection, connection isolation, disconnect/stop cleanup,
+all20indices, saturation, slot reuse and disconnected-client suppression.
+ZXTouch host suite and standard Theos rootless package build pass; package
+payload ownership, staging bytes/modes and uploaded SHA256 were checked.
+Installed4.0-5 through dpkg, with normal service restart. No SpringBoard reload,
+account writes or Sileo repository publication. Normal VNC remains available.
+
 ## 2026-10-17 / 4.0-2: first Dopamine 3 device install
 
 User explicitly authorized installation on the USB-forwarded phone. Verified

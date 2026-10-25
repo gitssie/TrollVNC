@@ -75,6 +75,11 @@ static int ZXQuad(UIInterfaceOrientation orientation) {
         default: return 0;
     }
 }
+
+// On the tested iOS 16.3 device, 32+ contact indices were acknowledged but
+// produced no UIKit callbacks. Reserve 10..29 within the native generator's
+// 30-contact budget, separate from ordinary VNC's single-finger index 2.
+static constexpr int ZXTouchContactBase = 10;
 static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     ZXRequire(image && width > 0 && height > 0 && width <= 16384 && height <= 16384 &&
         (uint64_t)width * height <= 32 * 1024 * 1024, @"Image dimensions are too large");
@@ -166,7 +171,13 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     NSString *failure = nil;
     NSDictionary *authorized = tvAppHTTPRequest(token, 0, @{}, ^BOOL { return self->_stopping; }, &failure);
     if (!authorized) return TVNCHTTPJSON(@{@"error": failure ?: @"unauthorized"}, 401);
-    if ([path isEqual:@"/api/control/disconnect"]) { tvAppHTTPDisconnect(token); return TVNCHTTPJSON(@{@"ok":@YES}, 200); }
+    if ([path isEqual:@"/api/control/disconnect"]) {
+        // Revocation would reject a later end on this pooled connection. Release
+        // its owned fingers while the caller still has control authorization.
+        [self releaseClient:client];
+        tvAppHTTPDisconnect(token);
+        return TVNCHTTPJSON(@{@"ok":@YES}, 200);
+    }
     if ([path isEqual:@"/api/control/authorize"]) {
         NSMutableDictionary *capabilities=[authorized mutableCopy];capabilities[@"app_state_stream"]=@1;
         capabilities[@"device_tap"]=@1;
@@ -377,13 +388,13 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         NSMutableDictionary *next = [self->_clients[@(client)] mutableCopy] ?: [NSMutableDictionary dictionary];
         bool used[20] = {};
         for (NSDictionary *state in self->_clients.allValues)
-            for (NSDictionary *event in state.allValues) used[[event[HIDEventTouchIDKey] intValue] - 32] = true;
+            for (NSDictionary *event in state.allValues) used[[event[HIDEventTouchIDKey] intValue] - ZXTouchContactBase] = true;
         NSMutableArray *changed = [NSMutableArray array];
         for (auto &touch : command.touches) {
             ZXRequire(touch.x < orientedWidth && touch.y < orientedHeight, @"Touch is outside the screen");
             NSDictionary *previous = next[@(touch.finger)];
             ZXRequire(touch.type == 1 ? previous == nil : previous != nil, @"Invalid touch phase sequence");
-            int slot = previous ? [previous[HIDEventTouchIDKey] intValue] - 32 : 0;
+            int slot = previous ? [previous[HIDEventTouchIDKey] intValue] - ZXTouchContactBase : 0;
             if (!previous) {
                 while (slot < 20 && used[slot]) ++slot;
                 ZXRequire(slot < 20, @"Too many active fingers");
@@ -394,7 +405,10 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
             else if (q == 2) { nx = width - 1 - x; ny = height - 1 - y; }
             else if (q == 3) { nx = width - 1 - y; ny = x; }
             NSDictionary *event = @{
-                HIDEventTouchIDKey: @(slot + 32), HIDEventFingerKey: @(slot + 32),
+                HIDEventTouchIDKey: @(slot + ZXTouchContactBase),
+                // Match the working hand/finger identity; contact index above
+                // remains unique and stable for every connection/finger pair.
+                HIDEventFingerKey: @2,
                 HIDEventPhaseKey: touch.type == 0 ? HIDEventPhaseEnded : touch.type == 1 ? HIDEventPhaseBegan : HIDEventPhaseMoved,
                 HIDEventXKey: @(std::clamp(nx / width, 0.0, 1.0)), HIDEventYKey: @(std::clamp(ny / height, 0.0, 1.0)),
                 HIDEventMajorRadiusKey: @0.04, HIDEventMinorRadiusKey: @0.04
@@ -659,7 +673,8 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     return [reply[@"ok"] boolValue] ? ZXReply([reply[@"value"] length] ? ZXClean(reply[@"value"]) : nil) : ZXError(reply[@"error"]);
 }
 - (NSData *)execute:(const zxtouch::Command &)command client:(NSUInteger)client {
-    if (_stopping) return command.task == 10 ? nil : ZXError(@"ZXTouch service is stopping");
+    // nil is the route's successful-touch sentinel, never a stopped operation.
+    if (_stopping) return ZXError(@"ZXTouch service is stopping");
     @try {
         // Validate UTF-8 for all text commands before passing to native APIs.
         if (command.task != 10) ZXString(command.payload);

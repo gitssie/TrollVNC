@@ -312,9 +312,15 @@ static InterpolationType interpolationFromString(NSString *string) {
     NSArray<NSDictionary *> *childEvents = info[HIDEventTouchesKey];
     for (NSDictionary *touchInfo in childEvents) {
         UITouchPhase phase = phaseFromString(touchInfo[HIDEventPhaseKey]);
-        // If there are any new or ended events, mask includes touch.
+        // Keep the normalized ZXTouch path consistent with the VNC hand path:
+        // contact changes carry identity, and movement marks the parent as well
+        // as its children. A zero parent mask does not describe a moving hand.
         if (phase == UITouchPhaseBegan || phase == UITouchPhaseEnded || phase == UITouchPhaseCancelled)
-            eventMask |= kIOHIDDigitizerEventTouch;
+            eventMask |= kIOHIDDigitizerEventTouch | kIOHIDDigitizerEventIdentity;
+        if (phase == UITouchPhaseMoved)
+            eventMask |= kIOHIDDigitizerEventPosition | kIOHIDDigitizerEventAttribute;
+        if (phase == UITouchPhaseCancelled)
+            eventMask |= kIOHIDDigitizerEventCancel;
         // If there are any pressure readings, set mask must include attribute
         if ([touchInfo[HIDEventPressureKey] doubleValue])
             eventMask |= kIOHIDDigitizerEventAttribute;
@@ -405,19 +411,10 @@ static InterpolationType interpolationFromString(NSString *string) {
 
         IOHIDDigitizerEventMask childEventMask = [touchInfo[HIDEventMaskKey] unsignedIntValue];
 
-        UITouchPhase phase = phaseFromString(touchInfo[HIDEventPhaseKey]);
-        if (phase != UITouchPhaseCancelled && phase != UITouchPhaseBegan && phase != UITouchPhaseEnded &&
-            phase != UITouchPhaseStationary)
-            childEventMask |= kIOHIDDigitizerEventPosition;
-
-        if (phase == UITouchPhaseBegan || phase == UITouchPhaseEnded || phase == UITouchPhaseCancelled)
-            childEventMask |= (kIOHIDDigitizerEventTouch | kIOHIDDigitizerEventRange);
-
-        if (phase == UITouchPhaseCancelled)
-            childEventMask |= kIOHIDDigitizerEventCancel;
-
-        if ([touchInfo[HIDEventPressureKey] doubleValue])
-            childEventMask |= kIOHIDDigitizerEventAttribute;
+        // Use the same phase semantics for parent and finger events. Keep an
+        // explicitly supplied mask, but do not construct a second interpretation
+        // of began/moved/ended here.
+        childEventMask |= [self eventMaskFromEventInfo:@{HIDEventTouchesKey: @[touchInfo]}];
 
         int finger = 2;
         if ([touchInfo objectForKey:HIDEventFingerKey]) {

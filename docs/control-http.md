@@ -58,6 +58,33 @@ Generic native helpers retain their existing argument order as a JSON array; the
 
 Long operations return an operation record with `operation_id`, then clients query `/result`, or subscribe to the App-state stream below. Disconnect does not replay a submitted write. RV explicitly disables HTTP retries and redirects, uses finite native request deadlines and reports interrupted mutations as unknown.
 
+## Normalized touch delivery (4.0-5)
+
+Touch planning and timing stay in RV; `/api/device/touch` receives ordered
+begin/move/end requests on one authenticated HTTP/2 connection. The server uses
+the screenshot's native coordinate dimensions, independent of VNC scaling.
+
+The normalized HID constructor now uses the same phase masks as normal VNC:
+begin/end `Touch | Identity` (`0x22`), move `Position | Attribute` (`0x44`),
+with cancellation additionally marking `Cancel`. Parent and finger masks agree.
+Contact indices use the reserved range10–29; transducer finger identity remains2.
+The20logical fingers and their ownership/cleanup remain connection-scoped.
+Explicit control disconnect releases its calling connection's contacts before
+revocation. A stopped native request returns an error rather than the nil-success
+sentinel. Other connections must still close their own transports on revocation.
+
+On iPhone14,5/iOS16.3, indices32+ were acknowledged without UIKit callbacks.
+Aligning masks alone and changing finger identity alone did not restore delivery;
+using indices10–29 did. After clearing SDK Probe, one isolated RV stroke yielded
+59callbacks ending in touchUp, and the user independently confirmed new touchMove
+callbacks from the toolbar icon. This device evidence establishes neither a
+universal iOS index limit nor DataDome server acceptance.
+
+`python3 tests/ZXTouchInputTests.py` executes extracted production constructors
+and service methods with recording IOKit/transport shims. It validates the masks,
+coordinates, phases, admission and cleanup, including all20unique indices and
+slot reuse; host success alone is not UIKit-delivery evidence.
+
 ## Generic OCR-frame-bound tap (3.2-331)
 
 `POST /api/control/authorize` advertises `device_tap:1`. Coordinate OCR replies include `frame:{width,height,orientation}` captured with the image; orientation is the ZXTouch normalized quadrant0–3. Independent authenticated `POST /api/device/tap` takes `{x,y,frame}` in those native screenshot pixels, validates the frame against current orientation/size on main, and presses/releases once using the shared native HID generator. No VNC input or Photos method is invoked. Success is `{ok:true}`; execution rejection is `{error:reason}` (inspect the body, not HTTP200 alone). Invalid parameters return400. In-flight response ownership permits checking request cancellation before dispatching touch-down; a dispatched finger is still released on cancellation.
