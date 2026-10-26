@@ -105,6 +105,7 @@ static NSUInteger localUnlockCalls;
 @property NSString *passcode;
 @property NSError *failure;
 @property BOOL closed;
+- (void)signInFlowController:(id)flow showAlertWithTitle:(id)title message:(id)message completion:(void (^)(BOOL))completion;
 - (void)signInFlowController:(id)flow presentGenericTermsUIForAccount:(id)account completion:(void (^)(BOOL,id,NSError *))completion;
 - (void)cdpContext:(id)context promptForLocalSecretWithCompletion:(void (^)(id,NSError *))completion;
 - (void)cdpContext:(id)context promptForRecoveryKeyWithValidator:(id)validator completion:(void (^)(BOOL,NSError *))completion;
@@ -134,6 +135,17 @@ static NSUInteger localUnlockCalls;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,20*NSEC_PER_MSEC),dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{
             [input signInFlowController:nil presentGenericTermsUIForAccount:nil completion:^(BOOL success,id account,NSError *error){(void)account;assert(!success&&error);}];
         });
+    }
+    else if([self.mode hasPrefix:@"activation_limit"]) {
+        [self.delegate signInFlowController:self showAlertWithTitle:@"The maximum number of free accounts have been activated on this iPhone." message:nil completion:^(BOOL accepted){
+            assert(!accepted);
+            if([self.mode isEqual:@"activation_limit_native"])
+                completion(NO,nil,[NSError errorWithDomain:@"com.apple.appleaccount" code:403 userInfo:@{@"private_token":@"DO-NOT-EXPORT"}]);
+            else if([self.mode isEqual:@"activation_limit_success"])completion(YES,[NSObject new],nil);
+        }];
+    }
+    else if([self.mode isEqual:@"unknown_alert"]) {
+        [self.delegate signInFlowController:self showAlertWithTitle:@"private-account@example.com" message:@"secret-token" completion:^(BOOL accepted){assert(!accepted);}];
     }
     else if([self.mode isEqual:@"passcode"])
         [self.cdpUIProvider cdpContext:nil promptForLocalSecretWithCompletion:^(id value,NSError *error){assert(!value&&error);}];
@@ -181,7 +193,7 @@ static NSDictionary *removalRecord;
 @property BOOL removedBeforeFailure;
 @property NSString *loginMode;
 @property NSUInteger loginAttempts, bootstraps, findMyAttempts;
-@property NSUInteger cloudAttempts,emailReads;
+@property NSUInteger cloudAttempts,emailReads,snapshots;
 @end
 @interface FakeAction : NSObject
 @property NSString *name;
@@ -201,6 +213,8 @@ static FakeAction *Action(NSString *name, BOOL destructive) {
     return @{@"apple_id":appleID,@"reachable_emails":@[@"verified@example.com"]};
 }
 - (NSDictionary *)snapshot:(NSError **)error {
+    _snapshots++;
+    if (_cloudAttempts && [_loginMode hasSuffix:@"slow_state"]) [NSThread sleepForTimeInterval:.35];
     if (_readFailure || (_failAfterRemoval && (_removed.count || _findMyAttempts || _cloudAttempts)) || ([_loginMode isEqual:@"trust_read_failure"] && _bootstraps)) {
         *error = TVAppleError(TVAppleErrorBackendRead, @"read failed"); return nil;
     }
@@ -231,7 +245,7 @@ static FakeAction *Action(NSString *name, BOOL destructive) {
     (void)provider;assert([appleID isEqual:@"test@example.com"]&&[password isEqual:@"test-secret"]&&[passcode isEqual:@"123456"]);_cloudAttempts++;
     if([_loginMode hasPrefix:@"cloud_rejected"]){*error=TVAppleError(TVAppleErrorAuthenticationFailed,@"rejected");return NO;}
     if(!_stale&&![[_records valueForKey:@"domain"]containsObject:@"icloud"])[_records addObject:@{@"identifier":@"new-cloud",@"apple_id":appleID,@"domain":@"icloud",@"selected":@YES,@"primary":@YES,@"enabled_dataclasses":@[@"com.apple.Dataclass.Contacts"]}];
-    if([_loginMode isEqual:@"cloud_unknown"]){*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"partial native save");return NO;}
+    if([_loginMode hasPrefix:@"cloud_unknown"]){*error=TVAppleError(TVAppleErrorOutcomeUnknown,@"partial native save");return NO;}
     if([_loginMode isEqual:@"cloud_findmy_after"])_findMy=YES;
     return YES;
 }
@@ -388,6 +402,24 @@ int main(int argc, char **argv) {
             BOOL ok=TVAppleRunICloudFlow(flow,@{@"fixture":@YES},@"123456",.3,&error);
             NSTimeInterval elapsed=NSProcessInfo.processInfo.systemUptime-started;
             if([flow.mode isEqual:@"success"])assert(ok&&!error);
+            else if([flow.mode hasPrefix:@"activation_limit"]) {
+                assert(!ok&&error.code==TVAppleErrorNativeFailure&&elapsed<.15);
+                assert([error.userInfo[@"TVAppleFailureReason"]isEqual:@"icloud_activation_limit"]);
+                assert([TVAppleDiagnosticMessage(error) containsString:@"Apple reported"]);
+                BOOL native=[flow.mode isEqual:@"activation_limit_native"]||[flow.mode isEqual:@"activation_limit_success"];
+                assert([error.userInfo[@"TVAppleNativeCompletionReceived"]boolValue]==native);
+                if([flow.mode isEqual:@"activation_limit_native"]){
+                    assert([error.userInfo[@"TVAppleNativeDomain"]isEqual:@"com.apple.appleaccount"]);
+                    assert([error.userInfo[@"TVAppleNativeCode"]integerValue]==403);
+                } else assert(!error.userInfo[@"TVAppleNativeCode"]);
+                assert(!error.userInfo[@"private_token"]);
+            }
+            else if([flow.mode isEqual:@"unknown_alert"]) {
+                assert(!ok&&error.code==TVAppleErrorAccountNeedsReview&&elapsed<.15);
+                assert(!error.userInfo[@"TVAppleFailureReason"]);
+                assert([TVAppleDiagnosticMessage(error) rangeOfString:@"private-account"].location==NSNotFound);
+                assert([TVAppleDiagnosticMessage(error) rangeOfString:@"secret-token"].location==NSNotFound);
+            }
             else if([flow.mode isEqual:@"timeout"])assert(!ok&&error.code==TVAppleErrorOutcomeUnknown&&elapsed>=.25);
             else if([flow.mode isEqual:@"missing_account"])assert(!ok&&error.code==TVAppleErrorOutcomeUnknown&&elapsed<.15);
             else {
@@ -398,6 +430,7 @@ int main(int argc, char **argv) {
                     assert([error.userInfo[@"TVAppleNativeDomain"]isEqual:@"com.apple.appleaccount"]);
                     assert([error.userInfo[@"TVAppleNativeCode"]integerValue]==403);
                     assert(!error.userInfo[@"private_token"]);
+                    assert(!error.userInfo[@"TVAppleFailureReason"]); // 403 alone never means an activation limit.
                 }
             }
             assert(!flow.delegate&&!flow.cdpUIProvider);
@@ -408,6 +441,16 @@ int main(int argc, char **argv) {
             flow.pending(YES,[NSObject new],nil);
             flow.pending(NO,nil,[NSError errorWithDomain:@"late" code:99 userInfo:nil]);
             assert(![TVAppleDiagnosticMessage(error) containsString:@"DO-NOT-EXPORT"]);
+            printf("PASS %s\n",argv[1]);return 0;
+        }
+        if([test hasPrefix:@"local_passcode_"]) {
+            localUnlockOK=![test isEqual:@"local_passcode_wrong"];
+            BOOL empty=[test isEqual:@"local_passcode_empty"];
+            NSError *failure=nil;
+            BOOL valid=TVAppleValidateLocalPasscode(empty?@"":@"123456",&failure);
+            assert(valid==(!empty&&localUnlockOK));
+            assert(valid?!failure:failure!=nil);
+            assert(localUnlockCalls==(empty?0:1));
             printf("PASS %s\n",argv[1]);return 0;
         }
         if([test hasPrefix:@"native_cloud_"]) {
@@ -449,15 +492,24 @@ int main(int argc, char **argv) {
             backend.loginMode=[test substringFromIndex:7];
             TVAppleServices *service=[[TVAppleServices alloc]initWithBackend:backend callbackQueue:dispatch_get_global_queue(QOS_CLASS_DEFAULT,0) verificationTimeout:0];
             dispatch_semaphore_t done=dispatch_semaphore_create(0);__block NSDictionary *result;__block NSError *error;
+            NSTimeInterval started=NSProcessInfo.processInfo.systemUptime;
             [service enableICloudAppleID:@" TEST@example.com " password:@"test-secret" devicePasscode:[test isEqual:@"enable_cloud_invalid"]?@"":@"123456" verificationCodeProvider:nil completion:^(NSDictionary*r,NSError*e){result=r;error=e;dispatch_semaphore_signal(done);}];
             assert(!dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC)));
+            if([test hasSuffix:@"slow_state"]) {
+                NSTimeInterval elapsed=NSProcessInfo.processInfo.systemUptime-started;
+                fprintf(stderr,"iCloud terminal response: %.3fs, snapshots=%lu\n",elapsed,(unsigned long)backend.snapshots);
+                assert(error && elapsed<.15 && backend.snapshots==1);
+                assert([result[@"account_state_may_be_partial"]boolValue]);
+                assert(!result[@"state"] && !result[@"signed_in_domains"]);
+                puts(argv[1]);return 0;
+            }
             if([@[@"enable_cloud_success",@"enable_cloud_already",@"enable_cloud_stale",@"enable_cloud_read_failure",@"enable_cloud_findmy_after"]containsObject:test]){assert(!error&&[result[@"outcome"]isEqual:@"succeeded"]);assert(backend.cloudAttempts==1);}
             else if([test isEqual:@"enable_cloud_conflict"]||[test isEqual:@"enable_cloud_invalid"]||(backend.findMy&&!backend.cloudAttempts)){assert(error&&!backend.cloudAttempts);}
             else if([test hasPrefix:@"enable_cloud_rejected"]){assert(error.code==TVAppleErrorAuthenticationFailed&&[result[@"outcome"]isEqual:@"failed"]);
                 if(backend.failAfterRemoval)assert(![result[@"account_state_available"]boolValue]&&[result[@"account_state_may_be_partial"]boolValue]);}
             else {
                 assert(error.code==TVAppleErrorOutcomeUnknown&&[result[@"outcome"]isEqual:@"unknown"]);
-                if([test isEqual:@"enable_cloud_unknown"])assert([result[@"signed_in_domains"]containsObject:@"icloud"]);
+                if([test isEqual:@"enable_cloud_unknown"])assert(!result[@"state"]&&!result[@"signed_in_domains"]&&[result[@"account_state_may_be_partial"]boolValue]);
                 NSError *fenced=nil;SignOut(service,@"test@example.com",TVAppleLocalDataRemove,&fenced);assert(!fenced || ![TVAppleDiagnosticMessage(fenced) containsString:@"previous"]);
             }
             puts(argv[1]);return 0;

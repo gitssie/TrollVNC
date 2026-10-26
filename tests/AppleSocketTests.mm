@@ -15,6 +15,9 @@
 - (void)signInAppStoreAppleID:(NSString *)a password:(NSString *)p verificationCodeProvider:(id<TVAppleVerificationCodeProvider>)v completion:(TVAppleCompletion)c {
     (void)a;(void)p;self.pending=c;self.provider=(id)v;
 }
+- (void)changeAppleIDPassword:(NSString *)a password:(NSString *)p newPassword:(NSString *)n devicePasscode:(NSString *)d verificationCodeProvider:(id<TVAppleVerificationCodeProvider>)v completion:(TVAppleCompletion)c {
+    (void)a;(void)p;(void)n;(void)d;self.pending=c;self.provider=(id)v;
+}
 - (void)enableICloudAppleID:(NSString *)a password:(NSString *)p devicePasscode:(NSString *)d verificationCodeProvider:(id<TVAppleVerificationCodeProvider>)v completion:(TVAppleCompletion)c {
     (void)a;(void)p;(void)d;self.pending=c;self.provider=(id)v;
 }
@@ -63,6 +66,21 @@ int main(int argc,const char **argv){@autoreleasepool{
     CHECK(Invoke(service,@"bad",@{})[@"error"]);
     CHECK(Invoke(service,@"signOutAppleID",@{@"apple_id":@"example@example.com",@"local_data_policy":@"merge"})[@"error"]);
     CHECK(Invoke(service,@"setName",@{@"apple_id":@"example@example.com",@"first_name":@1,@"last_name":@"Last"})[@"error"]);
+    // Login selects the code type from Apple's response; callers supply no switch.
+    CHECK(Invoke(service,@"signInAppStore",@{@"apple_id":@"example@example.com",@"password":@"secret",@"verification_method":@"trusted_device"})[@"error"]);
+    CHECK(Invoke(service,@"signInAppStore",@{@"apple_id":@"example@example.com",@"password":@"secret"})[@"operation_id"]);
+    fake.pending(@{@"outcome":@"succeeded"},nil);
+    CHECK(Call(service,@{@"action":@"invoke",@"method":@"changePassword",@"params":@[]})[@"error"]);
+    NSDictionary *changeParams=@{@"apple_id":@"example@example.com",@"password":@"Original123",@"new_password":@"Mix123Ab"};
+    CHECK(Invoke(service,@"changePassword",@{@"apple_id":@"example@example.com",@"password":@"Original123"})[@"error"]);
+    NSMutableDictionary *unexpected=[changeParams mutableCopy];unexpected[@"code_url"]=@"https://code.example.test";CHECK(Invoke(service,@"changePassword",unexpected)[@"error"]);
+    for(NSNumber *withPasscode in @[@NO,@YES]){
+        NSMutableDictionary *params=[changeParams mutableCopy];if(withPasscode.boolValue)params[@"device_passcode"]=@"123456";
+        NSString *change=Invoke(service,@"changePassword",params)[@"operation_id"];CHECK(change&&fake.provider);
+        CHECK([Invoke(service,@"signInAppStore",@{@"apple_id":@"example@example.com",@"password":@"Original123"})[@"error"][@"code"]isEqual:@"busy"]);
+        fake.pending(@{@"outcome":@"succeeded",@"password_changed":@YES},nil);
+        NSDictionary *changed=Call(service,@{@"action":@"result",@"operation_id":change});CHECK([changed[@"result"][@"password_changed"]boolValue]);CHECK(![[changed description]containsString:@"Mix123Ab"]);
+    }
     NSString *op=Invoke(service,@"queryState",@{})[@"operation_id"];CHECK(op);
     CHECK([Invoke(service,@"queryState",@{})[@"error"][@"code"]isEqual:@"busy"]);
     fake.pending(@{@"accounts":@[]},nil);
@@ -79,12 +97,13 @@ int main(int argc,const char **argv){@autoreleasepool{
     [oldProvider requestCodeForChallenge:@{@"type":@"trusted_device"} completion:^(NSString *v,NSError *e){CHECK(!v&&e);cancelled++;}];Pump();
     CHECK([Call(service,@{@"action":@"result",@"operation_id":cloudOp})[@"status"]isEqual:@"requires_verification_code"]);
     NSMutableDictionary *cloudInfo=[TVAppleError(TVAppleErrorNativeFailure,@"Native iCloud/CDP sign-in failed.").userInfo mutableCopy];
-    [cloudInfo addEntriesFromDictionary:@{@"TVAppleFailureStage":@"icloud_cdp",@"TVAppleNativeCompletionReceived":@YES,@"TVAppleNativeDomain":@"com.apple.appleaccount",@"TVAppleNativeCode":@403,@"private_token":@"SECRET"}];
+    [cloudInfo addEntriesFromDictionary:@{@"TVAppleFailureStage":@"icloud_cdp",@"TVAppleNativeCompletionReceived":@YES,@"TVAppleNativeDomain":@"com.apple.appleaccount",@"TVAppleNativeCode":@403,@"TVAppleFailureReason":@"icloud_activation_limit",@"private_token":@"SECRET"}];
     oldCompletion(nil,[NSError errorWithDomain:TVAppleErrorDomain code:TVAppleErrorNativeFailure userInfo:cloudInfo]);
     NSDictionary *cloudDone=Call(service,@{@"action":@"result",@"operation_id":cloudOp});
     CHECK([cloudDone[@"status"]isEqual:@"completed"]&&[cloudDone[@"result"][@"outcome"]isEqual:@"failed"]);
     CHECK(!cloudDone[@"challenge"]&&cancelled==1&&[cloudDone[@"error"][@"native_code"]integerValue]==403);
     CHECK(!cloudDone[@"error"][@"private_token"]);
+    CHECK([cloudDone[@"error"][@"reason"]isEqual:@"icloud_activation_limit"]);
     NSString *nextCloud=Invoke(service,@"enableICloud",cloudParams)[@"operation_id"];CHECK(nextCloud);
     TVAppleCompletion nextCompletion=fake.pending;
     oldCompletion(@{@"outcome":@"succeeded"},nil);
@@ -95,6 +114,9 @@ int main(int argc,const char **argv){@autoreleasepool{
     CHECK([Call(service,@{@"action":@"result",@"operation_id":cloudOp})isEqual:cloudDone]);
     CHECK([Call(service,@{@"action":@"result",@"operation_id":nextCloud})[@"status"]isEqual:@"running"]);
     nextCompletion(@{@"outcome":@"succeeded"},nil);
+    NSString *unrecognized=Invoke(service,@"enableICloud",cloudParams)[@"operation_id"];CHECK(unrecognized);
+    fake.pending(nil,[NSError errorWithDomain:TVAppleErrorDomain code:TVAppleErrorNativeFailure userInfo:@{@"TVAppleFailureStage":@"icloud_cdp",@"TVAppleFailureReason":@"private-unrecognized-reason"}]);
+    CHECK(!Call(service,@{@"action":@"result",@"operation_id":unrecognized})[@"error"][@"reason"]);
     op=Invoke(service,@"setName",@{@"apple_id":@"example@example.com",@"first_name":@"a;;b\r\n雪",@"last_name":@"Last"})[@"operation_id"];CHECK([fake.name isEqual:@"a;;b\r\n雪"]);
     fake.pending(nil,[NSError errorWithDomain:TVAppleErrorDomain code:TVAppleErrorOutcomeUnknown userInfo:@{@"password":@"SECRET"}]);
     done=Call(service,@{@"action":@"result",@"operation_id":op});CHECK([done[@"error"]count]==2&&[done[@"error"][@"code"]integerValue]==TVAppleErrorOutcomeUnknown);

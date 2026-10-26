@@ -10,6 +10,8 @@ static NSDictionary *Record(NSString *key,NSString *domain,NSString *appleID,BOO
 @interface AggregateBackend:NSObject<TVAppleBackend,TVAppleEmailSettingsBackend,TVAppleNameSettingsBackend,TVAppleSignInWithAppleBackend,TVAppleICloudDevicesBackend>
 @property NSArray *accounts,*finalAccounts;
 @property NSUInteger reads,names,emails,siwaReads,deviceReads;
+@property NSTimeInterval profileDelay;
+@property BOOL nameException;
 @property BOOL nameFailure,emailFailure,readFailure,finalReadFailure,noName,wrongProfile,findMy,siwaFailure,deviceFailure,noDevices,wrongDevices;
 @end
 @implementation AggregateBackend
@@ -24,21 +26,25 @@ static NSDictionary *Record(NSString *key,NSString *domain,NSString *appleID,BOO
     return @{@"schema_version":@1,@"accounts":self.reads>1&&self.finalAccounts?self.finalAccounts:self.accounts,@"find_my_enabled":@(self.findMy),@"capabilities":@{@"query":@YES}};
 }
 - (NSDictionary *)nameSettingsForAppleID:(NSString *)appleID error:(NSError **)error{
+    if(self.profileDelay)[NSThread sleepForTimeInterval:self.profileDelay];
+    if(self.nameException)@throw [NSException exceptionWithName:@"Fixture" reason:@"secret-token" userInfo:nil];
     self.names++;assert([appleID isEqual:@"phone@example.com"]);
     if(self.nameFailure){*error=[NSError errorWithDomain:@"native-sensitive"code:99 userInfo:@{NSLocalizedDescriptionKey:@"secret-token"}];return nil;}
     return @{@"apple_id":self.wrongProfile?@"wrong@example.com":appleID,@"first_name":@"jack",@"last_name":@"ma",@"middle_name":@""};
 }
 - (NSDictionary *)emailSettingsForAppleID:(NSString *)appleID error:(NSError **)error{
+    if(self.profileDelay)[NSThread sleepForTimeInterval:self.profileDelay];
     self.emails++;assert([appleID isEqual:@"phone@example.com"]);
     if(self.emailFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture");return nil;}
     return @{@"apple_id":appleID,@"reachable_emails":@[@"relay@example.net"],@"forwarding_email":@"relay@example.net"};
 }
 - (NSDictionary *)signInWithAppleAppsForAppleID:(NSString *)appleID error:(NSError **)error{
+    if(self.profileDelay)[NSThread sleepForTimeInterval:self.profileDelay];
     self.siwaReads++;assert([appleID isEqual:@"phone@example.com"]);
     if(self.siwaFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture");return nil;}
     return @{@"apple_id":appleID,@"bundle_ids":@[@"com.example.target"],@"apps":@[]};
 }
-- (NSDictionary *)iCloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{self.deviceReads++;if(self.deviceFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture");return nil;}return @{@"apple_id":self.wrongDevices?@"other@example.com":appleID,@"devices":@[@{@"current_device":@YES}]};}
+- (NSDictionary *)iCloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{if(self.profileDelay)[NSThread sleepForTimeInterval:self.profileDelay];self.deviceReads++;if(self.deviceFailure){*error=TVAppleError(TVAppleErrorBackendRead,@"fixture");return nil;}return @{@"apple_id":self.wrongDevices?@"other@example.com":appleID,@"devices":@[@{@"current_device":@YES}]};}
 - (NSDictionary *)removeOtherICloudDevicesForAppleID:(NSString *)appleID error:(NSError **)error{(void)appleID;(void)error;assert(NO);return nil;}
 - (NSDictionary *)stopUsingAppleIDForBundleID:(NSString *)bundleID appleID:(NSString *)appleID error:(NSError **)error{(void)bundleID;(void)appleID;(void)error;assert(NO);return nil;}
 - (NSDictionary *)setFirstName:(NSString *)first lastName:(NSString *)last appleID:(NSString *)appleID error:(NSError **)error{(void)first;(void)last;(void)appleID;(void)error;assert(NO);return nil;}
@@ -46,7 +52,7 @@ static NSDictionary *Record(NSString *key,NSString *domain,NSString *appleID,BOO
 - (BOOL)removePreparedAccount:(id)prepared error:(NSError **)error{(void)prepared;(void)error;assert(NO);return NO;}
 @end
 int main(void){@autoreleasepool{
-    for(NSString *scenario in @[@"success",@"device_failure",@"device_unsupported",@"device_wrong",@"siwa_failure",@"find_my_enabled",@"signed_out",@"media_only",@"identity_only",@"name_failure",@"email_failure",@"unsupported",@"wrong_profile",@"ambiguous",@"different_cloud",@"changed",@"read_failure",@"final_read_failure"]){
+    for(NSString *scenario in @[@"parallel_latency",@"parallel_identity_change",@"profile_exception",@"success",@"device_failure",@"device_unsupported",@"device_wrong",@"siwa_failure",@"find_my_enabled",@"signed_out",@"media_only",@"identity_only",@"name_failure",@"email_failure",@"unsupported",@"wrong_profile",@"ambiguous",@"different_cloud",@"changed",@"read_failure",@"final_read_failure"]){
         AggregateBackend *backend=[AggregateBackend new];
         NSDictionary *phone=Record(@"idms",@"identity",@"phone@example.com",YES),*cloud=Record(@"cloud",@"icloud",@"phone@example.com",YES),
             *media=Record(@"media",@"media",@"store@example.com",YES),*old=Record(@"history",@"media",@"old@example.com",NO);
@@ -67,7 +73,29 @@ int main(void){@autoreleasepool{
         if([scenario isEqual:@"changed"])backend.finalAccounts=@[Record(@"new-idms",@"identity",@"new@example.com",YES),media];
         if([scenario isEqual:@"read_failure"])backend.readFailure=YES;
         if([scenario isEqual:@"final_read_failure"])backend.finalReadFailure=YES;
+        if([scenario hasPrefix:@"parallel_"]) backend.profileDelay=.1;
+        if([scenario isEqual:@"parallel_identity_change"]) backend.finalAccounts=@[Record(@"new-idms",@"identity",@"new@example.com",YES),media];
+        backend.nameException=[scenario isEqual:@"profile_exception"];
+        NSTimeInterval started=NSProcessInfo.processInfo.systemUptime;
         NSError *error=nil;NSDictionary *state=TVAppleAggregateState(backend,&error);
+        if([scenario hasPrefix:@"parallel_"]) {
+            NSTimeInterval elapsed=NSProcessInfo.processInfo.systemUptime-started;
+            fprintf(stderr,"aggregate four profile reads: %.3fs\n",elapsed);
+            assert(elapsed<.25 && backend.reads==2);
+            assert(backend.names==1&&backend.emails==1&&backend.siwaReads==1&&backend.deviceReads==1);
+        }
+        if([scenario isEqual:@"parallel_identity_change"]) {
+            assert([state[@"icloud"][@"devices"][@"status"]isEqual:@"error"]);
+            for(NSString *key in @[@"name",@"email",@"sign_in_with_apple"])
+                assert([state[@"apple_settings"][key][@"status"]isEqual:@"error"] && state[@"apple_settings"][key][@"data"]==NSNull.null);
+            continue;
+        }
+        if(backend.nameException) {
+            assert(!error && [state[@"apple_settings"][@"name"][@"status"]isEqual:@"error"]);
+            assert([state[@"apple_settings"][@"email"][@"status"]isEqual:@"available"]);
+            assert([[state description] rangeOfString:@"secret-token"].location==NSNotFound);
+            continue;
+        }
         if([scenario isEqual:@"success"])assert([state[@"icloud"][@"devices"][@"status"]isEqual:@"available"]&&backend.deviceReads==1);
         if([scenario isEqual:@"device_failure"]||[scenario isEqual:@"device_unsupported"]||[scenario isEqual:@"device_wrong"]||[scenario isEqual:@"changed"])assert([state[@"icloud"][@"devices"][@"status"]isEqual:@"error"]);
         if([scenario isEqual:@"identity_only"])assert([state[@"icloud"][@"devices"][@"status"]isEqual:@"not_signed_in"]&&backend.deviceReads==0);

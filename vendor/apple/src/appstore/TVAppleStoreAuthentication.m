@@ -146,6 +146,8 @@ TVAppleStoreAttempt TVAppleNativeStoreReviewAuthentication(NSString *appleID, NS
 @property TVAppleAuthTicket *codeTicket;
 @property BOOL closed;
 @property BOOL useSMS;
+@property BOOL automaticMethod;
+@property BOOL methodSelected;
 @property BOOL smsActive;
 @end
 @implementation TVAppleChallengeState
@@ -208,6 +210,10 @@ static id CodePrompt(id context, SEL selector, BOOL secure, id trustedNumber) {
         return original(context, selector, secure, trustedNumber);
     }
     @synchronized (state) {
+        if (state.automaticMethod && !state.methodSelected) {
+            state.useSMS = trustedNumber != nil;
+            state.methodSelected = YES;
+        }
         if (++state.promptRequests > 1) {
             state.failure = TVAppleError(TVAppleErrorVerificationCode, @"Apple requested another code; no automatic code retries.");
             return nil;
@@ -225,6 +231,10 @@ static void SecondFactorUI(id context, SEL selector, void (^completion)(NSNumber
         original(context, selector, completion); return;
     }
     @synchronized (state) {
+        if (state.automaticMethod && !state.methodSelected) {
+            state.useSMS = NO;
+            state.methodSelected = YES;
+        }
         if (state.closed || state.failure || ++state.promptRequests > 1) {
             NSError *failure = state.failure ?: TVAppleError(TVAppleErrorVerificationCode, @"The verification challenge is unavailable or was requested again.");
             state.failure = failure; completion(nil, failure); return;
@@ -295,6 +305,26 @@ static BOOL NativeReplyShape(id block) {
     }
     return YES;
 }
+static BOOL HasSelectedSMSNumber(NSDictionary *dictionary) {
+    id selected=dictionary[@"trustedPhoneNumber"],phones=dictionary[@"trustedPhoneNumbers"];
+    if(![selected isKindOfClass:NSDictionary.class]||![phones isKindOfClass:NSArray.class]||
+       ![selected[@"pushMode"]isEqual:@"sms"])return NO;
+    id identifier=selected[@"id"];
+    if(![identifier isKindOfClass:NSNumber.class]||
+       CFGetTypeID((__bridge CFTypeRef)identifier)==CFBooleanGetTypeID()||
+       [identifier longLongValue]<=0||[identifier doubleValue]!=(double)[identifier longLongValue])return NO;
+    NSUInteger matches=0;
+    for(id phone in phones){
+        if(![phone isKindOfClass:NSDictionary.class])return NO;
+        id phoneID=phone[@"id"];
+        if(![phoneID isKindOfClass:NSNumber.class]||CFGetTypeID((__bridge CFTypeRef)phoneID)==CFBooleanGetTypeID())return NO;
+        if([phone[@"id"]isEqual:identifier]){
+            if(![phone[@"pushMode"]isEqual:@"sms"])return NO;
+            matches++;
+        }
+    }
+    return matches==1;
+}
 static void TrustedDeviceUI(id context, SEL selector, NSDictionary *dictionary, long long status,
                             id configuration, void (^completion)(NSHTTPURLResponse *, NSDictionary *, NSError *)) {
     TVAppleChallengeState *state = ChallengeState(context);
@@ -307,6 +337,35 @@ static void TrustedDeviceUI(id context, SEL selector, NSDictionary *dictionary, 
     if (!NativeReplyShape(completion)) {
         @synchronized (state) { state.failure = TVAppleError(TVAppleErrorUnsupported, @"Unsupported ServerUI completion ABI."); }
         return;
+    }
+    if (state.automaticMethod) {
+        NSError *failure = nil;
+        @synchronized (state) {
+            // Both phone-only and trusted-device accounts enter this native
+            // callback. Presence of a trusted phone does not imply SMS: Apple
+            // also returns phones for accounts with trusted devices.
+            id noDevices = [dictionary isKindOfClass:NSDictionary.class] ? dictionary[@"noTrustedDevices"] : nil;
+            BOOL boolean = [noDevices isKindOfClass:NSNumber.class] &&
+                CFGetTypeID((__bridge CFTypeRef)noDevices) == CFBooleanGetTypeID();
+            // A native step-up challenge may already select an SMS number and
+            // omit noTrustedDevices. This explicit selected mode is different
+            // from merely having trusted phone numbers on the account.
+            BOOL selectedSMS=noDevices==nil&&[dictionary isKindOfClass:NSDictionary.class]&&HasSelectedSMSNumber(dictionary);
+            BOOL useSMS=boolean?[noDevices boolValue]:selectedSMS;
+            BOOL valid = [dictionary isKindOfClass:NSDictionary.class] &&
+                ((status >= 200 && status < 300) || status == 423) &&
+                [dictionary[@"securityCode"] isKindOfClass:NSDictionary.class] &&
+                [dictionary[@"hsa2Account"] isKindOfClass:NSNumber.class] && [dictionary[@"hsa2Account"] boolValue];
+            if (state.closed || state.failure)
+                failure = state.failure ?: TVAppleError(TVAppleErrorVerificationCode, @"Authentication already finished.");
+            else if (!valid || (!boolean&&!selectedSMS))
+                failure = TVAppleError(TVAppleErrorUnsupported, @"Apple did not identify a supported two-factor verification method.");
+            else if (state.methodSelected && state.useSMS != useSMS)
+                failure = TVAppleError(TVAppleErrorVerificationCode, @"Apple changed the verification method during authentication.");
+            else { state.useSMS = useSMS; state.methodSelected = YES; }
+            if (failure) state.failure = failure;
+        }
+        if (failure) { completion(nil, nil, failure); return; }
     }
     if (state.useSMS) {
         if (![dictionary isKindOfClass:NSDictionary.class] || ((status < 200 || status >= 300) && status != 423) ||
@@ -354,7 +413,7 @@ static void TrustedDeviceUI(id context, SEL selector, NSDictionary *dictionary, 
     }
     // AuthKit's iOS15 ServerUI challenge also arrives as HTTP423. Only accept
     // that status with the same explicit HSA2/securityCode challenge structure.
-    if (![dictionary isKindOfClass:NSDictionary.class] || (status != 200 && status != 423) ||
+    if (![dictionary isKindOfClass:NSDictionary.class] || ((status < 200 || status >= 300) && status != 423) ||
         ![dictionary[@"securityCode"] isKindOfClass:NSDictionary.class] ||
         ![dictionary[@"hsa2Account"] isKindOfClass:NSNumber.class] || ![dictionary[@"hsa2Account"] boolValue])
         failure = TVAppleError(TVAppleErrorAccountNeedsReview, @"Unsupported two-factor account response.");
@@ -446,7 +505,7 @@ static Class ServiceContextClass(void) {
     return supportedClass;
 }
 static NSDictionary *NativeAuthenticate(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider,
-    BOOL requireChallenge, BOOL useSMS, NSError **error) {
+    BOOL requireChallenge, BOOL useSMS, BOOL automaticMethod, NSError **error) {
     if (!dlopen("/System/Library/PrivateFrameworks/AuthKit.framework/AuthKit", RTLD_NOW)) {
         *error = TVAppleError(TVAppleErrorUnsupported, @"AuthKit framework is unavailable."); return nil;
     }
@@ -462,7 +521,7 @@ static NSDictionary *NativeAuthenticate(NSString *appleID, NSString *password, i
     }
     }
     TVAppleChallengeState *state = [TVAppleChallengeState new]; state.provider = provider;
-    state.useSMS = useSMS;
+    state.useSMS = useSMS; state.automaticMethod = automaticMethod;
     objc_setAssociatedObject(context, &ChallengeKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSString *reason = [@"Apple module account sign-in " stringByAppendingString:NSUUID.UUID.UUIDString];
     [context setUsername:appleID]; [context _setPassword:password]; [context setReason:reason];
@@ -508,10 +567,13 @@ static NSDictionary *NativeAuthenticate(NSString *appleID, NSString *password, i
     return ticket.value[@"native_results"];
 }
 NSDictionary *TVAppleNativeAuthenticate(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider, BOOL requireChallenge, NSError **error) {
-    return NativeAuthenticate(appleID, password, provider, requireChallenge, NO, error);
+    return NativeAuthenticate(appleID, password, provider, requireChallenge, NO, NO, error);
+}
+NSDictionary *TVAppleNativeAuthenticateAutomatic(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider, NSError **error) {
+    return NativeAuthenticate(appleID, password, provider, NO, NO, YES, error);
 }
 NSDictionary *TVAppleNativeAuthenticateSMS(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider, NSError **error) {
-    return NativeAuthenticate(appleID, password, provider, NO, YES, error);
+    return NativeAuthenticate(appleID, password, provider, NO, YES, NO, error);
 }
 
 BOOL TVAppleNativeEstablishTrust(NSString *appleID, NSString *password, id<TVAppleVerificationCodeProvider> provider, NSError **error) {

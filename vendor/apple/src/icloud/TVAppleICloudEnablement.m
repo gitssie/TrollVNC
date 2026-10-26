@@ -21,6 +21,19 @@ static BOOL CloudSupports(id object, NSArray<NSString *> *selectors) {
     return YES;
 }
 
+static NSError *CloudAlertError(id title,id message) {
+    // Match only an observed native message. Never infer this reason from a
+    // generic 403, historical device notes, or arbitrary alert text.
+    NSString *limit=@"The maximum number of free accounts have been activated on this iPhone.";
+    BOOL matched=([title isKindOfClass:NSString.class]&&[title isEqual:limit]) ||
+        ([message isKindOfClass:NSString.class]&&[message isEqual:limit]);
+    if(!matched)return TVAppleError(TVAppleErrorAccountNeedsReview,@"iCloud sign-in requires additional interaction.");
+    NSMutableDictionary *info=[TVAppleError(TVAppleErrorNativeFailure,
+        @"Apple reported that the maximum number of free accounts have been activated on this iPhone.").userInfo mutableCopy];
+    info[@"TVAppleFailureReason"]=@"icloud_activation_limit";
+    return [NSError errorWithDomain:TVAppleErrorDomain code:TVAppleErrorNativeFailure userInfo:info];
+}
+
 // Foundation CDP input provider. Only the supplied local device passcode is supported.
 // Native ManagedConfiguration verifies it before a CDPLocalSecret is constructed.
 @interface TVAppleCloudInput : NSObject
@@ -51,8 +64,8 @@ static BOOL CloudSupports(id object, NSArray<NSString *> *selectors) {
     @synchronized(self){self.failure=TVAppleError(TVAppleErrorAccountNeedsReview,@"iCloud terms require explicit review.");completion(NO,account,self.failure);}
 }
 - (void)signInFlowController:(id)flow showAlertWithTitle:(id)title message:(id)message completion:(void (^)(BOOL))completion {
-    (void)flow;(void)title;(void)message;
-    @synchronized(self){self.failure=TVAppleError(TVAppleErrorAccountNeedsReview,@"iCloud sign-in requires additional interaction.");completion(NO);}
+    (void)flow;
+    @synchronized(self){self.failure=CloudAlertError(title,message);completion(NO);}
 }
 - (void)cdpContext:(id)context promptForLocalSecretWithCompletion:(void (^)(id,NSError *))completion {
     (void)context;
@@ -116,6 +129,22 @@ static BOOL CloudSupports(id object, NSArray<NSString *> *selectors) {
 }
 @end
 
+BOOL TVAppleValidateLocalPasscode(NSString *passcode,NSError **error) {
+    id device=NSClassFromString(@"CDPLocalDevice"),connection=NSClassFromString(@"MCProfileConnection");
+    if(!CloudSupports(device,@[@"sharedInstance"])||!CloudSupports(connection,@[@"sharedConnection"])||
+       !CloudSupports([device sharedInstance],@[@"hasLocalSecret"])||
+       !CloudSupports([connection sharedConnection],@[@"unlockDeviceWithPasscode:outError:",@"unlockScreenTypeWithOutSimplePasscodeType:"])||
+       !CloudSupports([NSClassFromString(@"CDPLocalSecret")alloc],@[@"initWithValidatedSecret:secretType:"])) {
+        *error=TVAppleError(TVAppleErrorUnsupported,@"Native local passcode validation is unavailable.");return NO;
+    }
+    TVAppleCloudInput *input=[TVAppleCloudInput new];input.passcode=[passcode copy];
+    __block BOOL valid=NO;
+    [input cdpContext:nil promptForLocalSecretWithCompletion:^(id secret,NSError *failure){valid=secret!=nil&&!failure;}];
+    input.passcode=nil;input.closed=YES;
+    if(!valid)*error=input.failure?:TVAppleError(TVAppleErrorAuthenticationFailed,@"Native local passcode verification failed.");
+    return valid;
+}
+
 @implementation TVAppleServices (ICloudEnablement)
 - (void)enableICloudAppleID:(NSString *)appleID password:(NSString *)password devicePasscode:(NSString *)passcode
  verificationCodeProvider:(id<TVAppleVerificationCodeProvider>)provider completion:(TVAppleCompletion)completion {
@@ -150,9 +179,15 @@ BOOL TVAppleRunICloudFlow(id flow,NSDictionary *authentication,NSString *passcod
     // No callback may overwrite the first terminal observation or revive this flow.
     void (^finish)(BOOL,NSError *,BOOL)=^(BOOL ok,NSError *failure,BOOL nativeCompleted) {
         @synchronized(ticket) {
-            if(ticket[@"closed"]||ticket[@"finished"])return;
+            if(ticket[@"closed"])return;
+            // Record an observed native callback without overwriting an earlier
+            // provider rejection. Duplicate/late completions cannot change it.
+            if(nativeCompleted&&![ticket[@"native_completed"]boolValue]) {
+                ticket[@"native_completed"]=@YES;
+                if(failure)ticket[@"native_failure"]=failure;
+            }
+            if(ticket[@"finished"])return;
             ticket[@"finished"]=@YES;ticket[@"ok"]=@(ok);
-            ticket[@"native_completed"]=@(nativeCompleted);
             if(failure)ticket[@"failure"]=failure;
             dispatch_semaphore_signal(signal);
         }
@@ -182,10 +217,10 @@ BOOL TVAppleRunICloudFlow(id flow,NSDictionary *authentication,NSString *passcod
         // Pump native callbacks without busy-spinning on a worker with no run-loop sources.
         [[NSRunLoop currentRunLoop]runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.001]];
     }
-    BOOL ok=NO,nativeCompleted=NO;NSError *failure=nil;
+    BOOL ok=NO,nativeCompleted=NO;NSError *failure=nil,*nativeFailure=nil;
     @synchronized(ticket) {
         ticket[@"closed"]=@YES;
-        ok=[ticket[@"ok"]boolValue];nativeCompleted=[ticket[@"native_completed"]boolValue];failure=ticket[@"failure"];
+        ok=[ticket[@"ok"]boolValue];nativeCompleted=[ticket[@"native_completed"]boolValue];failure=ticket[@"failure"];nativeFailure=ticket[@"native_failure"];
         if(!ticket[@"finished"])failure=TVAppleError(TVAppleErrorOutcomeUnknown,@"Native iCloud/CDP sign-in timed out; inspect actual account state.");
     }
     @synchronized(input){input.closed=YES;input.passcode=nil;input.failureHandler=nil;input.operationActive=nil;}
@@ -193,6 +228,10 @@ BOOL TVAppleRunICloudFlow(id flow,NSDictionary *authentication,NSString *passcod
     if(ok&&error)*error=nil;
     if(!ok) {
         NSMutableDictionary *info=[failure.userInfo mutableCopy];
+        // nativeFailure is already a module-owned, sanitized error. Preserve
+        // its code/domain if total completion arrived before this result closed.
+        for(NSString *key in @[@"TVAppleNativeDomain",@"TVAppleNativeCode"])
+            if(nativeFailure.userInfo[key])info[key]=nativeFailure.userInfo[key];
         info[@"TVAppleFailureStage"]=@"icloud_cdp";
         info[@"TVAppleNativeCompletionReceived"]=@(nativeCompleted);
         *error=[NSError errorWithDomain:TVAppleErrorDomain code:failure.code userInfo:info];

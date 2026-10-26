@@ -22,7 +22,7 @@ static BOOL ValidCode(NSString *value) {
     return value.length == 6 && [value rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet]].location == NSNotFound;
 }
 static NSDictionary *Methods(void) {
-    return @{@"queryState": @[], @"queryAccountState": @[],
+    return @{@"changePassword": @[@"apple_id", @"password", @"new_password"], @"queryState": @[], @"queryAccountState": @[],
         @"signInAppStore": @[@"apple_id", @"password"],
         @"signOutAppStore": @[@"apple_id"],
         @"enableICloud": @[@"apple_id", @"password", @"device_passcode"],
@@ -71,6 +71,7 @@ static NSDictionary *Methods(void) {
             NSString *method = request[@"method"];
             NSDictionary *params = request[@"params"];
             NSArray *required = Methods()[method];
+            if ([method isEqual:@"changePassword"] && [params isKindOfClass:NSDictionary.class] && params[@"device_passcode"]) required=[required arrayByAddingObject:@"device_passcode"];
             if (!required || !Fields(params, required)) return Failure(@"invalid_request");
             if (params[@"local_data_policy"] && ![@[@"remove", @"keep"] containsObject:params[@"local_data_policy"]]) return Failure(@"invalid_request");
             if ([method isEqual:@"verifyContactEmail"] && !ValidCode(params[@"code"])) return Failure(@"invalid_request");
@@ -80,7 +81,7 @@ static NSDictionary *Methods(void) {
             if ([@[@"beginAddingContactEmail", @"verifyContactEmail", @"setForwardingEmail"] containsObject:method]) domain = @"email";
             if ([@[@"querySignInWithAppleApps", @"stopUsingAppleID"] containsObject:method]) domain = @"authorizations";
             if ([@[@"queryICloudDevices", @"removeOtherICloudDevices"] containsObject:method]) domain = @"devices";
-            if ([@[@"signInAppStore", @"signOutAppStore"] containsObject:method]) domain = @"media";
+            if ([@[@"signInAppStore", @"signOutAppStore", @"changePassword"] containsObject:method]) domain = @"media";
             if (_domains[domain]) return Failure(@"busy");
 
             if ([method isEqual:@"verifyContactEmail"] &&
@@ -97,7 +98,7 @@ static NSDictionary *Methods(void) {
             _domains[domain] = identifier;
             _operations[identifier] = [@{@"operation_id": identifier, @"method": method, @"status": @"running"} mutableCopy];
             TVAppleManualCodeProvider *provider = nil;
-            if ([method isEqual:@"signInAppStore"] || [method isEqual:@"enableICloud"]) {
+            if ([method isEqual:@"signInAppStore"] || [method isEqual:@"enableICloud"] || [method isEqual:@"changePassword"]) {
                 __weak TVNCAppleService *weakSelf = self;
                 provider = [[TVAppleManualCodeProvider alloc] initWithChallengeHandler:^(NSDictionary *challenge) {
                     TVNCAppleService *owner = weakSelf;
@@ -140,6 +141,9 @@ static NSDictionary *Methods(void) {
                             if ([stage isEqual:@"icloud_cdp"]) {
                                 details[@"stage"]=stage;
                                 details[@"native_completion_received"]=@([error.userInfo[@"TVAppleNativeCompletionReceived"]boolValue]);
+                                id reason=error.userInfo[@"TVAppleFailureReason"];
+                                if([reason isKindOfClass:NSString.class]&&[reason isEqual:@"icloud_activation_limit"])
+                                    details[@"reason"]=reason;
                             }
                             NSString *nativeDomain=error.userInfo[@"TVAppleNativeDomain"];
                             NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"];
@@ -186,7 +190,8 @@ static NSDictionary *Methods(void) {
 - (void)invoke:(NSString *)m params:(NSDictionary *)p provider:(TVAppleManualCodeProvider *)provider completion:(TVAppleCompletion)c {
     NSString *a = p[@"apple_id"];
     TVAppleLocalDataPolicy policy = [p[@"local_data_policy"] isEqual:@"keep"] ? TVAppleLocalDataKeep : TVAppleLocalDataRemove;
-    if ([m isEqual:@"queryAccountState"]) [_services queryAccountState:c];
+    if ([m isEqual:@"changePassword"]) [_services changeAppleIDPassword:a password:p[@"password"] newPassword:p[@"new_password"] devicePasscode:p[@"device_passcode"] verificationCodeProvider:provider completion:c];
+    else if ([m isEqual:@"queryAccountState"]) [_services queryAccountState:c];
     else if ([m isEqual:@"queryState"]) [_services queryState:c];
     else if ([m isEqual:@"signInAppStore"]) [_services signInAppStoreAppleID:a password:p[@"password"] verificationCodeProvider:provider completion:c];
     else if ([m isEqual:@"enableICloud"]) [_services enableICloudAppleID:a password:p[@"password"] devicePasscode:p[@"device_passcode"] verificationCodeProvider:provider completion:c];

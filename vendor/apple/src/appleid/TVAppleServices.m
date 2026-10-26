@@ -1,3 +1,4 @@
+#import "TVApplePasswordChange.h"
 #import "TVAppleBackend.h"
 #import "TVAppleStoreLogin.h"
 #import "TVAppleScopedSignOut.h"
@@ -69,6 +70,28 @@ static NSArray *SignOutTargets(NSDictionary *state, NSString *appleID, BOOL iClo
             dispatch_async(self->_callbacks, ^{ reply(state, error); });
         }
     });
+}
+- (void)changeAppleIDPassword:(NSString *)appleID password:(NSString *)password
+ newPassword:(NSString *)newPassword devicePasscode:(NSString *)passcode
+ verificationCodeProvider:(id<TVAppleVerificationCodeProvider>)provider completion:(TVAppleCompletion)completion {
+    NSString *target=[appleID copy],*old=[password copy],*candidate=[newPassword copy],*unlock=[passcode copy];
+    TVAppleCompletion reply=[completion copy];
+    dispatch_async(Worker(),^{@autoreleasepool{
+        NSError *error=nil;NSDictionary *result=nil;
+        if(![target isKindOfClass:NSString.class]||!target.length||target.length>320||
+           ![old isKindOfClass:NSString.class]||!old.length||old.length>4096||
+           !TVAppleValidNewPassword(candidate)||[old isEqual:candidate]||
+           (unlock&&(![unlock isKindOfClass:NSString.class]||unlock.length>128)))
+            error=TVAppleError(TVAppleErrorInvalidRequest,@"Invalid Apple ID password-change input.");
+        else if(![self->_backend conformsToProtocol:@protocol(TVApplePasswordChangeBackend)])
+            error=TVAppleError(TVAppleErrorUnsupported,@"Native password backend is unavailable.");
+        else @try {result=[(id<TVApplePasswordChangeBackend>)self->_backend changePasswordAppleID:[target stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString password:old newPassword:candidate devicePasscode:unlock provider:provider error:&error];}
+        @catch(__unused NSException *exception){error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Native password operation did not return a confirmed result.");}
+        if(!error&&(![result[@"outcome"]isEqual:@"succeeded"]||![result[@"password_changed"]isEqual:@YES])){
+            result=nil;error=TVAppleError(TVAppleErrorOutcomeUnknown,@"Native password change was not confirmed.");
+        }
+        dispatch_async(self->_callbacks,^{reply(result,error);});
+    }});
 }
 - (void)enqueueEmailSettingsForAppleID:(NSString *)appleID completion:(TVAppleCompletion)completion {
     NSString *target=[appleID copy];TVAppleCompletion reply=[completion copy];
@@ -358,14 +381,16 @@ static NSArray *SignOutTargets(NSDictionary *state, NSString *appleID, BOOL iClo
               @"signed_in_domains":@[@"media"] };
 }
 - (NSDictionary *)failedLoginForTarget:(NSString *)target stage:(NSString *)stage error:(NSError **)error {
+    if ([stage isEqual:@"icloud_sign_in"]) {
+        // Return the native terminal result now. A diagnostic snapshot can wait
+        // on account/Find My daemons and must not extend a completed rejection
+        // or timeout. The caller can independently query actual partial state.
+        return @{ @"outcome":((*error).code==TVAppleErrorOutcomeUnknown) ? @"unknown" : @"failed",
+                  @"stage":stage, @"account_state_available":@NO, @"account_state_may_be_partial":@YES };
+    }
     NSError *queryError = nil;
     NSDictionary *state = [_backend snapshot:&queryError];
     if (!state) {
-        // An independent state read cannot erase a definite native rejection.
-        // Partial account effects and the request's execution result are separate.
-        if ([stage isEqual:@"icloud_sign_in"] && *error && (*error).code!=TVAppleErrorOutcomeUnknown)
-            return @{ @"outcome":@"failed", @"stage":stage, @"account_state_available":@NO,
-                      @"account_state_may_be_partial":@YES };
         *error = TVAppleError(TVAppleErrorOutcomeUnknown, @"Authentication failed and the resulting account state could not be read.");
         return @{ @"outcome":@"unknown", @"stage":stage };
     }
@@ -373,10 +398,6 @@ static NSArray *SignOutTargets(NSDictionary *state, NSString *appleID, BOOL iClo
     for (NSDictionary *record in Targets(state, target)) [domains addObject:record[@"domain"]];
     NSMutableDictionary *result=[@{ @"outcome":((*error).code==TVAppleErrorOutcomeUnknown) ? @"unknown" : @"failed", @"stage":stage, @"state":state,
               @"signed_in_domains":domains.array } mutableCopy];
-    if([stage isEqual:@"icloud_sign_in"]) {
-        result[@"account_state_available"]=@YES;
-        result[@"account_state_may_be_partial"]=@YES;
-    }
     return result;
 }
 @end

@@ -32,6 +32,9 @@ FOUNDATION_EXPORT BOOL TVAppleNativeEstablishTrust(NSString *appleID, NSString *
 // iCloud registration; never expose it through the public result dictionaries.
 FOUNDATION_EXPORT NSDictionary * _Nullable TVAppleNativeAuthenticate(NSString *appleID, NSString *password,
     id<TVAppleVerificationCodeProvider> _Nullable provider, BOOL requireChallenge, NSError **error);
+// Default Store authentication selects the verification method from Apple's challenge.
+FOUNDATION_EXPORT NSDictionary * _Nullable TVAppleNativeAuthenticateAutomatic(NSString *appleID, NSString *password,
+    id<TVAppleVerificationCodeProvider> _Nullable provider, NSError **error);
 // SMS continuation uses Apple's original phone selection/send/postback machinery.
 // The provider only supplies a fresh SMS code; it never fetches an SMS URL.
 FOUNDATION_EXPORT NSDictionary * _Nullable TVAppleNativeAuthenticateSMS(NSString *appleID, NSString *password,

@@ -56,7 +56,31 @@ All native actions use `POST`, `Content-Type: application/json`, plain JSON requ
 
 Generic native helpers retain their existing argument order as a JSON array; their text result is returned as `{"value":"…"}` without delimiter replacement. Touch clients keep their HTTP connection alive, await begin/move/end requests in order, and receive cleanup on TCP disconnect. Internal SpringBoard IPC/native helper identifiers remain private implementation details.
 
+App Store 登录只需向 `/api/apple/signInAppStore` 提交账号和密码：
+
+```json
+{"apple_id":"user@example.com","password":"…"}
+```
+
+原生流程根据 Apple 本次认证挑战自动识别验证码类型。ServerUI JSON 中的
+`noTrustedDevices=false` 走受信任设备 2FA，`true` 走原生短信流程；账号包含
+受信任手机号不代表必须使用短信。不支持或缺失的挑战信息明确报错，不猜测类型。
+收到 `requires_verification_code` 后，外部按 `challenge.verification_method`
+（`trusted_device` 或 `sms`）取得对应新六位验证码，再向 `/api/apple/submit_code`
+提交 `operation_id`、`challenge_id`、`code`。保留前导零；提交确认仅表示交给原生
+认证，登录结果以同一 operation 的最终结果为准。无需 `verification_method` 参数，
+服务不接收取码 URL、不自动取码，不把已拒绝的验证码换接口重试。
+
 Long operations return an operation record with `operation_id`, then clients query `/result`, or subscribe to the App-state stream below. Disconnect does not replay a submitted write. RV explicitly disables HTTP retries and redirects, uses finite native request deadlines and reports interrupted mutations as unknown.
+
+### iCloud response latency
+
+`/api/apple/queryAccountState` reads lightweight account and Find My state.
+`/api/apple/queryState` adds native profile/device queries; independent sections
+run concurrently and still undergo the final account-identity check. iCloud
+activation errors return without waiting for a second diagnostic state query.
+Failure may leave partial account effects; use the separate state endpoint to
+inspect them. Native success/error and unknown timeout meanings are unchanged.
 
 ## Normalized touch delivery (4.0-5)
 
@@ -148,3 +172,14 @@ rtk proxy cargo test --manifest-path ../rv/Cargo.toml -p rv-app unlock_ui
 ```
 
 Native runner tests use deterministic screen/HID primitives; HTTP and RV tests use real HTTP/2 peers for fragmented progress, cancellation, bounded buffering, observed terminal state, early EOF and no replay. These checks do not claim a successful passcode unlock on a physical phone.
+
+
+### Apple ID password change
+
+Updated builds advertise `apple_password_change:1` through authorize.
+`POST /api/apple/changePassword` accepts `apple_id`, `password`, `new_password`
+and optional `device_passcode`; the caller must save the new candidate first.
+The existing operation result and verification-code routes continue the same
+request. The native keep-other-devices choice is used. Only a confirmed native
+result (`password_changed:true`) permits updating the host current password;
+HTTP200 alone is insufficient. Uncertain mutations must not be replayed.

@@ -4,14 +4,14 @@
 
 | Method | Parameters | Completion |
 | --- | --- | --- |
-| `enableICloudAppleID:password:devicePasscode:verificationCodeProvider:completion:` | matching Apple ID, password, local device passcode, optional external code provider | native CDP completion and fresh primary-cloud/dataclass/Find My verification |
+| `enableICloudAppleID:password:devicePasscode:verificationCodeProvider:completion:` | matching Apple ID, password, local device passcode, optional external code provider | native CDP completion; state refresh remains a separate read |
 | `signInAppStoreAppleID:password:verificationCodeProvider:completion:` | Apple ID, password, optional asynchronous code provider | verified login result; failure/unknown with resulting account domains when readable |
 | `signOutICloudAppleID:localDataPolicy:completion:` | explicit target Apple ID; remove/keep enum | verifies only target primary iCloud logout; returns actual state |
 | `disableFindMyAppleID:password:completion:` | matching primary Apple ID and its password | fresh Find My state verification; idempotent if already disabled |
 | `queryState:` | none | account state, domain summaries and fresh name/email sections; per-section failures, or fatal account read error |
 | `signOutAppleID:localDataPolicy:completion:` | explicit target Apple ID; remove/keep enum | verified result; unknown result plus error; preflight error without result |
 
-Callbacks execute exactly once on the chosen callback queue. Calls from all instances are serialized. Read-only calls do not change credentials or account settings. This version has no module-owned credential storage, persisted jobs or transport-specific request IDs. A host may assign its own job IDs without replaying account operations.
+Callbacks execute exactly once on the chosen callback queue. Calls use the concurrent account worker; native Settings sessions serialize operations within their own domains. Read-only calls do not change credentials or account settings. This version has no module-owned credential storage, persisted jobs or transport-specific request IDs. A host may assign its own job IDs without replaying account operations.
 
 ## State
 
@@ -24,6 +24,15 @@ Callbacks execute exactly once on the chosen callback queue. Calls from all inst
 - `capabilities`: `sign_out_icloud`, query/complete signout true if runtime prerequisites succeeded; App Store login has its own runtime capability; separate whole-device login remains false; `enable_icloud` reflects effective authentication/CDP/passcode entitlements. Runtime selector checks also run before authentication. Capability true does not mean a particular account passes Find My or data-policy preflight.
 
 An entitlement or query failure is an error, never an empty signed-out state. The media cache is correlated with identifiers from a new Accounts query: a cached media account no longer in the system query is ignored.
+
+`queryAccountState` is the lightweight local account/Find My snapshot used for
+login status and safety checks. `queryState` additionally reads name, email, Sign
+in with Apple authorizations and iCloud devices. Eligible profile reads now run
+concurrently in their independent native sessions, so their network waits overlap.
+All reads finish before the final snapshot/identity check; if the selected identity
+changed, old profile data is discarded. A failed or throwing profile only marks its
+own section as error; no exception text or native payload is exported. Base/final
+snapshot failures still fail the entire query, and no mutation is retried.
 
 ## Signout result
 
@@ -45,11 +54,25 @@ The Store → AuthKit bootstrap → Store retry algorithm is adapted from pinned
 
 Success requires an active authenticated media record correlated to a new Accounts query. `signed_in_domains` reports actual primary-cloud, identity and active-media records matching the target, including partial login on post-authentication failure. A failed final read or malformed response produces `unknown` and fences subsequent writes. No UI verification is performed.
 
-The manual provider separates credentials from verification input. Create `TVAppleManualCodeProvider` with a challenge handler, then pass it to the login call. When Apple requests a code, the handler receives `kind: apple_two_factor`, `verification_method: trusted_device`, `attempt: 1`, a unique `challenge_id`, and `expires_in: 90`. This adapter accepts trusted-device codes; SMS verification is not implemented. The host obtains the code externally and calls `submitCode:forChallengeID:error:` on the same provider. No URL, HTTP client, baseline read or polling exists inside the module.
+The manual provider separates credentials from verification input. Create `TVAppleManualCodeProvider` with a challenge handler, then pass it to the login call. When Apple requests a code, the handler receives `kind: apple_two_factor`, `verification_method` (`sms` or `trusted_device`), `attempt: 1`, a unique `challenge_id`, and `expires_in: 90`. The Store login selects SMS or trusted-device codes from the native Apple challenge as described below. The host obtains the code externally and calls `submitCode:forChallengeID:error:` on the same provider. No URL, HTTP client, baseline read or polling exists inside the module.
 
 Submission accepts six ASCII digits and the pending identifier. A successful submission acknowledges delivery, not successful login; await the original login completion. Invalid format or mismatched identifier leaves the challenge pending. Duplicate, expired or cancelled submissions fail. `cancelChallengeID:error:` abandons a pending challenge. Native completion or timeout invalidates pending manual input through `cancelAuthentication`. Custom providers may implement the same optional cancellation method. The operation adapter calls the manual provider's `invalidate` when the whole operation finishes or the service stops: this permanently closes it and immediately rejects late prepare/request calls. `cancelAuthentication` remains reusable across authentication stages within one operation.
 
 Preparation waits at most 30 seconds, Store attempts 120 seconds each, AuthKit 180 seconds and final verification 5 seconds. Timeouts do not cancel Apple daemon work. Login may establish phone identity; independent iCloud enablement is not implied. AuthKit uses the exact native command-line context with process-local adapters for owned contexts; unsupported prompt shapes fail closed. These adapters are not installed in Apple daemons.
+
+### Automatic App Store verification
+
+Store/Review login always uses automatic native challenge selection. Callers and
+manual providers only submit credentials and respond to challenges; no method
+preference or new login parameter is needed. For the native ServerUI JSON flow,
+Apple's boolean `noTrustedDevices` selects SMS (`true`) or trusted-device (`false`).
+A trusted phone list alone does not select SMS. Missing/malformed device state,
+unsupported challenges or a changed method in the same session fail explicitly,
+before input is requested or a verification endpoint is called. Direct native code
+callbacks retain their phone/device meaning. Trusted-device input uses the existing
+native signed trusted-device endpoint; SMS uses Apple's original send/verify
+continuation. Submission, challenge expiration and cancellation are unchanged.
+No code-URL fetch, failed-code replay or cross-endpoint fallback is performed.
 
 ## Authenticated Find My disable
 
@@ -63,7 +86,24 @@ The native pipeline is AuthKit authentication results → AASignInFlowController
 
 Preflight refuses conflicting selected identities and enabled/unknown Find My. The flow's findMyActivationAction is 2 (disabled). Terms, recovery keys, beneficiary keys, remote secrets and adoption prompts are rejected explicitly; encrypted data is never reset as a fallback. External trusted-device 2FA uses the existing provider only when Apple requests it.
 
-A matching pre-existing primary account does not skip authentication/CDP. `already_enabled` only reports the initial presence of a matching primary with dataclasses. `succeeded` requires a successful native callback with no provider failure, then a fresh matching primary with nonempty enabled dataclasses and Find My disabled. Results include actual `signed_in_domains` and state. AuthKit rejection is failed; uncertainty after the flow starts is unknown and fences writes because Apple may already have saved a partial account. Native authentication waits at most 180 seconds; the iCloud flow waits 240 seconds and final verification 5 seconds. Timeout does not cancel daemon work.
+A matching pre-existing primary account does not skip authentication/CDP.
+`already_enabled` only reports the initial presence of matching primary dataclasses.
+`succeeded` requires the native flow callback to succeed with an account and no
+provider failure. An iCloud rejection or timeout now returns its original error
+immediately, without a synchronous diagnostic snapshot. Failure results retain
+`stage=icloud_sign_in`, `account_state_available=false` and
+`account_state_may_be_partial=true`; they do not invent account state or signed-in
+domains. Query actual state separately with `queryAccountState`. A failed CDP step
+may have partial native effects; timeout remains `unknown` and never triggers an
+automatic replay. Native authentication retains its 180-second deadline and the
+iCloud flow its 240-second deadline. Timeout does not cancel daemon work.
+
+A native alert exactly matching the observed iPhone free-account activation-limit
+message returns `TVAppleErrorNativeFailure` with a static module message. The
+host adapter exposes `error.reason=icloud_activation_limit`. A generic 403 does
+not establish that reason, and raw alert text/native userInfo are never exported.
+Native completion metadata is retained only if observed before the result closes;
+it does not replace an earlier failure or delay its return.
 
 ### SearchParty preflight recovery
 
@@ -179,3 +219,24 @@ RV 通过独立 queryAccountState 更新登录/退出菜单，Store 与 iCloud �
 CDP 输入 provider 的明确错误与总 completion 共用 first-terminal gate，条款/本机密码/恢复输入拒绝立即返回，不再等待 240 秒总 completion 兜底。总 completion 明确失败返回 `TVAppleErrorNativeFailure`（code 11），仅保留白名单 native domain/code；未收到 completion 的超时或成功回调缺失 account 仍为 code 6。失败结果可能带 `account_state_may_be_partial=true`，表示原生后台可能已有部分账户副作用，不改变明确失败的 outcome。后续账户读取失败不覆盖原始明确 iCloud 错误。
 
 ZXTouch adapter 始终记录 completed，并在缺少 result 时归一化 outcome 为 failed/unknown；完成后移除挑战、释放功能会话并永久关闭验证码 provider。重复或迟到回调不能覆盖终态或打开旧挑战。HTTP/2 可恢复状态流为独立设计，见 [设计文档](../../../docs/apple-operation-stream.md)，尚未实现或声明能力。
+
+
+## Apple ID password change
+
+`changeAppleIDPassword:password:newPassword:devicePasscode:verificationCodeProvider:completion:`
+requires the host to durably save the candidate first. The candidate is exactly
+eight ASCII letters/digits with upper/lower/digit classes. Existing local-passcode
+storage remains host-owned; the module stores no credentials or code URL.
+
+The current native sequence uses actual server-provided RemoteUI forms and
+continuations, validates the local secret when required, and retains other-device
+sessions. Completion `outcome=succeeded,password_changed=true` requires an explicit
+native success flag or fresh native new-credential authentication. HTTP200 alone
+is insufficient. After a submitted mutation, unconfirmed errors/timeouts are
+unknown, not a reason to replay. Results never include any password.
+
+Transport: `POST /api/apple/changePassword`, string parameters `apple_id`,
+`password`, `new_password`, optional `device_passcode`; existing operation result,
+submit_code and cancel_challenge routes apply. Capability apple_password_change=1
+identifies builds with this endpoint. iPhone9,2/iOS15.8.8 isolated production-adapter
+HTTP2 acceptance is recorded in validation.md; installed daemon was not updated.

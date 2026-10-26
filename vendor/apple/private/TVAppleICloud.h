@@ -10,6 +10,7 @@ FOUNDATION_EXPORT BOOL TVAppleNativeEnableICloud(NSString *appleID, NSString *pa
 // Production flow runner; injectable flow/deadline permit native callback regression tests.
 FOUNDATION_EXPORT BOOL TVAppleRunICloudFlow(id flow, NSDictionary *authentication,
     NSString *passcode, NSTimeInterval timeout, NSError **error);
+FOUNDATION_EXPORT BOOL TVAppleValidateLocalPasscode(NSString *passcode, NSError **error);
 @interface TVAppleServices (ICloudWorker)
 - (void)enqueueEnableICloudAppleID:(NSString *)appleID password:(NSString *)password
                    devicePasscode:(NSString *)passcode

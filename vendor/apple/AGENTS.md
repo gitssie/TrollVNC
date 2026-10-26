@@ -1,3 +1,91 @@
+## 2026-10-27: password-change endpoint implemented / isolated HTTP2 accepted
+
+Supersedes the earlier note that the endpoint is unfinished. `changePassword`
+now reaches TVAppleServices -> NativeBackend -> TVApplePasswordSession, with
+asynchronous main-thread native RemoteUI and worker authentication/local-secret
+validation. It handles the actual two/three-row forms, named signoutDevices alert
+and unique keep-other-devices button. True native completion flags include numeric
+and string representations; fallback uses fresh AuthKit new-password authentication,
+never Store login or mutation replay. Unknown keeps both passwords at the host.
+
+The actual new endpoint passed an isolated signed HTTP2 listener test:11.752s,
+password_changed=true; candidate saved before invoke, receipt recorded, original
+preserved. Production Wi-Fi6000 complete logout/fresh signed-out check/new-password
+login/fresh selected/authenticated media check passed afterward in7.331s. This is
+new API device acceptance, not just the earlier standalone exploratory sequence.
+The installed daemon remains old; no production installation or RV build occurred.
+Updated builds advertise apple_password_change=1; standard rootless package builds.
+Native regression tests cover two/three fields, named alert, flag representations,
+validation, duplicate/foreign button rejection and unsupported cleanup. Review fixes
+also preserve Ready on rejected manual rotations and remove Store-login requirements.
+
+## 2026-10-26: real native password change and independent new-password login
+
+The current test account password was actually changed by a signed standalone
+native RemoteUI probe; an independent production ZXTouch HTTP/2 full logout,
+fresh signed-out query, new-password Store login and fresh authenticated-media
+query passed. New-password login took ~10.3s. The host database current password
+was advanced only after this independent verification; original retained, pending
+cleared. Never reuse the original password as current for subsequent tests.
+
+Native local-passcode continuation works with existing local validation followed
+by the native PIN model action. Its form has only new/confirmation rows; do not
+require a current-password row when absent. Save URL `#signoutDevices` opens a
+named alert, not JavaScript or a final submission. Its server-advertised keep-other-
+devices button POSTs `/appleid/settings/account/manage/security/password/put` via
+native `alertView:pressedButton:completion:` and native signing. HTTP200 alone was
+not used as acceptance: string-only `passwordUpdated` checking failed to recognize
+success, so the independent logout/login established actual mutation. Do not replay
+this candidate as a new password change. Production `changePassword` endpoint and
+its callback remain unfinished; no password-change capability was deployed.
+See workspace rv/docs/apple-accounts.md for registry and integration boundaries.
+
+## 2026-10-26: current-account native activation-limit alert
+
+Fresh diagnostic execution captured the current account's exact native title:
+"The maximum number of free accounts have been activated on this iPhone."
+Native total callback: false/nil/com.apple.appleaccount403. Timings: pre-query
+0.571s + enable4.314s + post-query0.563s =5.448s. Cloud absent, matching media/idms
+preserved, Find My false. This new evidence supersedes earlier generic-alert-only
+uncertainty for this request; it is not proof of every historical failure's cause.
+Only that exact observed alert maps to icloud_activation_limit/NativeFailure;
+403 alone and unknown prompts do not. Native callback metadata observed before
+closing is preserved without changing the first failure. No activation replay
+after rejection; native/adapter tests, signed iOS build and review pass. See
+[validation.md](docs/validation.md#2026-10-26-current-account-icloud-native-alert-diagnosis).
+
+## 2026-10-26: iCloud result/state latency
+
+Services returns iCloud failure/unknown without a post-failure diagnostic snapshot;
+original errors/outcomes remain authoritative and actual state is queried separately.
+Failure retains account_state_available=false/account_state_may_be_partial=true.
+Aggregate queryState runs eligible name/email/SIWA/devices reads concurrently in
+separate native sessions, then performs the same final identity check. A throwing
+profile yields only a sanitized section error. No native timeout/replay policy change.
+Regression timings: delayed failure state356ms→<1ms; four100ms reads424→~108ms.
+Real installed4.0-2 open5.392s vs isolated fixed4.702s both returned additional
+interaction/code10; state~0.54s, no iCloud account, media/identity preserved,
+Find My false. Not a proven network failure, quota diagnosis or successful activation.
+Full suites/build/independent review pass; installed daemon not replaced. See
+[validation.md](docs/validation.md#2026-10-26-icloud-enablement-and-state-query-latency).
+
+## 2026-10-26: automatic Store 2FA via ZXTouch HTTP/2
+
+User corrected the initial explicit-method implementation: login must select the
+method automatically. The final signInAppStore request only takes apple_id/password;
+there is no external verification_method/provider preference. Native ServerUI uses
+Apple's boolean noTrustedDevices (false=trusted device, true=SMS), never the mere
+presence of trusted phones. Missing/malformed or changing method data fails without
+submitting a code to a guessed endpoint. Challenge metadata still reports the
+actual verification_method for the caller to obtain the matching code.
+The earlier explicit trusted_device run completed native login and independent
+selected/authenticated media confirmation on iPhone9,2/iOS15.8.8; this alone does
+not validate automatic selection. The corrected no-option HTTP/2 login also
+succeeded with independent media confirmation, but reused trust and had no new
+challenge. Host production-method regressions cover automatic SMS/device routing;
+fresh native challenge schema compatibility remains unverified. See
+[validation.md](docs/validation.md).
+
 ## Dopamine 3 migration (2026-10-17)
 
 Production packaging now targets Dopamine 3 standard rootless only. The SearchParty

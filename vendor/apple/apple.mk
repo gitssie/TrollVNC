@@ -1,8 +1,10 @@
-# Opt-in source manifest. No TrollVNC, RFB, UIKit or UI automation dependency.
+# Opt-in source manifest. No TrollVNC, RFB or UI automation dependency.
+# Native UIKit/RemoteUI classes are loaded dynamically behind the Foundation API.
 # Before including: APPLE_MODULE_ROOT := <path to vendor/apple>
 APPLE_MODULE_FILES := $(APPLE_MODULE_ROOT)/src/common/TVAppleErrors.m \
     $(APPLE_MODULE_ROOT)/src/common/TVAppleNativeBackend.m \
     $(APPLE_MODULE_ROOT)/src/appleid/TVAppleServices.m \
+    $(APPLE_MODULE_ROOT)/src/appleid/TVApplePasswordChange.m \
     $(APPLE_MODULE_ROOT)/src/appleid/TVAppleEmailSettings.m \
     $(APPLE_MODULE_ROOT)/src/appleid/TVAppleEmailActions.m \
     $(APPLE_MODULE_ROOT)/src/appleid/TVAppleNameSettings.m \

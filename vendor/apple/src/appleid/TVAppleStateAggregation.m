@@ -47,6 +47,25 @@ static NSDictionary *ProfileResult(NSDictionary *data,NSError *error,NSString *t
     if([data[@"apple_id"]caseInsensitiveCompare:target]!=NSOrderedSame)return SectionError(TVAppleErrorConflict);
     return @{@"status":@"available",@"data":data};
 }
+// Each native profile uses its own Settings session (email has its own AuthKit
+// controller). Collect independent reads concurrently; only the result map is shared.
+static void CollectProfile(dispatch_group_t group, NSMutableDictionary *sections, NSString *key,
+    NSString *target, NSDictionary *(^read)(NSError **)) {
+    dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            NSDictionary *section=nil;
+            @try {
+                NSError *readError=nil;
+                NSDictionary *data=read(&readError);
+                section=ProfileResult(data,readError,target);
+            } @catch (__unused NSException *exception) {
+                // Do not export exception reasons or crash a detached worker.
+                section=SectionError(TVAppleErrorNativeFailure);
+            }
+            @synchronized(sections){sections[key]=section;}
+        }
+    });
+}
 NSDictionary *TVAppleAccountState(NSDictionary *state){
     NSMutableDictionary *result=[state mutableCopy];
     result[@"app_store"]=DomainSummary(Selected(state,@"media"));
@@ -62,28 +81,25 @@ NSDictionary *TVAppleAggregateState(id<TVAppleBackend> backend,NSError **error){
     NSDictionary *name=NoProfile(),*email=NoProfile(),*siwa=NoProfile(),*devices=NoProfile();
     if(conflict){devices=SectionError(TVAppleErrorConflict);name=SectionError(TVAppleErrorConflict);email=SectionError(TVAppleErrorConflict);siwa=SectionError(TVAppleErrorConflict);}
     else if(target){
-        NSError *readError=nil;NSDictionary *data=nil;
-        if([backend conformsToProtocol:@protocol(TVAppleNameSettingsBackend)]){
-            data=[(id<TVAppleNameSettingsBackend>)backend nameSettingsForAppleID:target error:&readError];
-            name=ProfileResult(data,readError,target);
-        }else name=SectionError(TVAppleErrorUnsupported);
-        readError=nil;data=nil;
-        if([backend conformsToProtocol:@protocol(TVAppleEmailSettingsBackend)]){
-            data=[(id<TVAppleEmailSettingsBackend>)backend emailSettingsForAppleID:target error:&readError];
-            email=ProfileResult(data,readError,target);
-        }else email=SectionError(TVAppleErrorUnsupported);
-        readError=nil;data=nil;
-        if([backend conformsToProtocol:@protocol(TVAppleSignInWithAppleBackend)]){
-            data=[(id<TVAppleSignInWithAppleBackend>)backend signInWithAppleAppsForAppleID:target error:&readError];
-            siwa=ProfileResult(data,readError,target);
-        }else siwa=SectionError(TVAppleErrorUnsupported);
-    }
-    if(!conflict&&Selected(before,@"icloud").count==1){
-        NSError *deviceError=nil;NSDictionary *data=nil;
-        if([backend conformsToProtocol:@protocol(TVAppleICloudDevicesBackend)]){
-            data=[(id<TVAppleICloudDevicesBackend>)backend iCloudDevicesForAppleID:target error:&deviceError];
-            devices=ProfileResult(data,deviceError,target);
-        }else devices=SectionError(TVAppleErrorUnsupported);
+        dispatch_group_t group=dispatch_group_create();
+        NSMutableDictionary *sections=[NSMutableDictionary new];
+        if([backend conformsToProtocol:@protocol(TVAppleNameSettingsBackend)])
+            CollectProfile(group,sections,@"name",target,^(NSError **e){return [(id<TVAppleNameSettingsBackend>)backend nameSettingsForAppleID:target error:e];});
+        else name=SectionError(TVAppleErrorUnsupported);
+        if([backend conformsToProtocol:@protocol(TVAppleEmailSettingsBackend)])
+            CollectProfile(group,sections,@"email",target,^(NSError **e){return [(id<TVAppleEmailSettingsBackend>)backend emailSettingsForAppleID:target error:e];});
+        else email=SectionError(TVAppleErrorUnsupported);
+        if([backend conformsToProtocol:@protocol(TVAppleSignInWithAppleBackend)])
+            CollectProfile(group,sections,@"siwa",target,^(NSError **e){return [(id<TVAppleSignInWithAppleBackend>)backend signInWithAppleAppsForAppleID:target error:e];});
+        else siwa=SectionError(TVAppleErrorUnsupported);
+        if(Selected(before,@"icloud").count==1){
+            if([backend conformsToProtocol:@protocol(TVAppleICloudDevicesBackend)])
+                CollectProfile(group,sections,@"devices",target,^(NSError **e){return [(id<TVAppleICloudDevicesBackend>)backend iCloudDevicesForAppleID:target error:e];});
+            else devices=SectionError(TVAppleErrorUnsupported);
+        }
+        dispatch_group_wait(group,DISPATCH_TIME_FOREVER);
+        name=sections[@"name"]?:name;email=sections[@"email"]?:email;
+        siwa=sections[@"siwa"]?:siwa;devices=sections[@"devices"]?:devices;
     }
     // Recheck after server reads. Never combine an old profile with a new identity.
     NSDictionary *after=[backend snapshot:error];

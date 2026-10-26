@@ -68,6 +68,14 @@ typedef void (^TVAppleCodeCompletion)(NSString * _Nullable code, NSError * _Null
                  completion:(TVAppleCompletion)completion;
 @end
 
+@interface TVAppleServices (PasswordChange)
+// New password must already be durably stored by the caller. Exactly eight ASCII
+// alphanumeric characters including uppercase, lowercase and digits are required.
+- (void)changeAppleIDPassword:(NSString *)appleID password:(NSString *)password
+                 newPassword:(NSString *)newPassword devicePasscode:(nullable NSString *)passcode
+    verificationCodeProvider:(nullable id<TVAppleVerificationCodeProvider>)provider completion:(TVAppleCompletion)completion;
+@end
+
 @interface TVAppleServices (FindMy)
 - (void)disableFindMyAppleID:(NSString *)appleID
                   password:(NSString *)password

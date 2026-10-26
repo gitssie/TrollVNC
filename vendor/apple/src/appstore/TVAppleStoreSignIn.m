@@ -49,7 +49,7 @@ BOOL TVAppleStoreConversionSucceeded(NSDictionary *reply) {
 @implementation TVAppleNativeStoreSignIn
 - (NSDictionary *)authenticate:(NSString *)appleID password:(NSString *)password
     provider:(id<TVAppleVerificationCodeProvider>)provider error:(NSError **)error {
-    return TVAppleNativeAuthenticateSMS(appleID, password, provider, error);
+    return TVAppleNativeAuthenticateAutomatic(appleID, password, provider, error);
 }
 - (TVAppleStoreAttempt)store:(NSString *)appleID credential:(NSString *)credential
     response:(NSDictionary **)response context:(id *)context error:(NSError **)error {

@@ -181,6 +181,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     if ([path isEqual:@"/api/control/authorize"]) {
         NSMutableDictionary *capabilities=[authorized mutableCopy];capabilities[@"app_state_stream"]=@1;
         capabilities[@"device_tap"]=@1;
+        capabilities[@"apple_password_change"]=@1;
         return TVNCHTTPJSON(capabilities,200);
     }
     if (_stopping) return TVNCHTTPJSON(@{@"error":@"service_stopping"}, 503);

@@ -1,3 +1,4 @@
+#import "TVApplePasswordChange.h"
 #import "TVAppleBackend.h"
 #import "TVAppleNativeSelectors.h"
 #import "TVApplePolicy.h"
@@ -51,10 +52,16 @@ static BOOL Entitled(NSString *key) {
     dlclose(handle);
     return entitled;
 }
-@interface TVAppleNativeBackend : NSObject <TVAppleBackend, TVAppleStoreLoginBackend, TVAppleFindMyBackend, TVAppleICloudBackend, TVAppleEmailSettingsBackend, TVAppleEmailActionsBackend, TVAppleNameSettingsBackend, TVAppleSignInWithAppleBackend, TVAppleICloudDevicesBackend>
+@interface TVAppleNativeBackend : NSObject <TVAppleBackend, TVAppleStoreLoginBackend, TVAppleFindMyBackend, TVAppleICloudBackend, TVAppleEmailSettingsBackend, TVAppleEmailActionsBackend, TVAppleNameSettingsBackend, TVAppleSignInWithAppleBackend, TVAppleICloudDevicesBackend, TVApplePasswordChangeBackend>
 @property NSMutableDictionary<NSString *, TVAppleNativeSettingsSession *> *settingsSessions;
 @end
 @implementation TVAppleNativeBackend
+- (NSDictionary *)changePasswordAppleID:(NSString *)appleID password:(NSString *)password newPassword:(NSString *)newPassword devicePasscode:(NSString *)passcode provider:(id<TVAppleVerificationCodeProvider>)provider error:(NSError **)error {
+    if(!Entitled(@"com.apple.authkit.client.private")||!Entitled(@"com.apple.private.accounts.allaccounts")){
+        *error=TVAppleError(TVAppleErrorPermissionDenied,@"Effective native password entitlement is missing.");return nil;
+    }
+    return TVAppleNativeChangePassword(appleID,password,newPassword,passcode,provider,error);
+}
 - (TVAppleNativeSettingsSession *)settingsSessionForDomain:(NSString *)domain error:(NSError **)error {
     if(!Entitled(@"com.apple.authkit.client.private")||!Entitled(@"com.apple.private.accounts.allaccounts")){
         *error=TVAppleError(TVAppleErrorPermissionDenied,@"Effective native Settings entitlement is missing.");return nil;

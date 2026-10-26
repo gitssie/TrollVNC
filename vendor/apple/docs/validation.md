@@ -263,3 +263,159 @@ iOS15.8.8 真机已运行只读取址探针 apple-store-billing.m：Foundation N
 先在真实 TVAppleRunICloudFlow 生产等待路径复现：terms provider 已失败、总 completion 缺席，仍消耗完整 .3 秒测试兜底。修复后同步/异步 terms、本机密码失败和原生 completion 拒绝均在 .15 秒断言窗口内返回；无回调仍超时为 unknown，缺失 account 不误报成功，重复/迟到 completion 不改结果，关闭后输入不再次调用原生解锁。全模块 run_tests.sh 通过，覆盖账户读取失败不覆盖明确错误、验证码 provider 永久关闭及 100 轮 request/invalidate 并发竞争。
 
 run_apple_socket_tests.sh 的真实 adapter 用例与 2 个历史 TCP fixture 通过：完成时释放等待输入，迟到挑战立即回绝，旧 completion 不影响新操作，诊断仅导出白名单字段。这些 fixture 不代表已验收生产 HTTP/2 流。iOS arm64 全模块 probe 编译、链接、签名通过；本轮未安装到手机或重放账户写入。可恢复 HTTP/2 状态流目前是设计，不是已部署实现，见 TrollVNC/docs/apple-operation-stream.md。
+
+### 2026-10-26 ZXTouch HTTP/2 automatic Store 2FA
+
+Final Store login takes only apple_id/password and chooses the verification
+method from Apple's native challenge. No new caller parameter or provider
+preference remains. Native ServerUI JSON uses the explicit noTrustedDevices
+boolean; direct native prompts retain their phone/device meaning. Code submission
+remains a separate six-digit input tied to the same operation/challenge. No URL
+fetching, rejected-code replay or cross-endpoint retry is added.
+
+Host Apple suite and adapter/legacy TCP fixtures pass. Regressions exercise real
+Store entry selection, both server-directed branches with trusted phones present,
+leading-zero/native signed trusted-device requests, SMS continuation, missing or
+malformed/changed-method rejection and the unchanged external login schema.
+Standard Dopamine rootless package builds; independent review found no concrete
+important defect. noTrustedDevices semantics are corroborated by the original
+[Fastlane client](https://github.com/fastlane/fastlane/blob/master/spaceship/lib/spaceship/two_step_or_factor_client.rb).
+
+On iPhone9,2/iOS15.8.8 an initial isolated production HTTP/2 probe explicitly
+selected trusted-device verification, received a real challenge, submitted one
+externally retrieved code, and completed native succeeded/authenticated=true /
+review_completed=false. Independent queryAccountState confirmed matching
+selected/authenticated media. This proves Apple accepted the trusted-device code.
+After correcting login to automatic selection, a new production HTTP/2 probe
+submitted only apple_id/password and completed native login plus independent
+matching media confirmation, but did not receive a new challenge after prior
+trust establishment. A diagnostic-only context with native force-interactive
+also completed without a new challenge. These later runs do not establish live
+execution of either automatic ServerUI branch. Automatic routing and malformed
+responses are covered by production-method host tests; native schema compatibility
+on a fresh untrusted account/device remains to be independently verified.
+
+No iCloud activation, Review conversion or real SMS resend/retest was performed.
+The installed daemon was not replaced. Temporary probes and SSH forwarders were
+terminated and removed. Credentials/codes/source URL and raw Apple responses were
+not persisted. Test-only force-interactive/schema diagnostics were kept outside
+the repository and removed; they are absent from the package.
+
+### 2026-10-26 iCloud enablement and state-query latency
+
+Two production wait chains were reproduced before changes:
+
+- Services waited for a synchronous diagnostic snapshot after iCloud had already
+  returned failure/unknown. With a 350ms delayed snapshot, the native failure took
+  356ms and two snapshots. Failure now preserves its original error/outcome and
+  returns without the extra read (<1ms in the same fixture, one preflight snapshot).
+  It reports unavailable/maybe-partial state rather than asserting rollback or
+  signed-in domains. The caller independently refreshes account state.
+- Aggregate state read four eligible native profiles sequentially. Four 100ms
+  reads took424ms; independent native sessions now run concurrently (107–110ms).
+  The final snapshot follows all reads, identity changes discard profile data,
+  and per-profile exceptions are sanitized. No account write or native network
+  timeout was shortened or automatically retried.
+
+Real installed4.0-2 HTTP/2 on iPhone9,2/iOS15.8.8 was invoked with the current
+authorized account and its existing RV encrypted local lock-screen configuration.
+Account state completed562ms; enableICloud5392ms returned module code10 /
+"iCloud sign-in requires additional interaction", stageicloud_cdp,
+native_completion_received=false. Subsequent lightweight/full queries570/568ms,
+cloud absent, matching media/identity preserved, Find My false. This run did not
+reproduce an exceptionally long wait and does not establish a network root cause.
+
+An isolated production HTTP/2/native service built from the fixes then measured
+lightweight state550ms; enableICloud4702ms with the same explicit failure;
+subsequent lightweight/full queries537/537ms with unchanged account domains.
+These are individual observations, not controlled proof that the whole5392→4702ms
+change was caused by this patch. The current account lacks primary iCloud, so
+this phone run does not benchmark four successful network profile fetches.
+iCloud was not activated and the generic interaction error's cause is unconfirmed;
+do not attribute it to password, device quota or NAC from historical records.
+
+Full native suite, Apple adapter/client regressions, arm64 signed HTTP/2 probe
+and standard rootless package build pass. Independent review found no important
+correctness/deadlock blocker; native backend sessions are separate and result-map
+writes synchronized. Temporary listeners/forwarders were stopped and removed;
+credentials/codes/source URLs/native response bodies were not stored or logged.
+The installed daemon remains4.0-2; the optimized code was tested in isolation.
+
+### 2026-10-26 current-account iCloud native-alert diagnosis
+
+A test-only copy of the native flow captured the current authorized account's
+actual title, after credential/email/URL/token redaction: "The maximum number of
+free accounts have been activated on this iPhone." Message was nil. The native
+total callback then returned success=false/account=nil,
+com.apple.appleaccount/code403. This is current-request evidence of the native
+activation-limit rejection message, not an inference from historical accounts or
+403 alone. The underlying server-side decision was not independently audited.
+
+Measured HTTP/2 durations: preflight queryAccountState0.571s, enableICloud4.314s,
+post-queryAccountState0.563s; sum5.448s. Fresh state: no primary iCloud, matching
+media/identity remained signed in, Find My false. No further activation replay
+was made after capturing this rejection. Apple's guidance for this exact message
+is [here](https://support.apple.com/en-us/101661).
+
+Production CloudAlertError now maps only the exact observed title/message to a
+static module message, NativeFailure and reason=icloud_activation_limit. Generic
+alerts remain private; 403 alone cannot assign this reason. The adapter exports
+only that whitelisted reason. If native total completion arrives before the result
+closes, its sanitized domain/code and completion flag are retained without replacing
+the first provider error, waiting longer or accepting a contradictory late success.
+Regression cases cover captured alert, alert+403, alert+contradictory success,
+unknown private alerts and reason whitelisting. Native suite, adapter/client tests,
+iOS signed module build and independent review pass. Live classification was
+observed using temporary diagnostics; the new classification has host production
+flow coverage and an iOS build, not another account activation replay. Installed
+service remains unchanged. Temporary probes/diagnostic copies were removed.
+
+
+## 2026-10-26 standalone password change / new-password acceptance
+
+Signed standalone native probe on iPhone9,2 / iOS15.8.8: matching AuthKit/GS
+identity, saved local-passcode validation, full native RemoteUI PIN continuation,
+actual two-row password form, exact postback-value checks, then the server-provided
+`#signoutDevices` keep-other-devices alert button. Final native POST
+`/appleid/settings/account/manage/security/password/put` returned HTTP200 and the
+security settings model. The probe did not recognize a success flag; this was
+resolved through independent acceptance, without replaying the mutation.
+
+Production Wi-Fi ZXTouch HTTP/2 on port6000: `signOutAppleID` succeeded; fresh
+`queryAccountState` verified cloud/identity/media all not_signed_in. Then
+`signInAppStore` using only the durable candidate succeeded/authenticated=true
+in10.253s, and a new native query confirmed target selected/authenticated media.
+The original password had been accepted before this mutation and the same candidate
+rejected; the post-mutation fresh new-password login establishes real acceptance.
+The host registry now preserves original and current separately, clears pending,
+and records password_changed_at. Credentials/codes/tokens were not logged.
+
+No iCloud activation, other-device signout, production daemon update or deployment
+of `changePassword` occurred. This is standalone mutation plus production transport
+login acceptance; RV automatic first-login integration remains unfinished.
+
+
+## 2026-10-27 production password endpoint accepted through isolated HTTP2
+
+The new `TVNCAppleService` changePassword route, Services facade, NativeBackend and
+TVApplePasswordSession were compiled/signed and run in an isolated phone HTTP2
+listener. A fresh eight-character candidate was durably saved before invocation;
+operation E164B856-E71C-497A-8634-C6708C6EEBE0 returned succeeded/password_changed=true
+in11.752s. This instance recognized the native success flag; no fallback or replay
+was required. The original password remained unchanged in the host registry and
+current was updated only afterward. The isolated helper/SSH forward were removed.
+
+Independent installed-service Wi-Fi6000 signOutAppleID succeeded, fresh account
+state showed all three domains signed out, then new-password Store login
+FBFA350E-87F6-416F-93A6-F73C3CD0B63A succeeded/authenticated=true in7.331s; a fresh
+query verified matching selected/authenticated media. This proves the new endpoint
+actually changed the password. No iCloud activation or other-device signout.
+
+New host regressions cover numeric/string success flags, two/three-row native
+forms, unique in-alert keep action, validation rejection, duplicate/foreign action
+rejection, unsupported-loader cleanup, optional passcode schema, unknown-field
+rejection and credential-free results. RV managed manual tests cover identity A /
+media B without Store login, ready preservation after rejection and candidate
+persistence before native invocation. Independent review findings were fixed and
+re-reviewed. Full rootless package builds; no production daemon replacement or
+RV application packaging/UI runtime acceptance occurred in this change.

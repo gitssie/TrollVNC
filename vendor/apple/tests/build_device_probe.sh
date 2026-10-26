@@ -10,6 +10,7 @@ xcrun clang -target arm64-apple-ios15.0 -isysroot "$SDK_PATH" \
     -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
     "$MODULE_ROOT/src/common/TVAppleErrors.m" \
     "$MODULE_ROOT/src/common/TVAppleNativeBackend.m" \
+    "$MODULE_ROOT/src/appleid/TVApplePasswordChange.m" \
     "$MODULE_ROOT/src/appleid/TVAppleServices.m" \
     "$MODULE_ROOT/src/appleid/TVAppleEmailSettings.m" \
     "$MODULE_ROOT/src/appleid/TVAppleEmailActions.m" \

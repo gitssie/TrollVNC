@@ -68,14 +68,15 @@ int main(void) {
         // A getter before the actual challenge must not request any code.
         TestContext *context = [TestContext new];
         DeferredProvider *provider = [DeferredProvider new];
-        TVAppleChallengeState *state = [TVAppleChallengeState new]; state.provider = provider;
+        TVAppleChallengeState *state = [TVAppleChallengeState new]; state.provider = provider; state.automaticMethod = YES;
         objc_setAssociatedObject(context, &ChallengeKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         assert(!context.secondFactorCode && provider.requests == 0);
         dispatch_semaphore_t done = dispatch_semaphore_create(0);
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
             assert([CodePrompt(context, NULL, YES, nil) isEqual:@"123456"]);
             assert(!context.secondFactorCode);
-            assert(!state.failure && provider.requests == 1);
+            assert(!state.failure && provider.requests == 1 && state.methodSelected && !state.useSMS);
+            assert([provider.method isEqual:@"trusted_device"]);
             // A second actual prompt is a rejected-code retry, not a getter.
             assert(!CodePrompt(context, NULL, YES, nil));
             assert(state.failure.code == TVAppleErrorVerificationCode);
@@ -84,6 +85,18 @@ int main(void) {
         });
         Wait(provider.requested); provider.reply(@"123456", nil); Wait(done);
         puts("PASS native_prompt_then_getter");
+        // A direct native phone prompt selects SMS without a ServerUI dictionary.
+        context=[TestContext new]; provider=[DeferredProvider new]; state=[TVAppleChallengeState new];
+        state.provider=provider; state.automaticMethod=YES;
+        objc_setAssociatedObject(context,&ChallengeKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        done=dispatch_semaphore_create(0);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT,0), ^{
+            assert([CodePrompt(context,NULL,NO,[NSObject new]) isEqual:@"000123"]);
+            assert(state.methodSelected && state.useSMS); dispatch_semaphore_signal(done);
+        });
+        Wait(provider.requested); assert([provider.method isEqual:@"sms"]);
+        provider.reply(@"000123",nil); Wait(done);
+        puts("PASS automatic direct native phone prompt");
         // Exercise the real iOS 15 callback shape; getters during its wait are passive.
         context = [TestContext new]; provider = [DeferredProvider new];
         state = [TVAppleChallengeState new]; state.provider = provider;
@@ -91,11 +104,12 @@ int main(void) {
         done = dispatch_semaphore_create(0);
         TestContext *callbackContext = context;
         TVAppleChallengeState *callbackState = state;
+        state.automaticMethod=YES;
         SecondFactorUI(context, NULL, ^(NSNumber *code, NSError *error) {
             assert([code isKindOfClass:NSNumber.class] && [code isEqual:@123456] && !error);
             assert([callbackContext.secondFactorCode isEqual:code]);
             assert([callbackContext.secondFactorCode isEqual:code]);
-            assert(callbackState.requests == 1);
+            assert(callbackState.requests == 1 && callbackState.methodSelected && !callbackState.useSMS);
             dispatch_semaphore_signal(done);
         });
         Wait(provider.requested);
@@ -160,6 +174,92 @@ int main(void) {
         assert(!context.verifiedRequest && provider.requests == 1);
         puts("PASS native_sms_continuation_and_code_kind");
         }
+        // Automatic routing uses Apple's boolean, even when both responses
+        // include a trusted phone. It never requires an external method option.
+        for (NSNumber *noDevices in @[@NO, @YES]) {
+            context = [TestContext new]; context.utility = [TestUtility new]; context.response = verifiedContext.response;
+            provider = [DeferredProvider new]; state = [TVAppleChallengeState new]; state.provider = provider; state.automaticMethod = YES;
+            objc_setAssociatedObject(context, &ChallengeKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            SEL sel = NSSelectorFromString(@"_handleServerUISMSVerificationWithResponseDictionary:statusCode:configuration:completion:");
+            OriginalPrompts = @{NSStringFromSelector(sel):[NSValue valueWithPointer:(void *)NativeSMS]};
+            done = dispatch_semaphore_create(0);
+            BOOL sms = noDevices.boolValue;
+            TrustedDeviceUI(context, sel, @{@"hsa2Account":@YES,@"securityCode":@{},@"noTrustedDevices":noDevices,
+                @"trustedPhoneNumbers":@[@{@"id":@1}]}, 201, configuration,
+                ^(NSHTTPURLResponse *response, NSDictionary *body, NSError *error) {
+                    assert(!error && response && (sms ? body!=nil : body==nil)); dispatch_semaphore_signal(done);
+                });
+            Wait(provider.requested); assert([provider.method isEqual:sms ? @"sms" : @"trusted_device"]);
+            provider.reply(@"000123", nil); Wait(done);
+            assert(provider.requests==1 && state.methodSelected);
+            assert(sms ? !context.verifiedRequest : [context.verifiedRequest.URL.path isEqual:@"/auth/verify/trusteddevice/securitycode"]);
+        }
+        puts("PASS automatic server response selects trusted device or SMS");
+        // Native password-change authentication can return an already selected
+        // SMS number instead of noTrustedDevices. A phone list alone is not this
+        // challenge: require the selected number's exact ID and explicit mode.
+        context=[TestContext new]; context.response=verifiedContext.response;
+        provider=[DeferredProvider new]; state=[TVAppleChallengeState new];
+        state.provider=provider;state.automaticMethod=YES;
+        objc_setAssociatedObject(context,&ChallengeKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        SEL selectedSMSSelector=NSSelectorFromString(@"_handleServerUISMSVerificationWithResponseDictionary:statusCode:configuration:completion:");
+        OriginalPrompts=@{NSStringFromSelector(selectedSMSSelector):[NSValue valueWithPointer:(void *)NativeSMS]};
+        done=dispatch_semaphore_create(0);
+        TrustedDeviceUI(context,selectedSMSSelector,@{@"hsa2Account":@YES,@"securityCode":@{},
+            @"trustedPhoneNumber":@{@"id":@1,@"pushMode":@"sms"},
+            @"trustedPhoneNumbers":@[@{@"id":@1,@"pushMode":@"sms"}]},200,configuration,
+            ^(NSHTTPURLResponse *response,NSDictionary *body,NSError *error){
+                assert(!error&&response&&body);dispatch_semaphore_signal(done);
+            });
+        Wait(provider.requested);assert([provider.method isEqual:@"sms"]);
+        provider.reply(@"000123",nil);Wait(done);
+        assert(state.methodSelected&&state.useSMS&&!context.verifiedRequest);
+        puts("PASS automatic selected native SMS challenge");
+        NSDictionary *selectedPhone=@{@"id":@1,@"pushMode":@"sms"};
+        NSArray *selectedPhones=@[selectedPhone];
+        for(NSDictionary *extra in @[
+            @{@"trustedPhoneNumbers":selectedPhones},
+            @{@"trustedPhoneNumber":@{@"id":@1,@"pushMode":@"voice"},@"trustedPhoneNumbers":selectedPhones},
+            @{@"trustedPhoneNumber":@{@"id":@2,@"pushMode":@"sms"},@"trustedPhoneNumbers":selectedPhones},
+            @{@"trustedPhoneNumber":@{@"id":@YES,@"pushMode":@"sms"},@"trustedPhoneNumbers":selectedPhones},
+            @{@"trustedPhoneNumber":selectedPhone,@"trustedPhoneNumbers":@[selectedPhone,selectedPhone]},
+            @{@"trustedPhoneNumber":selectedPhone,@"trustedPhoneNumbers":@[@{@"id":@YES,@"pushMode":@"sms"}]},
+            @{@"trustedPhoneNumber":selectedPhone,@"trustedPhoneNumbers":selectedPhones,@"noTrustedDevices":@0}
+        ]){
+            context=[TestContext new];provider=[DeferredProvider new];state=[TVAppleChallengeState new];
+            state.provider=provider;state.automaticMethod=YES;
+            objc_setAssociatedObject(context,&ChallengeKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            NSMutableDictionary *payload=[@{@"hsa2Account":@YES,@"securityCode":@{}} mutableCopy];
+            [payload addEntriesFromDictionary:extra];__block BOOL invalid=NO;
+            TrustedDeviceUI(context,NULL,payload,200,configuration,^(NSHTTPURLResponse *response,NSDictionary *body,NSError *error){
+                assert(!response&&!body&&error.code==TVAppleErrorUnsupported);invalid=YES;
+            });
+            assert(invalid&&!provider.requests&&!context.verifiedRequest);
+        }
+        // Missing, numeric/string, rejected and changed methods fail before asking
+        // for input or calling either verification endpoint.
+        for (id noDevices in @[NSNull.null, @0, @1, @"false"]) {
+            context=[TestContext new]; provider=[DeferredProvider new]; state=[TVAppleChallengeState new];
+            state.provider=provider; state.automaticMethod=YES;
+            objc_setAssociatedObject(context, &ChallengeKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            NSMutableDictionary *payload=[@{@"hsa2Account":@YES,@"securityCode":@{}} mutableCopy];
+            if (noDevices!=NSNull.null) payload[@"noTrustedDevices"]=noDevices;
+            __block BOOL rejected=NO;
+            TrustedDeviceUI(context, NULL, payload, 200, configuration, ^(NSHTTPURLResponse *response, NSDictionary *body, NSError *error) {
+                assert(!response && !body && error.code==TVAppleErrorUnsupported); rejected=YES;
+            });
+            assert(rejected && !provider.requests && !context.verifiedRequest);
+        }
+        context=[TestContext new]; provider=[DeferredProvider new]; state=[TVAppleChallengeState new];
+        state.provider=provider; state.automaticMethod=YES; state.methodSelected=YES; state.useSMS=YES;
+        objc_setAssociatedObject(context, &ChallengeKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        __block BOOL changedRejected=NO;
+        TrustedDeviceUI(context,NULL,@{@"hsa2Account":@YES,@"securityCode":@{},@"noTrustedDevices":@NO},200,configuration,
+            ^(NSHTTPURLResponse *response, NSDictionary *body, NSError *error) {
+                assert(!response && !body && error.code==TVAppleErrorVerificationCode); changedRejected=YES;
+            });
+        assert(changedRejected && !provider.requests);
+        puts("PASS automatic selection rejects missing malformed or changing methods");
         // Unknown account responses cannot request a code or send a request.
         context = [TestContext new]; provider = [DeferredProvider new];
         state = [TVAppleChallengeState new]; state.provider = provider;

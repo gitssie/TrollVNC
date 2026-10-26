@@ -7,6 +7,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
     "$MODULE_ROOT/src/common/TVAppleErrors.m" \
     "$MODULE_ROOT/src/common/TVAppleNativeBackend.m" \
+    "$MODULE_ROOT/src/appleid/TVApplePasswordChange.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreReview.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreSignIn.m" \
     "$MODULE_ROOT/src/appleid/TVAppleServices.m" \
@@ -24,7 +25,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     "$MODULE_ROOT/src/appstore/TVAppleStoreAuthentication.m" \
     "$MODULE_ROOT/src/appstore/TVAppleManualCodeProvider.m" \
     "$MODULE_ROOT/tests/AppleServicesTests.m" -o "$TEST_DIR/tests"
-for test_case in cloud_flow_terms cloud_flow_async_terms cloud_flow_missing_account cloud_flow_passcode cloud_flow_native_error cloud_flow_success cloud_flow_timeout independent_progress email_native_success email_native_error email_native_timeout email_native_conflict email_native_identity email_native_response_identity email_response email_query email_query_invalid signout_warning_success signout_warning_unknown native_remove_dataclass_warning native_remove_clean native_remove_denied native_remove_present native_remove_read_failure native_remove_findmy native_remove_wrong_domain native_remove_other_error native_cloud_simple native_cloud_complex native_cloud_wrong_passcode native_cloud_no_passcode native_cloud_bad_type native_cloud_closed native_cloud_repeat native_cloud_recovery enable_cloud_success enable_cloud_already enable_cloud_conflict enable_cloud_invalid enable_cloud_rejected enable_cloud_rejected_read_failure enable_cloud_unknown enable_cloud_stale enable_cloud_read_failure enable_cloud_findmy_before enable_cloud_findmy_after native_findmy_state findmy_success findmy_disabled findmy_conflict findmy_rejected findmy_timeout findmy_unverified findmy_verification_read icloud_unknown_removed icloud_success icloud_empty icloud_findmy icloud_stale icloud_verification_read store_signout success keep query empty findmy preflight read policy invalid unknown stale verification_read dataclass_policy \
+for test_case in local_passcode_valid local_passcode_wrong local_passcode_empty cloud_flow_activation_limit cloud_flow_activation_limit_native cloud_flow_activation_limit_success cloud_flow_unknown_alert enable_cloud_rejected_slow_state enable_cloud_unknown_slow_state cloud_flow_terms cloud_flow_async_terms cloud_flow_missing_account cloud_flow_passcode cloud_flow_native_error cloud_flow_success cloud_flow_timeout independent_progress email_native_success email_native_error email_native_timeout email_native_conflict email_native_identity email_native_response_identity email_response email_query email_query_invalid signout_warning_success signout_warning_unknown native_remove_dataclass_warning native_remove_clean native_remove_denied native_remove_present native_remove_read_failure native_remove_findmy native_remove_wrong_domain native_remove_other_error native_cloud_simple native_cloud_complex native_cloud_wrong_passcode native_cloud_no_passcode native_cloud_bad_type native_cloud_closed native_cloud_repeat native_cloud_recovery enable_cloud_success enable_cloud_already enable_cloud_conflict enable_cloud_invalid enable_cloud_rejected enable_cloud_rejected_read_failure enable_cloud_unknown enable_cloud_stale enable_cloud_read_failure enable_cloud_findmy_before enable_cloud_findmy_after native_findmy_state findmy_success findmy_disabled findmy_conflict findmy_rejected findmy_timeout findmy_unverified findmy_verification_read icloud_unknown_removed icloud_success icloud_empty icloud_findmy icloud_stale icloud_verification_read store_signout success keep query empty findmy preflight read policy invalid unknown stale verification_read dataclass_policy \
     manual_code manual_cancel manual_finish manual_invalidate_race login_success login_other_cloud login_trust login_conflict login_rejected login_timeout login_unverified login_inactive \
     login_trust_rejected login_trust_read_failure; do
     "$TEST_DIR/tests" "$test_case"
@@ -50,6 +51,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
     "$MODULE_ROOT/src/common/TVAppleErrors.m" \
     "$MODULE_ROOT/src/common/TVAppleNativeBackend.m" \
+    "$MODULE_ROOT/src/appleid/TVApplePasswordChange.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreReview.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreSignIn.m" \
     "$MODULE_ROOT/src/appleid/TVAppleServices.m" \
@@ -80,6 +82,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
     "$MODULE_ROOT/src/common/TVAppleErrors.m" \
     "$MODULE_ROOT/src/common/TVAppleNativeBackend.m" \
+    "$MODULE_ROOT/src/appleid/TVApplePasswordChange.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreReview.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreSignIn.m" \
     "$MODULE_ROOT/src/appleid/TVAppleServices.m" \
@@ -103,6 +106,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
     "$MODULE_ROOT/src/common/TVAppleErrors.m" \
     "$MODULE_ROOT/src/common/TVAppleNativeBackend.m" \
+    "$MODULE_ROOT/src/appleid/TVApplePasswordChange.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreReview.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreSignIn.m" \
     "$MODULE_ROOT/src/appleid/TVAppleServices.m" \
@@ -126,6 +130,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
     "$MODULE_ROOT/src/common/TVAppleErrors.m" \
     "$MODULE_ROOT/src/common/TVAppleNativeBackend.m" \
+    "$MODULE_ROOT/src/appleid/TVApplePasswordChange.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreReview.m" \
     "$MODULE_ROOT/src/appstore/TVAppleStoreSignIn.m" \
     "$MODULE_ROOT/src/appleid/TVAppleServices.m" \
@@ -171,3 +176,19 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
     "$MODULE_ROOT/src/appstore/TVAppleStoreSignIn.m" \
     "$MODULE_ROOT/tests/StoreSignInTests.m" -o "$TEST_DIR/store-signin"
 "$TEST_DIR/store-signin"
+
+# Exercise production Store authentication selection without live Apple requests.
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
+    -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
+    "$MODULE_ROOT/src/common/TVAppleErrors.m" \
+    "$MODULE_ROOT/src/appstore/TVAppleStoreAuthentication.m" \
+    "$MODULE_ROOT/src/appstore/TVAppleStoreReview.m" \
+    "$MODULE_ROOT/src/appstore/TVAppleManualCodeProvider.m" \
+    "$MODULE_ROOT/tests/StoreVerificationTests.m" -o "$TEST_DIR/store-verification"
+"$TEST_DIR/store-verification"
+
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation \
+    -I "$MODULE_ROOT/include" -I "$MODULE_ROOT/private" \
+    "$MODULE_ROOT/src/common/TVAppleErrors.m" \
+    "$MODULE_ROOT/tests/PasswordChangeTests.m" -o "$TEST_DIR/password-change"
+"$TEST_DIR/password-change"

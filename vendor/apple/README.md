@@ -40,7 +40,7 @@ TVAppleManualCodeProvider *codes = [[TVAppleManualCodeProvider alloc]
 
 挑战通知不是最终登录结果；`submitCode` 返回 YES 仅表示验证码已交给认证流程，最终成功以登录 completion 为准。原生认证完成或超时后会取消仍在等待的手动挑战。
 
-当前验证码适配使用受信任设备码，挑战标记 `verification_method: trusted_device`；不能提交短信验证码。iOS 15 的适配采用原生 AuthKit JSON 模式，由系统创建、签名并验证受信任设备请求。核心接口和真机排查知识见 [AGENTS.md](AGENTS.md)，实际验证范围见 [docs/validation.md](docs/validation.md)。
+App Store 登录根据 Apple 原生认证挑战自动识别验证码类型，无需外部指定。挑战标记 `verification_method: sms` 或 `trusted_device`，只能提交对应类型的验证码。iOS 15 的适配采用原生 AuthKit JSON 模式，由系统创建、签名并验证受信任设备请求。核心接口和真机排查知识见 [AGENTS.md](AGENTS.md)，实际验证范围见 [docs/validation.md](docs/validation.md)。
 
 ## 结果与限制
 
