@@ -16,12 +16,16 @@ provide the required application identity.
 
 ## HTTP interface
 
-All routes require the existing VNC control Bearer token, use `POST` with `{}`,
-and return JSON. Unknown parameters are rejected. Device VNC capabilities
+All routes require the existing VNC control Bearer token and use `POST`.
+Read/VPN routes use `{}`; select uses the fixed selection fields below.
+Unknown parameters are rejected. Device VNC capabilities
 advertise `http_karing_native: true`; simulator builds report false.
 
 | Route | Response |
 | --- | --- |
+| `/api/karing-native/connection` | `data`: native VPN connected flag and phase |
+| `/api/karing-native/connect` / `disconnect` | Confirmed native VPN state after one start/stop submission |
+| `/api/karing-native/select` | Persist selected exit and optional relay, then verify core restart |
 | `/api/karing-native/status` | `data`: complete native core status/connection response |
 | `/api/karing-native/config` | `data`: complete `service_core.json`, including unknown fields |
 | `/api/karing-native/profiles` | `data`: documents keyed by `karing_subscribe.json`, `karing_subscribe_use.json`, `karing_setting.json` |
@@ -43,8 +47,24 @@ Preflight/unavailable errors return HTTP 503; unsupported routes return 404.
 
 Documents are read through fixed filenames, `O_NOFOLLOW`, descriptor-based file
 checks and an 8 MiB per-document limit. They are not normalized or rewritten.
-The module currently reads configuration and reloads it; it does not implement
-subscription downloads, node edits, chain edits or VPN start/stop.
+Updated builds advertise `karing_node_control: true`. Select accepts `exit_tag`
+plus nullable `relay_tag` and `upstream_group`. The relay must belong to the
+selected enabled subscription and differ from the exit. Null relay/group clears
+the old global chain. The facade first stops only the exact Karing main App,
+preventing stale in-memory settings from replacing the new documents. The
+packet-tunnel extension is independent. No credentials are passed in argv;
+small JSON parameters use a bounded stdin pipe.
+
+Select preserves unknown document fields, writes setting/use/core JSON with
+atomic per-file replacements and existing ownership/mode, then submits the
+existing verified reload exactly once. On a save failure earlier files are
+restored where possible, but the response remains unknown. The facade exposes
+no arbitrary document writer. Known selected route rules/DNS are aligned with
+the new final; built-in/custom default routes that cannot be identified are
+rejected. RV independently checks raw GLOBAL after the reload.
+
+Subscription downloads are not implemented by this module. The native helper
+and raw APIs must not describe reading an old profile cache as a refresh.
 
 Dopamine 3 uses real App Group container paths and a helper installed in the
 rootless bootstrap. There is no RootHide path-conversion library or `/rootfs`

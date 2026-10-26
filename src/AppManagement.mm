@@ -449,6 +449,7 @@ static rfbBool tvAppEnable(rfbClientPtr cl, void **data, int encoding) {
     if (token && tvAppControlPort > 0) {
         capabilities[@"zx_control"] = @{@"version":@2, @"protocol":@"http2", @"port":@(tvAppControlPort), @"token":token};
         capabilities[@"http_karing_native"] = @(!TARGET_OS_SIMULATOR);
+        capabilities[@"karing_node_control"] = @(!TARGET_OS_SIMULATOR);
     }
     BOOL ok = tvAppWrite(cl, state, 0, 0, 0, capabilities);
     if (ok) {
@@ -553,6 +554,7 @@ NSDictionary *tvAppHTTPConnect(NSString *password) {
         @"control":@YES, @"home":@YES, @"clipboard_write":@YES, @"device_info":@YES,
         @"app_profile":@YES, @"http_screen_control":@YES, @"unlock":@(tvScreenUnlockSupported()),
         @"lock":@(tvScreenLockSupported()), @"http_karing_native":@(!TARGET_OS_SIMULATOR),
+        @"karing_node_control":@(!TARGET_OS_SIMULATOR),
         @"zx_control":@{@"version":@3, @"protocol":@"http2", @"port":@(tvAppControlPort), @"token":token}};
 }
 void tvAppHTTPDisconnect(NSString *token) { [tvAppHTTPAuth disconnect:token]; }

@@ -15,6 +15,15 @@ empty IPC replies alone are not success. Same-config core restart requires
 changed startTime plus unchanged configuration; uncertain mutations are unknown.
 The historical typed/task34 sources described below are not built into the daemon.
 
+2026-10-27 native updates: authenticated `/api/karing-native/connection`,
+`connect`, `disconnect`, `select` support VPN control and user-selected direct
+or two-hop exits. Native profiles supply group IDs and tags; never hardcode
+M4/FR. RV measures direct candidates within the chosen subscription, restores
+on failed measurement, and checks actual GLOBAL after a verified reload.
+Phone 4.0-7 formal HTTP/2 select routes passed direct/chain acceptance.
+Subscription downloads are still not implemented. See native/README.md and
+the workspace rv/docs/karing-panel.md.
+
 Independent native Clash-compatible REST adapter for Karing sing-box.
 Read README.md for the current API/capability table and tests.
 

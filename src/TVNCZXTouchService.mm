@@ -182,6 +182,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         NSMutableDictionary *capabilities=[authorized mutableCopy];capabilities[@"app_state_stream"]=@1;
         capabilities[@"device_tap"]=@1;
         capabilities[@"apple_password_change"]=@1;
+        capabilities[@"karing_vpn_control"]=@1;
         return TVNCHTTPJSON(capabilities,200);
     }
     if (_stopping) return TVNCHTTPJSON(@{@"error":@"service_stopping"}, 503);
@@ -240,13 +241,25 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     }
     if ([path hasPrefix:@"/api/karing-native/"]) {
         NSString *operation = [path substringFromIndex:@"/api/karing-native/".length];
-        if (![@[@"config", @"profiles", @"status", @"reload"] containsObject:operation])
+        if (![@[@"config", @"profiles", @"status", @"reload", @"connection", @"connect", @"disconnect", @"select"] containsObject:operation])
             return TVNCHTTPJSON(@{@"error":@"route_unavailable"}, 404);
-        if (input.count) return TVNCHTTPJSON(@{@"error":@"unexpected_parameters"}, 400);
+        BOOL selecting=[operation isEqual:@"select"];
+        if (!selecting && input.count) return TVNCHTTPJSON(@{@"error":@"unexpected_parameters"}, 400);
+        if (selecting) {
+            for (NSString *key in input) if (![@[@"exit_tag",@"relay_tag",@"upstream_group"] containsObject:key]) return TVNCHTTPJSON(@{@"error":@"unexpected_parameters"},400);
+            if (![input[@"exit_tag"] isKindOfClass:NSString.class] || ![input[@"exit_tag"] length]) return TVNCHTTPJSON(@{@"error":@"invalid_selection"},400);
+        }
         if (_stopping || ![_server isClientConnected:client])
             return TVNCHTTPJSON(@{@"error":@"request_cancelled", @"outcome":@"not_sent"}, 409);
 #if !TARGET_OS_SIMULATOR
-        NSDictionary *result = [_karingNative request:operation];
+        // Stop only the exact main executable; its cached settings must not
+        // overwrite the files. The packet tunnel extension remains running.
+        if (selecting) {
+            NSString *failure=nil;
+            if (!tvAppHTTPRequest(token,3,@{@"bundle_id":@"com.nebula.karing"},^BOOL{return self->_stopping;},&failure))
+                return TVNCHTTPJSON(@{@"error":@"karing_app_stop_failed",@"outcome":@"not_sent"},503);
+        }
+        NSDictionary *result = [_karingNative request:operation parameters:input];
         int status = result[@"error"] ? ([result[@"outcome"] isEqual:@"unknown"] ? 504 : 503) : 200;
         return TVNCHTTPJSON(result, status);
 #else

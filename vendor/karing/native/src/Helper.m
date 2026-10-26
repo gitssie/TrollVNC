@@ -96,6 +96,37 @@ static NSString *Container(void) {
     }
     return nil;
 }
+NSDictionary *TVKaringConnectionState(NSInteger status) {
+    NSString *phase=@"unknown";
+    switch(status){case NEVPNStatusInvalid:phase=@"invalid";break;case NEVPNStatusDisconnected:phase=@"disconnected";break;case NEVPNStatusConnecting:phase=@"connecting";break;case NEVPNStatusConnected:phase=@"connected";break;case NEVPNStatusReasserting:phase=@"reasserting";break;case NEVPNStatusDisconnecting:phase=@"disconnecting";break;}
+    return @{@"vpn_connected":status==NEVPNStatusConnected ? @YES : @NO,@"status":phase,@"native_status":@(status)};
+}
+static NSDictionary *ConnectionState(NETunnelProviderManager *manager) {
+    return TVKaringConnectionState(manager.connection.status);
+}
+static NSDictionary *SetConnection(NETunnelProviderManager *manager,BOOL connect) {
+    NSInteger before=manager.connection.status;
+    BOOL already=connect?before==NEVPNStatusConnected:before==NEVPNStatusDisconnected;
+    if(already)return @{@"outcome":@"succeeded",@"already_in_state":@YES,@"data":ConnectionState(manager)};
+    if(before==NEVPNStatusInvalid||before==NEVPNStatusDisconnecting)
+        return @{@"error":@"vpn_state_not_ready",@"outcome":@"not_sent",@"data":ConnectionState(manager)};
+    if(connect){
+        NSString *container=Container();NSDictionary *config=container?TVKaringReadDocument(container,@"service_core.json"):nil;
+        if(![config[@"data"]isKindOfClass:NSDictionary.class])return @{@"error":@"vpn_configuration_unavailable",@"outcome":@"not_sent"};
+        if(!manager.enabled){
+            __block BOOL saved=NO;__block NSError *failure=nil;manager.enabled=YES;
+            [manager saveToPreferencesWithCompletionHandler:^(NSError *error){dispatch_async(dispatch_get_main_queue(),^{failure=error;saved=YES;});}];
+            if(!Wait(6,^BOOL{return saved;})||failure)return @{@"error":@"vpn_enable_unconfirmed",@"outcome":@"unknown"};
+        }
+        if(before!=NEVPNStatusConnecting&&before!=NEVPNStatusReasserting){
+            NSError *error=nil;if(![manager.connection startVPNTunnelAndReturnError:&error]||error)
+                return @{@"error":@"vpn_start_rejected",@"outcome":@"unknown",@"data":ConnectionState(manager)};
+        }
+    }else [manager.connection stopVPNTunnel];
+    BOOL verified=Wait(20,^BOOL{return manager.connection.status==(connect?NEVPNStatusConnected:NEVPNStatusDisconnected);});
+    if(!verified)return @{@"error":@"vpn_state_unconfirmed",@"outcome":@"unknown",@"data":ConnectionState(manager)};
+    return @{@"outcome":@"succeeded",@"data":ConnectionState(manager)};
+}
 NSDictionary *TVKaringNativeRequest(NSString *operation) {
     if (!NSThread.isMainThread) return @{@"error":@"invalid_execution_context"};
     if ([operation isEqual:@"config"] || [operation isEqual:@"profiles"]) {
@@ -110,9 +141,11 @@ NSDictionary *TVKaringNativeRequest(NSString *operation) {
         }
         return @{@"data":documents};
     }
-    if (![@[@"status", @"reload"] containsObject:operation]) return @{@"error":@"invalid_operation"};
+    if (![@[@"status", @"reload", @"connection", @"connect", @"disconnect"] containsObject:operation]) return @{@"error":@"invalid_operation"};
     NETunnelProviderManager *manager = Manager();
     if (!manager) return @{@"error":@"karing_session_unavailable", @"outcome":@"not_sent"};
+    if ([operation isEqual:@"connection"]) return @{@"data":ConnectionState(manager)};
+    if ([operation isEqual:@"connect"] || [operation isEqual:@"disconnect"]) return SetConnection(manager,[operation isEqual:@"connect"]);
     if ([operation isEqual:@"status"]) return Message(manager, NO);
     // Serializes reloads across independently spawned helpers; no global write gate.
     NSString *lockPath = [RuntimeRoot() stringByAppendingString:@"/tmp/trollvnc-karing-reload.lock"];
@@ -146,4 +179,41 @@ NSDictionary *TVKaringNativeRequest(NSString *operation) {
         }
     } @finally { flock(lock, LOCK_UN); close(lock); }
     return result;
+}
+
+NSDictionary *TVKaringNativeRequestWithParameters(NSString *operation, NSDictionary *parameters) {
+    if (![operation isEqual:@"select"]) return parameters.count ? @{@"error":@"unexpected_parameters",@"outcome":@"not_sent"} : TVKaringNativeRequest(operation);
+    if (!NSThread.isMainThread) return @{@"error":@"invalid_execution_context",@"outcome":@"not_sent"};
+    NSString *container=Container();
+    if (!container) return @{@"error":@"karing_container_unavailable",@"outcome":@"not_sent"};
+    NSMutableDictionary *original=[NSMutableDictionary dictionary];
+    for (NSString *filename in @[@"service_core.json",@"karing_setting.json",@"karing_subscribe_use.json",@"karing_subscribe.json"]) {
+        NSDictionary *document=TVKaringReadDocument(container,filename);
+        if (!document[@"data"]) return @{@"error":@"selection_documents_unavailable",@"outcome":@"not_sent"};
+        original[filename]=document[@"data"];
+    }
+    NSDictionary *planned=TVKaringSelectionDocuments(original,parameters);
+    if (planned[@"error"]) return planned;
+    NETunnelProviderManager *manager=Manager();
+    if (!manager || !Message(manager,NO)[@"data"]) return @{@"error":@"selection_core_unavailable",@"outcome":@"not_sent"};
+    NSArray *filenames=@[@"karing_setting.json",@"karing_subscribe_use.json",@"service_core.json"];
+    NSMutableArray *written=[NSMutableArray array];
+    for (NSString *filename in filenames) {
+        if (!TVKaringWriteDocument(container,filename,planned[@"data"][filename])) {
+            BOOL restored=YES;
+            for (NSString *changed in written.reverseObjectEnumerator)
+                if (!TVKaringWriteDocument(container,changed,original[changed])) restored=NO;
+            return @{@"error":@"selection_save_failed",@"outcome":@"unknown",@"previousConfigRestored":@(restored)};
+        }
+        [written addObject:filename];
+    }
+    // The same production reload verifies a new core startTime and unchanged
+    // persisted configuration. Never replay a reload after an uncertain result.
+    NSDictionary *reloaded=TVKaringNativeRequest(@"reload");
+    if (![reloaded[@"outcome"] isEqual:@"succeeded"])
+        return @{@"error":@"selection_reload_unconfirmed",@"outcome":@"unknown",@"configSaved":@YES};
+    for (NSString *filename in filenames)
+        if (![TVKaringReadDocument(container,filename)[@"data"] isEqual:planned[@"data"][filename]])
+            return @{@"error":@"selection_configuration_changed",@"outcome":@"unknown",@"configSaved":@YES};
+    return @{@"outcome":@"succeeded",@"reloadVerified":@YES,@"configSaved":@YES,@"selection":parameters};
 }

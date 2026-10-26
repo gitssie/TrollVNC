@@ -15,12 +15,26 @@ extern char **environ;
     return self;
 }
 - (NSDictionary *)request:(NSString *)operation {
-    if (![@[@"config", @"profiles", @"status", @"reload"] containsObject:operation]) return @{@"error":@"invalid_operation"};
-    BOOL mutation = [operation isEqual:@"reload"];
+    return [self request:operation parameters:@{}];
+}
+- (NSDictionary *)request:(NSString *)operation parameters:(NSDictionary *)parameters {
+    if (![@[@"config", @"profiles", @"status", @"reload", @"connection", @"connect", @"disconnect", @"select"] containsObject:operation]) return @{@"error":@"invalid_operation"};
+    BOOL mutation = [@[@"reload",@"connect",@"disconnect",@"select"]containsObject:operation];
+    if (![parameters isKindOfClass:NSDictionary.class] || (![operation isEqual:@"select"] && parameters.count))
+        return @{@"error":@"unexpected_parameters", @"outcome":@"not_sent"};
+    NSData *input = [NSJSONSerialization dataWithJSONObject:parameters options:0 error:nil];
+    if (!input || input.length > 4096) return @{@"error":@"invalid_parameters", @"outcome":@"not_sent"};
     if (!_executable.isAbsolutePath || access(_executable.fileSystemRepresentation, X_OK) != 0)
         return @{@"error":@"helper_unavailable", @"outcome":@"not_sent"};
     int descriptors[2];
     if (pipe(descriptors) != 0) return @{@"error":@"helper_pipe_failed", @"outcome":@"not_sent"};
+    int incoming[2];
+    if (pipe(incoming) != 0) { close(descriptors[0]); close(descriptors[1]); return @{@"error":@"helper_pipe_failed", @"outcome":@"not_sent"}; }
+    // At most PIPE_BUF bytes, with a reader open. No secret values in argv.
+    ssize_t written;
+    do { written = write(incoming[1], input.bytes, input.length); } while (written < 0 && errno == EINTR);
+    close(incoming[1]);
+    if (written != (ssize_t)input.length) { close(incoming[0]); close(descriptors[0]); close(descriptors[1]); return @{@"error":@"helper_pipe_failed", @"outcome":@"not_sent"}; }
     posix_spawn_file_actions_t actions;
     posix_spawnattr_t attributes;
     int code = posix_spawn_file_actions_init(&actions);
@@ -28,7 +42,7 @@ extern char **environ;
     if (!code) { code = posix_spawnattr_init(&attributes); hasAttributes = code == 0; }
     if (!code) code = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT);
     if (!code) code = posix_spawn_file_actions_adddup2(&actions, descriptors[1], STDOUT_FILENO);
-    if (!code) code = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    if (!code) code = posix_spawn_file_actions_adddup2(&actions, incoming[0], STDIN_FILENO);
     if (!code) code = posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
     char *arguments[] = {(char *)_executable.fileSystemRepresentation, (char *)operation.UTF8String, NULL};
     pid_t pid = 0;
@@ -36,6 +50,7 @@ extern char **environ;
     if (hasActions) posix_spawn_file_actions_destroy(&actions);
     if (hasAttributes) posix_spawnattr_destroy(&attributes);
     close(descriptors[1]);
+    close(incoming[0]);
     if (code) { close(descriptors[0]); return @{@"error":@"helper_spawn_failed", @"outcome":@"not_sent"}; }
     int flags = fcntl(descriptors[0], F_GETFL);
     BOOL failed = flags < 0 || fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) != 0;
