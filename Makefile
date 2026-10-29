@@ -1,4 +1,4 @@
-export PACKAGE_VERSION := 4.0-5
+export PACKAGE_VERSION := 4.0-15
 # Device releases target Dopamine 3's standard rootless bootstrap only.
 ifeq ($(THEOS_DEVICE_SIMULATOR),)
 THEOS_PACKAGE_SCHEME ?= rootless

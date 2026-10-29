@@ -8,6 +8,14 @@ case "${1:-test}" in
         xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -DTVAS_DOPAMINE3=1 -I "$root/tests/runtime" \
             "$root/src/TVASRuntime.m" "$root/tests/RuntimePathsTests.m" -framework Foundation -o "$root/build/runtime-path-tests"
         "$root/build/runtime-path-tests"
+        xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror \
+            "$root/src/TVASProtocol.m" "$root/src/TVASShadowRead.m" "$root/tests/ShadowReadTests.m" \
+            -framework Foundation -o "$root/build/shadow-read-tests"
+        "$root/build/shadow-read-tests"
+        xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror \
+            "$root/src/TVASProtocol.m" "$root/src/TVASShadowRead.m" "$root/src/TVASShadowWrite.m" "$root/tests/ShadowWriteTests.m" \
+            -framework Foundation -o "$root/build/shadow-write-tests"
+        "$root/build/shadow-write-tests"
         xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -I "$root/profiles" \
             "$root/profiles/TVAppProfile.m" "$root/profiles/TVVintedProfile.m" "$root/profiles/TVSessionSupplementStore.m" "$root/tests/ProfileTests.m" \
             -framework Foundation -lsqlite3 -o "$root/build/profile-tests"

@@ -1,3 +1,17 @@
+## Shadow backup list (2026-10-27)
+
+`list` now queries `ShadowAppState2` manifest metadata from
+`/private/var/mobile/Library/ShadowBackups/<BundleID>/snapshots/<IDFV>/manifest.plist`.
+It returns title as display_name, note, date, version, build and IDFV; backup_id
+remains the opaque `snapshot:<IDFV>`. The query reads no archives and has no
+old-format fallback. Backup creation/restoration belongs to Shadow and is outside
+this list-only change. Current-environment and pending-restore status are not
+queried by this catalog reader.
+
+Package4.0-10 was installed and tested through authenticated HTTP/2 list/result
+and the streamed list. Its actual response also passed RV's SQLite list import
+and repeated-import deduplication in an isolated local fixture.
+
 # App state commands over ZXTouch
 
 Task32 uses one Base64 UTF-8 JSON payload and response `0;;<Base64 JSON>\r\n`, matching the Apple task31 convention. Base64 is framing, not encryption. It inherits ZXTouch's controlled-network trust model and lack of an authentication handshake.

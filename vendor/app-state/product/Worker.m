@@ -2,6 +2,7 @@
 #import "../adapters/PXASNative.h"
 #import "../src/TVASRuntime.h"
 #import "../profiles/TVAppProfile.h"
+#import "../profiles/TVLiveAccessToken.h"
 #include <dlfcn.h>
 #include <sys/sysctl.h>
 #include <sys/stat.h>
@@ -183,7 +184,9 @@ int main(int argc, const char **argv) { @autoreleasepool {
         NSString *bundleID=request[@"bundleID"];
         PXASLaunchServicesResolver *resolver=[PXASLaunchServicesResolver new];
         NSDictionary *target=[resolver resolve:bundleID error:&error];
-        if (target) {
+        if (target && [request[@"operation"] isEqual:@"accessToken"]) {
+            result=TVReadLiveAccessToken(target,&error);
+        } else if (target) {
             NSString *backupRoot=TVASRuntimePaths()[@"backup"];
             if ([NSFileManager.defaultManager createDirectoryAtPath:backupRoot withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&error]) {
                 NSString *vendor=Physical(TVASRuntimePaths()[@"vendor"]); struct stat vendorInfo,parentInfo;

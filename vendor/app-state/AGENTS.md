@@ -1,3 +1,72 @@
+## 2026-10-29: separate live access-token reader
+
+The explicitly authorized authenticated `/api/apps/access-token` route is separate
+from the retired backup/profile methods. `accessTokenForBundle` uses a disposable
+exact-group worker's `accessToken` early branch, before backup-root/engine setup.
+Only Vintedfr/token is read (including synchronizable items); refresh_token and
+arbitrary keychain records are never returned. Bundle and Shadow's current IDFV
+accompany the token; identity is sampled before/after. This read does not launch
+Apps, refresh tokens, or touch backups. Existing retired public methods stay retired.
+
+2026-10-30 device acceptance: installed formal4.0-15 on the authenticated
+iPhone9,2/iOS15.8.8, verifying uploaded package SHA. The production HTTP2
+access-token endpoint returned the actual current Shadow IDFV and live token.
+After RV rotated credentials, wrote the selected backup and Shadow UI restored
+it, the endpoint returned the exact RV-issued access token; Vinted opened and
+showed the same signed-in shop profile. RV phone-source request/save also passed.
+No refresh token is exposed by this endpoint. No repository publication or
+Shadow code change; RV used its existing database for the roundtrip.
+
+## 2026-10-27 / 4.0-14: obsolete public backup interfaces retired
+
+The public executeBundle boundary only dispatches catalog/edit plus the independent App lifecycle methods. save/baseline/switch/delete/describe/profile/sessionSupplement return a known unsupported error before resolving targets, accessing the old store or launching workers. Historical private worker code/tests do not establish public support. Raw authenticated Shadow download/upload remain separate. RV's backup toolbar only refreshes the list; its App-environment registry exposes list/edit, not lifecycle or old backup operations. Metadata editing remains available; backup creation/restoration/deletion belong to Shadow. Host tests explicitly reject all seven retired public operations without launching a worker.
+
+## 2026-10-27 / 4.0-13: Shadow metadata editing; RV switch removed
+
+The existing authenticated task32 edit method now updates only the selected ShadowAppState2 manifest title/note under Shadow's app directory lock. Canonical Bundle/UUID, no-follow directory/file opens, ordinary single-link manifest, bounded reads, exclusive private staging, original owner/0600, fsync/atomic rename and cleanup are enforced. Unknown fields, dates and both archiveInfo dictionaries are preserved; no archive, Keychain, preferences or App operation is involved. It returns the refreshed Shadow catalog. Production HTTP2 metadata roundtrip passed on installed4.0-13, restored original title/note, and independently confirmed state/data hashes unchanged.
+
+RV no longer registers app-switch or renders snapshot/baseline switch buttons. Native switch fails before resolving a target or launching the old worker. Backup rows use the existing Phone-to-RV takeover action, never a restore. The other legacy worker routes save/baseline/delete/profile/sessionSupplement still reference /var/mobile/Media/AppStateBackups and are NOT Shadow support; source audit identified them as remaining cleanup, not a compatible fallback. RV's current credential reader uses the raw Shadow download route instead of legacy profile.
+
+## 2026-10-27 / 4.0-12: explicit RV → phone backup writeback
+
+User explicitly authorized sequential state.tar.zst then manifest.plist writeback and readback verification, superseding the older read-only scope only for this selected backup action. Shadow source and restore logic remain untouched. Authenticated HTTP/2 POST /api/app-state/upload accepts canonical Bundle+IDFV, transfer UUID, bounded part/chunk/offset/total/SHA and expected data archive hash. Writes target only the selected existing snapshot. Each file is staged individually, published in state→manifest order by RV, and retains the original mobile UID/GID and0600. It never writes data.tar.zst, live Keychain/preferences, creates/restores backups or launches Apps. Client first checks the target data archiveInfo; native rechecks its SHA under the Shadow lock.
+
+4.0-12 installed on iPhone9,2/iOS15.8.8. Production SessionHandle HTTP2 tested same-content204800-byte state→53627-byte manifest→both readbacks→phone ownership in an isolated RV database. All three phone backup files retained original bytes/size/501:501/0600, no staging files left. Real RV account execution mode was not switched. No token refresh, phone App restore/launch or device reboot.
+
+## 2026-10-27 / 4.0-11: read-only Shadow state download
+
+User subsequently authorized copying the complete selected state to RV, where Rust
+unpacks/parses/stores it. This expands the catalog-only scope below to reading the
+raw manifest.plist and state.tar.zst for the selected canonical Bundle+IDFV.
+POST /api/app-state/download is authenticated HTTP/2, controlled part selection,
+read-only opens under the real mobile ShadowBackups directory. It does not unpack,
+restore, create backups, read live arbitrary Keychain or write phone state.
+
+4.0-11 installed on USB iPhone9,2. Production RV SessionHandle HTTP control tested:
+Shadow catalog to SQLite, complete204800-byte state download, Rust SHA validation,
+unpacking/context extraction/encrypted storage, direct auth read and unchanged
+export all passed. 4.0-10 rejected this route with HTTP400, explaining the previously
+empty RV data. Only TrollVNC service restarted. No device reboot or respring.
+
+## 2026-10-27: Shadow catalog query only
+
+The user narrowed this integration to querying the backup list. Shadow owns backup
+creation and restoration; do not implement those as part of this integration.
+`list` reads only `/private/var/mobile/Library/ShadowBackups/<BundleID>/snapshots/<IDFV>/manifest.plist`
+with format `ShadowAppState2`, mapping title/note/date/version/build/IDFV to RV.
+It does not open or verify archives, read fingerprint preferences, run scoped
+workers or invoke Shadow mutation commands. No old-format catalog fallback.
+The existing opaque wire identifier is `snapshot:<IDFV>`; it is not a disk path.
+
+Package4.0-10 was installed on the USB iPhone9,2 at the user's explicit request.
+Authenticated HTTP/2 list/result and streamed list returned the one actual Shadow
+snapshot, matching its manifest. Two polling queries took93/83ms including local
+USB/SSH transport and polling. RV imported the actual result into an isolated
+SQLite fixture; repeating the import created no duplicate App. Only the TrollVNC
+background service restarted; no device reboot, respring or backup mutation.
+Packaging now sets the final launchd plist to0644 after editing it:0664 was
+rejected by launchctl during the initial4.0-9 installation.
+
 ## Dopamine 3 migration (2026-10-17)
 
 This branch supersedes the historical RootHide-only integration requirements below.

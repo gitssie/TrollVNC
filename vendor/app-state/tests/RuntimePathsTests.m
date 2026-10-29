@@ -3,6 +3,7 @@
 int main(void) { @autoreleasepool {
     NSDictionary *paths = TVASRuntimePaths();
     assert([paths[@"backup"] isEqual:@"/var/mobile/Media/AppStateBackups"]);
+    assert([paths[@"shadow_backups"] isEqual:@"/private/var/mobile/Library/ShadowBackups"]);
     assert([paths[@"root"] isEqual:@"/bootstrap/var/mobile/Library/TrollVNC/AppState/Operations"]);
     assert([paths[@"worker"] isEqual:@"/bootstrap/usr/libexec/trollvnc/app-state-worker"]);
     assert([paths[@"association"] isEqual:@"/bootstrap/var/mobile/Library/TrollVNC/AppState/associations.plist"]);

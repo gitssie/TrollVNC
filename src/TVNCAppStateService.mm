@@ -1,5 +1,6 @@
 #import "TVNCAppStateService.h"
 #import "TVAppStateServices.h"
+#import "TVASRuntime.h"
 static NSDictionary *Fail(NSString *code) {return @{@"error":@{@"code":code}};}
 static NSData *Wire(NSDictionary *value) {
     NSData *data=[NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
@@ -15,6 +16,12 @@ static NSData *Wire(NSDictionary *value) {
     BOOL _stopped;
 }
 - (instancetype)init {return [self initWithServices:[TVAppStateServices new]];}
+- (NSData *)downloadStatePart:(NSDictionary *)params error:(NSError **)error {
+    return TVASReadShadowPart(TVASRuntimePaths()[@"shadow_backups"],params,error);
+}
+- (NSDictionary *)uploadStatePart:(NSDictionary *)params error:(NSError **)error {
+    return TVASWriteShadowPart(TVASRuntimePaths()[@"shadow_backups"],params,error);
+}
 - (instancetype)initWithServices:(TVAppStateServices *)services {
     if((self=[super init])){_services=services;_operations=[NSMutableDictionary new];_finished=[NSMutableDictionary new];_observers=[NSMutableDictionary new];}return self;
 }
@@ -41,6 +48,9 @@ static NSData *Wire(NSDictionary *value) {
     }
 }
 - (void)removeObserver:(NSString *)identifier { @synchronized(self){[_observers removeObjectForKey:identifier];} }
+- (NSDictionary *)accessTokenForBundle:(NSString *)bundle error:(NSError **)error {
+    return [_services accessTokenForBundle:bundle error:error];
+}
 - (NSDictionary *)request:(NSDictionary *)request {
     @synchronized(self) {
         for(NSString *key in _finished.allKeys)if(NSProcessInfo.processInfo.systemUptime-_finished[key].doubleValue>600){[_finished removeObjectForKey:key];[_operations removeObjectForKey:key];}

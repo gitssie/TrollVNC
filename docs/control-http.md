@@ -82,6 +82,34 @@ activation errors return without waiting for a second diagnostic state query.
 Failure may leave partial account effects; use the separate state endpoint to
 inspect them. Native success/error and unknown timeout meanings are unchanged.
 
+## Native keyboard routing (4.0-6)
+
+`POST /api/device/keyboard` keeps the existing `{"fields":["action","argument"]}`
+shape. Text1, cursor3, deletion4 and paste5 now use the daemon's existing native
+HID generator directly, as VNC keyboard input does; clipboard6/7 remain native.
+There is no VNC transport fallback and no second dispatch after an uncertain
+reply. ASCII text emits native keys; non-ASCII text uses pasteboard plus one
+Command+V chord. Visibility2 alone still requires the foreground App adapter.
+
+Previously, the presence of the adapter dylib file forced actions1–5 into App
+IPC, even when that App did not load/respond to the adapter. On the current
+iOS16.3 Vinted process both text and visibility returned the adapter's5s timeout,
+including after App restart. The reason for the missing App reply remains
+unconfirmed; the installed-file predicate is not a readiness check.
+
+Native keyboard execution now checks TCP liveness after queueing and before
+each key/chord, and releases Command in `@finally`. Interrupted work reports an
+error, possibly after partial input, rather than an empty successful reply.
+An HTTP/2 stream reset alone is not proof of TCP disconnect or non-execution;
+clients must retain unknown outcomes and inspect the field before another input.
+Generic native error replies use HTTP400, including post-dispatch failures.
+
+`python3 tests/ZXTouchKeyboardTests.py` extracts the real dispatcher and keyboard
+methods. It first reproduced routing through an unresponsive installed adapter,
+then verifies native ASCII/Unicode/paste, validation, queued/active disconnect
+and modifier release with host recording shims. These checks do not by themselves
+establish iOS field delivery.
+
 ## Normalized touch delivery (4.0-5)
 
 Touch planning and timing stay in RV; `/api/device/touch` receives ordered
@@ -173,7 +201,6 @@ rtk proxy cargo test --manifest-path ../rv/Cargo.toml -p rv-app unlock_ui
 
 Native runner tests use deterministic screen/HID primitives; HTTP and RV tests use real HTTP/2 peers for fragmented progress, cancellation, bounded buffering, observed terminal state, early EOF and no replay. These checks do not claim a successful passcode unlock on a physical phone.
 
-
 ### Apple ID password change
 
 Updated builds advertise `apple_password_change:1` through authorize.
@@ -183,3 +210,32 @@ The existing operation result and verification-code routes continue the same
 request. The native keep-other-devices choice is used. Only a confirmed native
 result (`password_changed:true`) permits updating the host current password;
 HTTP200 alone is insufficient. Uncertain mutations must not be replayed.
+
+## Timed taps (4.0-15)
+
+`/api/control/authorize` advertises `device_tap_hold: 1`.
+`POST /api/device/tap` accepts optional integer `hold_ms` in 1..1500 in addition
+to x, y and the exact screenshot frame. Omission preserves the 80 ms default.
+Invalid holds reject before dispatch. During a hold, stream cancellation, service
+stop or connection loss releases the native finger; each dispatched press always
+gets a release. RV automation uses two such requests with its existing shared
+post-paste timing policy and sends no following tap after cancellation.
+
+## Current App access token
+
+Authenticated HTTP/2 `POST /api/apps/access-token` accepts only
+`{"bundle_id":"lt.manodrabuziai.fr"}`. It returns `bundle_id`, the current
+Shadow environment `idfv`, `access_token`, optional JWT expiry metadata
+`expires_at`, and allowlisted request `headers`. No refresh token is returned.
+The metadata is not a server validation of the token.
+
+A disposable worker with the installed App's exact signed access groups reads
+only generic-password service `Vintedfr`, account `token` (both sync states).
+The live Shadow `Fingerprint_Data.VendorIdentifier` is read before and after;
+missing/changing identity is an error. Cached HTTP headers are accepted only
+when their Authorization matches the selected token. The operation does not
+read/create/restore backups, launch/stop the App, or call the Vinted refresh
+endpoint. Response bodies/tokens are not retained in the operation registry.
+Errors return a JSON `error`/`message` object; clients inspect the body as well
+as HTTP status. The source reader may return an expired token if the App has
+not refreshed it yet; the client must not treat this as proof of validity.

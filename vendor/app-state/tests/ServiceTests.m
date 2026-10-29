@@ -3,6 +3,9 @@
 #import "../src/TVASAppLifecycle.h"
 #import "../adapters/PXASNative.h"
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
+#include <unistd.h>
 static NSUInteger checks=0;
 static void Check(BOOL value,const char *message) { if (!value) { fprintf(stderr,"FAIL: %s\n",message); exit(1); } checks++; }
 @interface TVAppStateServices (TestSeam)
@@ -95,23 +98,52 @@ int main(void) { @autoreleasepool {
     service.execution.entitlements=@{@"application-identifier":@"TEAM.test.app",@"keychain-access-groups":@[@"TEAM.custom"],@"com.apple.security.application-groups":@[@"group.test.app"]};
     service.paths=@{@"root":[temp stringByAppendingPathComponent:@"operations"],@"worker":template,@"vendor":template,@"bootstrap":temp,@"ldid":[temp stringByAppendingPathComponent:@"ldid"]};
     NSError *error=nil;
-    NSDictionary *result=[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error];
+    NSString *shadow=[temp stringByAppendingPathComponent:@"ShadowBackups"];
+    NSString *idfv=@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53";
+    NSString *snapshot=[[[shadow stringByAppendingPathComponent:@"test.app/snapshots"] stringByAppendingPathComponent:idfv] stringByAppendingPathComponent:@"manifest.plist"];
+    Check([NSFileManager.defaultManager createDirectoryAtPath:snapshot.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:NULL],"create Shadow catalog fixture");
+    Check([@{@"format":@"ShadowAppState2",@"bundleID":@"test.app",@"idfv":idfv,@"title":@"Shadow account",@"note":@"metadata only",@"date":NSDate.date,@"version":@"26.41.1",@"build":@"30253"} writeToFile:snapshot atomically:YES],"write Shadow manifest without archives");
+    service.paths=@{@"shadow_backups":shadow};
+    NSDictionary *catalog=[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error];
+    Check([catalog[@"backups"]count]==1 && [catalog[@"backups"][0][@"display_name"]isEqual:@"Shadow account"] && [catalog[@"backups"][0][@"idfv"]isEqual:idfv],"list maps Shadow manifest metadata");
+    Check(service.runner.launches==0,"catalog never launches a worker or verifies archives");
+    Check([NSFileManager.defaultManager contentsOfDirectoryAtPath:snapshot.stringByDeletingLastPathComponent error:NULL].count==1,"catalog leaves snapshot untouched");
+    Check([[service runBundle:@"missing.app" request:@{@"operation":@"catalog"} error:&error][@"backups"]count]==0,"missing Shadow catalog is empty without creating directories");
+    NSString *lockPath=[[shadow stringByAppendingPathComponent:@"test.app"] stringByAppendingPathComponent:@".lock"];
+    Check([NSData.data writeToFile:lockPath atomically:NO],"create existing Shadow lock");
+    NSDictionary *beforeEdit=[NSDictionary dictionaryWithContentsOfFile:snapshot];
+    NSDictionary *edit=TVASRequest(@"edit",@{@"bundle_id":@"test.app",@"backup_id":[@"snapshot:" stringByAppendingString:idfv],@"display_name":@"New title",@"note":@""},&error);
+    NSDictionary *edited=[service runBundle:@"test.app" request:edit error:&error];
+    Check(edited!=nil && error==nil && [edited[@"backups"][0][@"display_name"]isEqual:@"New title"] && [edited[@"backups"][0][@"note"]isEqual:@""],"Shadow edit returns refreshed metadata and accepts empty note");
+    NSMutableDictionary *expectedEdit=[beforeEdit mutableCopy];expectedEdit[@"title"]=@"New title";expectedEdit[@"note"]=@"";
+    Check([[NSDictionary dictionaryWithContentsOfFile:snapshot]isEqual:expectedEdit],"edit changes only title and note, preserving all manifest fields");
+    Check(service.runner.launches==0 && [NSFileManager.defaultManager contentsOfDirectoryAtPath:snapshot.stringByDeletingLastPathComponent error:NULL].count==1,"metadata edit never launches legacy worker, opens archives or leaves staging files");
+    struct stat editedInfo;Check(!stat(snapshot.fileSystemRepresentation,&editedInfo) && (editedInfo.st_mode&0777)==0600 && editedInfo.st_uid==getuid(),"metadata edit preserves owner and private permissions");
+    int held=open(lockPath.fileSystemRepresentation,O_RDWR);Check(held>=0 && !flock(held,LOCK_EX|LOCK_NB),"hold Shadow directory lock");
+    error=nil;Check(![service runBundle:@"test.app" request:edit error:&error] && error!=nil,"metadata edit refuses busy Shadow lock");flock(held,LOCK_UN);close(held);
+    NSMutableDictionary *bad=[edit mutableCopy];bad[@"reference"]=@"test.app/snapshots/../escape";error=nil;Check(![service runBundle:@"test.app" request:bad error:&error],"metadata edit rejects noncanonical identity");
+    NSString *savedManifest=[snapshot stringByAppendingString:@".saved"];Check([NSFileManager.defaultManager moveItemAtPath:snapshot toPath:savedManifest error:NULL],"pin original manifest for link check");
+    Check(!symlink(savedManifest.fileSystemRepresentation,snapshot.fileSystemRepresentation),"create symlink fixture");error=nil;Check(![service runBundle:@"test.app" request:edit error:&error],"metadata edit refuses symlink manifest");unlink(snapshot.fileSystemRepresentation);Check([NSFileManager.defaultManager moveItemAtPath:savedManifest toPath:snapshot error:NULL],"restore regular manifest fixture");
+    error=nil;
+    NSMutableDictionary *wrong=[[NSDictionary dictionaryWithContentsOfFile:snapshot]mutableCopy];wrong[@"format"]=@"AppState2";[wrong writeToFile:snapshot atomically:YES];
+    Check([[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error][@"backups"]count]==0,"old format is not listed");
+    service.paths=@{@"root":[temp stringByAppendingPathComponent:@"operations"],@"worker":template,@"vendor":template,@"bootstrap":temp,@"ldid":[temp stringByAppendingPathComponent:@"ldid"]};
+    NSDictionary *result=[service runBundle:@"test.app" request:@{@"operation":@"save"} error:&error];
     Check(result!=nil && error==nil,"scoped worker success is parsed");
+    NSUInteger launchesBeforeSwitch=service.runner.launches;
+    error=nil;Check(![service runBundle:@"test.app" request:@{@"operation":@"switch"} error:&error] && error!=nil && service.runner.launches==launchesBeforeSwitch,"removed switch fails before old worker or archive access");
     service.runner.mode=@"copy-failure";error=nil;
-    Check(![service runBundle:@"test.app" request:@{@"operation":@"switch"} error:&error] && error.code==2 && [error.userInfo[@"posixCode"]intValue]==28 && [error.userInfo[@"sourceDomain"]isEqual:@"PXAppState"] && [error.userInfo[@"sourceCode"]intValue]==1,"known copy failure preserves finite file error metadata without becoming an unknown outcome");error=nil;
+    Check(![service runBundle:@"test.app" request:@{@"operation":@"save"} error:&error] && error.code==2 && [error.userInfo[@"posixCode"]intValue]==28 && [error.userInfo[@"sourceDomain"]isEqual:@"PXAppState"] && [error.userInfo[@"sourceCode"]intValue]==1,"known copy failure preserves finite file error metadata without becoming an unknown outcome");error=nil;
     Check([NSFileManager.defaultManager contentsOfDirectoryAtPath:service.paths[@"root"] error:NULL].count==0,"operation artifacts removed after success");
-    service.runner.mode=@"progress-final";
-    __block BOOL finished=NO;NSMutableArray *events=[NSMutableArray array];
-    [service executeBundle:@"test.app" request:@{@"operation":@"switch"} progress:^(NSDictionary *event){
-        Check(!finished,"progress precedes operation completion");[events addObject:event];
-    } completion:^(NSDictionary *value,NSError *failure){
-        Check(value!=nil && failure==nil,"progress operation completes");finished=YES;
-    }];
-    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:5];
-    while(!finished && deadline.timeIntervalSinceNow>0)[NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-    Check(finished && [events.lastObject[@"stage"] isEqual:@"verify_preferences"] && [events.lastObject[@"savedCurrent"] boolValue],"final verification stage survives a worker faster than polling");
+    for(NSString *operation in @[@"save",@"baseline",@"switch",@"delete",@"describe",@"profile",@"sessionSupplement"]) {
+        __block BOOL finished=NO;NSUInteger count=service.runner.launches;
+        [service executeBundle:@"test.app" request:@{@"operation":operation} completion:^(NSDictionary *value,NSError *failure){Check(value==nil && failure!=nil,"obsolete public interface is rejected");finished=YES;}];
+        NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:5];
+        while(!finished && deadline.timeIntervalSinceNow>0)[NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        Check(finished && service.runner.launches==count,"obsolete interface never launches legacy worker");
+    }
     service.runner.mode=@"timeout";
-    Check([service runBundle:@"test.app" request:@{@"operation":@"switch"} error:&error]==nil && [error.userInfo[@"stateMayBePartial"] boolValue] && [error.userInfo[@"archiveMayBePartial"] boolValue],"unknown switch completion conservatively reports partial live and archive state"); error=nil;
+    Check([service runBundle:@"test.app" request:@{@"operation":@"save"} error:&error]==nil && ![error.userInfo[@"stateMayBePartial"] boolValue] && [error.userInfo[@"archiveMayBePartial"] boolValue],"unknown save completion reports archive uncertainty without live restore"); error=nil;
     Check([service runBundle:@"test.app" request:@{@"operation":@"baseline"} error:&error]==nil && [error.userInfo[@"archiveMayBePartial"]boolValue],"unknown baseline worker marks archive uncertainty");error=nil;
     service.runner.mode=@"invalid";
     Check([service runBundle:@"test.app" request:@{@"operation":@"save"} error:&error]==nil && [error.userInfo[@"archiveMayBePartial"] boolValue] && ![error.userInfo[@"stateMayBePartial"] boolValue],"invalid capture response marks archive uncertainty only"); error=nil;
@@ -128,7 +160,7 @@ int main(void) { @autoreleasepool {
     Check(![timed runBundle:@"test.app" request:@{@"operation":@"status"} error:&timeoutError] && timeoutError.code==1,"no second native lifecycle call while previous call remains outstanding");
     TimedService *second=[TimedService new];second.fake=timed.fake;
     Check(![second runBundle:@"test.app" request:@{@"operation":@"status"} error:&timeoutError] && timeoutError.code==1,"new facade cannot launch another read while native call remains outstanding");
-    Check(![second runBundle:@"test.app" request:@{@"operation":@"switch"} error:&timeoutError] && timeoutError.code==1,"only actual outstanding native work prevents a concurrent mutation");
+    Check(![second runBundle:@"test.app" request:@{@"operation":@"save"} error:&timeoutError] && timeoutError.code==1,"only actual outstanding native work prevents a concurrent mutation");
     dispatch_semaphore_signal(timed.fake.gate);
     second.fake=[BlockingLifecycle new];second.fake.gate=dispatch_semaphore_create(0);dispatch_semaphore_signal(second.fake.gate);
     NSDate *releaseDeadline=[NSDate dateWithTimeIntervalSinceNow:2];NSDictionary *ready=nil;

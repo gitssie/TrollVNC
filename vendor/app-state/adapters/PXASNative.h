@@ -8,6 +8,8 @@ NSArray<NSString *> * _Nullable PXASKeychainGroupsFromEntitlements(NSDictionary 
 @end
 @interface PXASSecurityKeychain : NSObject <PXASKeychain>
 - (instancetype)initWithApplicationIdentifier:(NSString *)applicationIdentifier;
+// Read one allowlisted Vinted access token; never exports refresh or other records.
+- (nullable NSString *)vintedAccessTokenForGroups:(NSArray *)groups error:(NSError **)error;
 @end
 // Optional explicit identity adapter. No default root/system mutation is made.
 // Blocks must synchronously return after scoped authority/cache verification.

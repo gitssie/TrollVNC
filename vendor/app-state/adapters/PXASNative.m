@@ -270,6 +270,30 @@ static NSDictionary *SignedEntitlements(NSString *executable, NSError **error) {
     for (id key in [self identityKeys:record]) result[key]=record[key] ?: ([key isEqual:(__bridge id)kSecAttrPort]?@0:@"");
     return result;
 }
+- (NSString *)vintedAccessTokenForGroups:(NSArray *)groups error:(NSError **)error {
+    if (![self authority:groups error:error]) return nil;
+    NSMutableSet *values=[NSMutableSet new];
+    for (NSString *group in groups) {
+        NSMutableDictionary *query=[self query:(__bridge id)kSecClassGenericPassword group:group];
+        query[(__bridge id)kSecAttrSynchronizable]=(__bridge id)kSecAttrSynchronizableAny;
+        query[(__bridge id)kSecAttrService]=@"Vintedfr";
+        query[(__bridge id)kSecAttrAccount]=@"token";
+        query[(__bridge id)kSecReturnData]=@YES;
+        query[(__bridge id)kSecMatchLimit]=(__bridge id)kSecMatchLimitAll;
+        CFTypeRef result=NULL; OSStatus status=[self copyMatching:query result:&result];
+        if (status==errSecItemNotFound) continue;
+        if (status!=errSecSuccess) { if(result)CFRelease(result); Fail(error,[NSString stringWithFormat:@"Access token read failed (%d)",(int)status]);return nil; }
+        id objects=CFBridgingRelease(result); NSArray *items=[objects isKindOfClass:NSArray.class]?objects:@[objects];
+        for (id data in items) {
+            if (![data isKindOfClass:NSData.class] || ![data length] || [data length]>65536) { Fail(error,@"Invalid access token record");return nil; }
+            NSString *value=[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding];
+            if(!value.length){Fail(error,@"Invalid access token encoding");return nil;}
+            [values addObject:value];
+        }
+    }
+    if(values.count!=1){Fail(error,@"Current access token is unavailable or ambiguous");return nil;}
+    return values.anyObject;
+}
 - (NSArray *)exportGroups:(NSArray *)groups error:(NSError **)error {
     if (![self authority:groups error:error]) return nil;
     CFDataRef (*copyACL)(SecAccessControlRef) = dlsym(RTLD_DEFAULT,"SecAccessControlCopyData");

@@ -39,7 +39,11 @@ static NSDictionary *Record(BOOL sync,NSString *account,NSString *secret){
     Assert([query[(__bridge id)kSecAttrSynchronizable] isEqual:(__bridge id)kSecAttrSynchronizableAny],@"exports must query both sync states");self.anyQueries++;
     NSMutableArray *found=[NSMutableArray array];for(NSDictionary *item in self.items)if([self matches:item query:query])[found addObject:item];
     if(!found.count)return errSecItemNotFound;
-    *result=CFBridgingRetain(found);return errSecSuccess;
+    if ([query[(__bridge id)kSecReturnData] boolValue] && ![query[(__bridge id)kSecReturnAttributes] boolValue]) {
+        NSMutableArray *values=[NSMutableArray new];for(NSDictionary *item in found)[values addObject:item[(__bridge id)kSecValueData]];
+        *result=CFBridgingRetain(values);
+    } else *result=CFBridgingRetain(found);
+    return errSecSuccess;
 }
 - (OSStatus)deleteQuery:(NSDictionary *)query{
     if([query[(__bridge id)kSecAttrSynchronizable] boolValue])
@@ -73,6 +77,16 @@ int main(void){@autoreleasepool{
     Assert(PXASKeychainGroupsFromEntitlements(@{@"application-identifier":Group,@"keychain-access-groups":@[@"OTHERTEAM.secret"]},@"com.example.state",&scopeError)==nil,@"reject cross-team explicit keychain scope");
     Assert(PXASKeychainGroupsFromEntitlements(@{@"application-identifier":Group,@"com.apple.security.application-groups":@[@"com.apple.system"]},@"com.example.state",&scopeError)==nil,@"reject system group masquerading as App Group");
     MemorySecurity *adapter=[[MemorySecurity alloc] initWithApplicationIdentifier:@"TESTTEAM.com.example.state"];
+    NSMutableDictionary *access=[Record(YES,@"token",@"live-access") mutableCopy];access[(__bridge id)kSecAttrService]=@"Vintedfr";
+    NSMutableDictionary *refresh=[Record(YES,@"refresh_token",@"private-refresh") mutableCopy];refresh[(__bridge id)kSecAttrService]=@"Vintedfr";
+    adapter.items=[@[access,refresh,Record(NO,@"unrelated",@"other-secret")] mutableCopy];
+    NSError *readError=nil;
+    Assert([[adapter vintedAccessTokenForGroups:@[Group] error:&readError]isEqual:@"live-access"],@"live read selects only allowlisted access token, including synchronizable records");
+    Assert(adapter.deletes==0 && adapter.updates==0,@"live read never changes credentials");
+    Assert([adapter vintedAccessTokenForGroups:@[@"OTHERTEAM.unrelated"] error:&readError]==nil,@"live reader keeps exact target scope");
+    NSMutableDictionary *conflict=[access mutableCopy];conflict[(__bridge id)kSecAttrSynchronizable]=@NO;conflict[(__bridge id)kSecValueData]=[@"different-access" dataUsingEncoding:NSUTF8StringEncoding];
+    [adapter.items addObject:conflict];
+    Assert([adapter vintedAccessTokenForGroups:@[Group] error:&readError]==nil,@"conflicting live access tokens do not select arbitrary record");
     NSDictionary *local=Record(NO,@"device",@"local"),*sync=Record(YES,@"refresh-token",@"saved-token");
     adapter.items=[@[local,sync] mutableCopy];NSError *error=nil;
     NSArray *exported=[adapter exportGroups:@[Group] error:&error];

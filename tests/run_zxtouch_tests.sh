@@ -4,6 +4,7 @@ PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/trollvnc-zxtouch.XXXXXX")
 trap 'rm -rf -- "$TEST_DIR"' EXIT
 python3 "$PROJECT_ROOT/tests/ZXTouchInputTests.py"
+python3 "$PROJECT_ROOT/tests/ZXTouchKeyboardTests.py"
 xcrun clang++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -I "$PROJECT_ROOT/vendor/zxtouch/include" \
     "$PROJECT_ROOT/tests/ZXTouchCoreTests.cpp" \

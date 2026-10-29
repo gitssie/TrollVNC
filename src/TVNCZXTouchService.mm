@@ -103,7 +103,6 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 #endif
     ZXTouchProcessRunner *_processRunner;
     ZXTouchUIBridge *_uiBridge;
-    BOOL _hasAppAdapter;
     FBSOrientationObserver *_observer;
     UIInterfaceOrientation _orientation; // main thread only
     NSMutableDictionary<NSNumber *, NSMutableDictionary<NSNumber *, NSDictionary *> *> *_clients;
@@ -142,7 +141,6 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
 #endif
     _processRunner = [[ZXTouchProcessRunner alloc] initWithRuntimeRoot:root modulePath:modules
         logPath:@"/var/mobile/Library/Logs/TrollVNC/zxtouch-process.log"];
-    _hasAppAdapter = [NSFileManager.defaultManager fileExistsAtPath:[root stringByAppendingString:@"/Library/MobileSubstrate/DynamicLibraries/TVNCZXTouchAdapter.dylib"]];
     _processRunner.environment = @{@"ZXTOUCH_PORT": @(port).stringValue};
     _uiBridge = [[ZXTouchUIBridge alloc] initWithCenter:[NSClassFromString(@"NSDistributedNotificationCenter") defaultCenter]];
     _observer = [FBSOrientationObserver new];
@@ -181,18 +179,39 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     if ([path isEqual:@"/api/control/authorize"]) {
         NSMutableDictionary *capabilities=[authorized mutableCopy];capabilities[@"app_state_stream"]=@1;
         capabilities[@"device_tap"]=@1;
+        capabilities[@"device_tap_hold"]=@1;
         capabilities[@"apple_password_change"]=@1;
         capabilities[@"karing_vpn_control"]=@1;
+        capabilities[@"keyboard_literal"]=@1;
+        capabilities[@"app_access_token"]=@1;
         return TVNCHTTPJSON(capabilities,200);
     }
     if (_stopping) return TVNCHTTPJSON(@{@"error":@"service_stopping"}, 503);
     id value = body.length ? [NSJSONSerialization JSONObjectWithData:body options:0 error:nil] : @{};
     if (![value isKindOfClass:NSDictionary.class]) return TVNCHTTPJSON(@{@"error":@"invalid_json"}, 400);
     NSDictionary *input = value;
+    if ([path isEqual:@"/api/apps/access-token"]) {
+        if(input.count!=1 || ![input[@"bundle_id"]isEqual:@"lt.manodrabuziai.fr"])
+            return TVNCHTTPJSON(@{@"error":@"unsupported_app"},400);
+        void *producer=NULL;void *stream=tvnc_http_stream_new(&producer);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ @autoreleasepool {
+            @try {
+                NSError *error=nil;NSDictionary *result=[self->_appStateService accessTokenForBundle:input[@"bundle_id"] error:&error];
+                NSDictionary *reply=result?:@{@"error":@"access_token_unavailable",@"message":error.localizedDescription?:@"无法读取当前手机 access token"};
+                NSData *data=[NSJSONSerialization dataWithJSONObject:reply options:0 error:NULL];
+                if(data)tvnc_http_stream_send(producer,(const unsigned char *)data.bytes,data.length);
+            } @finally { tvnc_http_stream_release(producer); }
+        }});
+        return {NULL,0,200,"application/json",stream};
+    }
     if ([path isEqual:@"/api/device/tap"]) {
         // op0 authorization above rejects read-only control tokens.
         NSNumber *x=input[@"x"],*y=input[@"y"];NSDictionary *frame=input[@"frame"];
-        if(input.count!=3 || ![x isKindOfClass:NSNumber.class] || ![y isKindOfClass:NSNumber.class] ||
+        NSNumber *hold=input[@"hold_ms"];
+        if (hold && (![hold isKindOfClass:NSNumber.class] || !std::isfinite(hold.doubleValue) ||
+            hold.doubleValue < 1 || hold.doubleValue > 1500 || floor(hold.doubleValue) != hold.doubleValue))
+            return TVNCHTTPJSON(@{@"error":@"invalid_hold"},400);
+        if(input.count!=(hold ? 4 : 3) || ![x isKindOfClass:NSNumber.class] || ![y isKindOfClass:NSNumber.class] ||
             !std::isfinite(x.doubleValue) || !std::isfinite(y.doubleValue) || ![frame isKindOfClass:NSDictionary.class] || frame.count!=3)
             return TVNCHTTPJSON(@{@"error":@"invalid_tap"},400);
         for(NSString *key in @[@"width",@"height",@"orientation"])
@@ -220,7 +239,13 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
                     [generator touchDown:point];pressed=YES;
                 });
                 if(pressed) {
-                    usleep(80000);
+                    unsigned remaining = hold ? hold.unsignedIntValue : 80;
+                    while (remaining && tvnc_http_stream_open(producer) && !self->_stopping &&
+                        [self->_server isClientConnected:client]) {
+                        unsigned interval = MIN(remaining, 10u);
+                        usleep(interval * 1000);
+                        remaining -= interval;
+                    }
                     // Always release a dispatched finger, including cancellation.
                     ZXMain(^{[[STHIDEventGenerator sharedGenerator]liftUp:point];});
                 }
@@ -229,6 +254,16 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
             } @finally {tvnc_http_stream_release(producer);} }
         });
         return {NULL,0,200,"application/json",stream};
+    }
+    if ([path isEqual:@"/api/app-state/upload"]) {
+        NSError *error=nil;
+        NSDictionary *result=[_appStateService uploadStatePart:input error:&error];
+        return result?TVNCHTTPJSON(result,200):TVNCHTTPJSON(@{@"error":error.localizedDescription?:@"state_upload_failed"},400);
+    }
+    if ([path isEqual:@"/api/app-state/download"]) {
+        NSError *error=nil;
+        NSData *data=[_appStateService downloadStatePart:input error:&error];
+        return data?TVNCHTTPData(data,200,"application/octet-stream"):TVNCHTTPJSON(@{@"error":error.localizedDescription?:@"state_download_failed"},400);
     }
     if ([path isEqual:@"/api/app-state/stream"]) {
         if(!([input[@"action"] isEqual:@"invoke"] || [input[@"action"] isEqual:@"result"]))
@@ -467,42 +502,65 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     if(frame)*frame=capturedFrame;
     return result;
 }
-- (void)emitKeyboard:(dispatch_block_t)block {
+- (BOOL)emitKeyboard:(dispatch_block_t)block client:(NSUInteger)client {
+    __block BOOL sent = NO;
     [[STHIDEventGenerator sharedGenerator] performKeyboardSequence:^{
-        if (!self->_stopping) block();
+        if (!self->_stopping && [self->_server isClientConnected:client]) { block(); sent = YES; }
     }];
+    return sent;
 }
-- (NSData *)keyboard:(const zxtouch::Command &)command {
+- (NSData *)keyboard:(const zxtouch::Command &)command client:(NSUInteger)client {
     auto &f = command.fields;
-    int task = ZXInteger(f[0], 1, 7);
-    if (task == 1 || task == 2 || task == 3 || task == 4 || task == 7) ZXRequire(f.size() == 2, @"Keyboard command requires one argument");
+    int task = ZXInteger(f[0], 1, 8);
+    if (task == 1 || task == 2 || task == 3 || task == 4 || task == 7 || task == 8) ZXRequire(f.size() == 2, @"Keyboard command requires one argument");
     else ZXRequire(f.size() == 1, @"Unexpected keyboard arguments");
     NSString *text = f.size() == 2 ? ZXString(f[1]) : @"";
     if (task == 2) return ZXError(@"Use the foreground-app keyboard adapter");
     int count = task == 3 || task == 4 ? ZXInteger(f[1], task == 3 ? -256 : 0, 256) : 0;
-    ZXRequire(task != 1 || text.length <= 256, @"Text is too long; send at most 256 characters per command");
+    ZXRequire((task != 1 && task != 8) || text.length <= 256, @"Text is too long; send at most 256 characters per command");
     __block NSString *result = @"";
+    __block BOOL cancelled = NO;
+    BOOL (^available)(void) = ^BOOL { return !self->_stopping && [self->_server isClientConnected:client]; };
     // Hardware keyPress sleeps for 50ms; serialize it off the main runloop.
     // Only pasteboard access crosses to main, so capture/accept/stop can progress.
     ZXSync(_keyboardQueue, ^{
-        if (self->_stopping) return;
+        // Recheck after waiting behind a previous keyboard command.
+        if (!available()) { cancelled = YES; return; }
         STHIDEventGenerator *generator = STHIDEventGenerator.sharedGenerator;
-        if (task == 6) ZXMain(^{ result = UIPasteboard.generalPasteboard.string ?: @""; });
-        else if (task == 7) ZXMain(^{ UIPasteboard.generalPasteboard.string = text; });
-        else if (task == 5 || (task == 1 && ![text canBeConvertedToEncoding:NSASCIIStringEncoding])) {
-            if (task == 1) ZXMain(^{ UIPasteboard.generalPasteboard.string = text; });
-            [self emitKeyboard:^{
-                [generator keyDown:@"LEFTCOMMAND"]; [generator keyPress:@"v"]; [generator keyUp:@"LEFTCOMMAND"];
-            }];
+        if (task == 6 || task == 7) ZXMain(^{
+            if (!available()) { cancelled = YES; return; }
+            if (task == 6) result = UIPasteboard.generalPasteboard.string ?: @"";
+            else UIPasteboard.generalPasteboard.string = text;
+        });
+        else if (task == 5 || task == 8 || (task == 1 && ![text canBeConvertedToEncoding:NSASCIIStringEncoding])) {
+            // Literal text8 is one serialized clipboard+paste command, avoiding
+            // US physical key mapping on keyboards such as French AZERTY.
+            if (task == 1 || task == 8) ZXMain(^{
+                if (!available()) { cancelled = YES; return; }
+                UIPasteboard.generalPasteboard.string = text;
+            });
+            if (cancelled) return;
+            if (![self emitKeyboard:^{
+                [generator keyDown:@"LEFTCOMMAND"];
+                @try { if (available()) [generator keyPress:@"v"]; else cancelled = YES; }
+                @finally { [generator keyUp:@"LEFTCOMMAND"]; }
+            } client:client]) cancelled = YES;
         } else if (task == 1) {
-            for (NSUInteger i = 0; i < text.length && !self->_stopping; ++i)
-                [self emitKeyboard:^{ [generator keyPress:[text substringWithRange:NSMakeRange(i, 1)]]; }];
+            for (NSUInteger i = 0; i < text.length; ++i) {
+                if (![self emitKeyboard:^{ [generator keyPress:[text substringWithRange:NSMakeRange(i, 1)]]; } client:client]) {
+                    cancelled = YES; break;
+                }
+            }
         } else {
             NSString *key = task == 4 ? @"BACKSPACE" : count < 0 ? @"LEFTARROW" : @"RIGHTARROW";
-            for (int i = 0; i < std::abs(count) && !self->_stopping; ++i)
-                [self emitKeyboard:^{ [generator keyPress:key]; }];
+            for (int i = 0; i < std::abs(count); ++i) {
+                if (![self emitKeyboard:^{ [generator keyPress:key]; } client:client]) {
+                    cancelled = YES; break;
+                }
+            }
         }
     });
+    if (cancelled || !available()) return ZXError(@"Keyboard command was cancelled; input may be partial");
     return ZXReply(ZXClean(result));
 }
 - (NSData *)deviceInfo:(const zxtouch::Command &)command {
@@ -742,9 +800,19 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
             }
             case 90: return [self ui:command client:client target:@"com.apple.springboard"];
             case 99: return ZXReply(@"TrollVNC ZXTouch");
-            case 24:
-                if (command.fields[0] == "2" || (_hasAppAdapter && ZXInteger(command.fields[0], 1, 7) <= 5)) return [self ui:command client:client target:[self foreground]];
-                return [self keyboard:command];
+            case 24: {
+                ZXRequire(!command.fields.empty(), @"Missing keyboard task");
+                int action = ZXInteger(command.fields[0], 1, 8);
+                // Ordinary keyboard input uses the same native HID generator
+                // as VNC. An installed dylib does not prove an App loaded it.
+                // Never dispatch text to an App adapter and retry it via HID.
+                if (action == 2) {
+                    ZXRequire(command.fields.size() == 2, @"Keyboard command requires one argument");
+                    ZXInteger(command.fields[1], 1, 2);
+                    return [self ui:command client:client target:[self foreground]];
+                }
+                return [self keyboard:command client:client];
+            }
             case 25: return [self deviceInfo:command];
             case 14: case 15:
                 return ZXError(@"Touch recording is excluded");
