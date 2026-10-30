@@ -1,3 +1,9 @@
+## 2026-10-30 / 4.0-16: token-independent current identity
+
+The user requires active-backup detection independent of account credentials. The authenticated catalog now includes current_idfv, read only from Shadow current Fingerprint_Data.VendorIdentifier via its preferences domain. This narrowly expands the earlier catalog-only identity scope; no Keychain, target resolver, scoped worker, backup mutation or App launch. Missing identity is explicit null; malformed settings/fingerprint/UUID is an error. Service tests exercise production normalization through a raw-settings seam. RV must not use apps/access-token for active detection. Retired save/switch and all other old operations remain retired.
+
+Device verification: formal4.0-16 installed on the pinned iPhone9,2 after package SHA verification. Authenticated HTTP2 catalog returned a valid current_idfv matching Shadow preferences while the separate token endpoint still returned access_token_unavailable. Both snapshots' manifest/state/data SHA256 values were unchanged. No backup, restore, token refresh, state adoption or app launch was performed.
+
 ## 2026-10-29: separate live access-token reader
 
 The explicitly authorized authenticated `/api/apps/access-token` route is separate

@@ -1,3 +1,7 @@
+## 2026-10-30 / 4.0-16: active identity does not depend on tokens
+
+Catalog adds current_idfv from Shadow preferences independently of Keychain. Missing identity is explicit null; malformed settings/fingerprint/UUID is an error. Old save/switch remain retired. Native service tests83 assertions and RV HTTP2 handoff tests pass; independent review found the malformed-IDFV/null bug and the corrected parser was re-reviewed. Formal package installed on authenticated7Plus; current identity verified with token endpoint unavailable, all six snapshot file hashes unchanged. No account, backup or state mutations were used to validate the query. See docs/app-state-zxtouch.md.
+
 ## 2026-10-24 / 4.0-5: ZXTouch input delivery verified
 
 User explicitly authorized compilation and deployment to the current phone,

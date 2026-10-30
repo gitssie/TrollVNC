@@ -1,76 +1,42 @@
-## Shadow backup list (2026-10-27)
+# App state：当前 ZXTouch HTTP/2 接口
 
-`list` now queries `ShadowAppState2` manifest metadata from
-`/private/var/mobile/Library/ShadowBackups/<BundleID>/snapshots/<IDFV>/manifest.plist`.
-It returns title as display_name, note, date, version, build and IDFV; backup_id
-remains the opaque `snapshot:<IDFV>`. The query reads no archives and has no
-old-format fallback. Backup creation/restoration belongs to Shadow and is outside
-this list-only change. Current-environment and pending-restore status are not
-queried by this catalog reader.
+所有请求使用已认证 HTTP/2 和 Bearer 控制令牌。备份创建、恢复和环境切换由 Shadow 提供，RV 不调用旧 save、switch、createBaseline、delete、describe、profile 或 sessionSupplement。
 
-Package4.0-10 was installed and tested through authenticated HTTP/2 list/result
-and the streamed list. Its actual response also passed RV's SQLite list import
-and repeated-import deduplication in an isolated local fixture.
+## 目录与当前身份
 
-# App state commands over ZXTouch
+`POST /api/app-state/list`，请求仅为 `{"bundle_id":"lt.manodrabuziai.fr"}`。完成结果：
 
-Task32 uses one Base64 UTF-8 JSON payload and response `0;;<Base64 JSON>\r\n`, matching the Apple task31 convention. Base64 is framing, not encryption. It inherits ZXTouch's controlled-network trust model and lack of an authentication handshake.
+- `bundle_id`、`format=ShadowAppState2`。
+- `backups[]`：`backup_id`、`kind`、`idfv`、`display_name`、`note`、`date`、`version`、`build`。
+- 4.0-16 新增 `current_idfv`：独立读取 Shadow 当前指纹的 VendorIdentifier，不访问 Keychain、不要求存在 access token、不启动 worker。明确没有身份时为 null；存在但格式无效时报错，不能误报为 null。
 
-```python
-op = device.app_state.invoke("list", {"bundle_id": "com.example.app"})
-listing = device.app_state.wait(op["operation_id"])["result"]
+备份目录取自 `/private/var/mobile/Library/ShadowBackups/<BundleID>/snapshots/<IDFV>/manifest.plist`，引用仍为 `snapshot:<IDFV>`。目录不打开、校验或解压归档，不修改备份或指纹。
 
-op = device.app_state.invoke("save", {
-    "bundle_id": "com.example.app", "display_name": "Account A", "note": ""
-})
-state = device.app_state.wait(op["operation_id"])
+不要要求旧协议中的 `current_backup_id`、`restore_pending` 或 `duplicate_identity_backup_ids`。4.0-15 没有独立的当前 IDFV 字段；使用该功能需要更新手机服务，不能通过实时 token 读取失败来推断 active 状态。
 
-op = device.app_state.invoke("switch", {
-    "bundle_id": "com.example.app",
-    "backup_id": listing["backups"][0]["backup_id"],
-    "discard_current": False
-})
-state = device.app_state.wait(op["operation_id"])
-```
+## 操作与结果
 
-Check final error as well as status: completed means the operation ended, not that it succeeded. wait timeout does not cancel/replay the operation. Preserve operation_id and use result after reconnect. One operation at a time returns busy for overlaps; completed results live in memory600s, max64. IDs do not survive daemon restart.
+| 路径 | 参数与作用 |
+| --- | --- |
+| `/api/app-state/list` | bundle_id，读取上述目录和当前 IDFV |
+| `/api/app-state/edit` | bundle_id、backup_id、display_name、note，仅修改所选快照标题和备注 |
+| `/api/app-state/launch` | bundle_id，启动并确认主进程出现 |
+| `/api/app-state/stop` | bundle_id，关闭主进程及扩展并确认全部退出 |
+| `/api/app-state/status` | bundle_id，只读 installed/running/main_running/extension_process_count/pids |
+| `/api/app-state/result` | operation_id，查询原操作，不重复发送变更 |
 
-| Method | Required | Optional |
-| --- | --- | --- |
-| list | bundle_id | none |
-| describe | bundle_id | none |
-| launch | bundle_id | none |
-| stop | bundle_id | none |
-| status | bundle_id | none |
-| save | bundle_id | display_name, note |
-| createBaseline | bundle_id | none |
-| switch | bundle_id, backup_id | discard_current=false, display_name, note |
-| edit | bundle_id, backup_id, display_name, note | none |
-| delete | bundle_id, backup_id | none |
+这些异步操作返回 `operation_id`、`method`、`status`。`status=completed` 只表示已结束，还必须检查 `error` 与 `result`。结果在内存保留600秒，不跨服务重启；查询超时不能重放原变更。
 
-First save requires display_name; note defaults empty. Existing current backup is fully refreshed, with omitted metadata retained. Optional switch metadata describes the current environment being saved, not the destination backup. An unassigned current environment requires display_name or explicit discard_current=true before switching. discard_current must be a JSON boolean; true cannot be combined with save metadata. Backup IDs (snapshot:YYYYMMDD-NN or baseline:version) come from list and are opaque to callers; no filesystem roots, raw references, scopes or commands are accepted. edit operates on snapshots only. delete accepts snapshots and version baselines; the current snapshot and the archive targeted by a pending restore cannot be deleted.
+stop 先对经过 UID、PID/start time、canonical path 核对的进程发送 SIGTERM，再对原身份仍存在的进程发送 SIGKILL，最终重新检查退出。仅请求 ACK 不表示 App 已关闭。Apple 系统 App 与 TrollVNC 自身禁止通过此入口启动／关闭。
 
-`launch`, `stop`, `status` take only `bundle_id` and do not access backup/keychain data. `launch` requests native LaunchServices opening and verifies the main process appears within 4 seconds; it can bring an existing app forward but does not promise foreground/unlocked-screen verification. `stop` includes processes executing within the installed app bundle, including extensions: SIGTERM, then SIGKILL after 0.5 seconds for surviving original identities, with a 4-second final verification deadline. Relaunched/new processes are reported as failure, not repeatedly killed. Apple system bundles and TrollVNC itself cannot be launched/stopped through this interface. Process identity is checked by UID, PID/start time and canonical executable path before signaling.
+## 所选备份 state 传输
 
-`status` returns `bundle_id`, `installed`, `running`, `main_running`, `extension_process_count`, `pids`. `running` includes extensions; `main_running` describes the main executable. An uninstalled app returns installed/running=false and an empty PID list. Unknown process visibility returns an error, not a false stopped result. All commands use the same invoke/result/wait and busy rules; status remains allowed behind the unknown-operation write fence. Known lifecycle errors can include state_may_be_partial; no backup association is altered.
+- `/api/app-state/download`：按 canonical Bundle、snapshot引用及 part 读取 manifest/state；不执行恢复或导入。
+- `/api/app-state/upload`：仅在用户明确交给手机时，顺序回写所选现有快照的 state、manifest；使用 SHA、偏移、大小和手机当前 data 哈希校验，保留 mobile 属主及0600。不上传 data、不写 live Keychain／偏好、不创建备份或启动 App。
+- `/api/apps/access-token`：独立的 Vinted 手机实时 access token 读取入口，含当前 IDFV、到期元数据和白名单请求头；不返回 refresh token。它依赖 Keychain token 能被读取，不能充当通用 active 身份查询。
 
-The service bounds the whole native lifecycle invocation at 6 seconds, including synchronous LaunchServices calls. A timeout does not cancel that native call: launch/stop returns unknown because it may finish later. At most one native lifecycle call can remain outstanding across service instances; status requests fail until it returns. A timed-out or exceptional mutation fences process-wide mutations, including save/switch. Restarting the socket listener or receiving a late completion cannot clear that fence or overwrite the recorded result. Restart the daemon only after resolving any outstanding work and checking the resulting state.
+RV 接管前后比对目录的 `current_idfv`。目标仍为 active 时提示用户在 Shadow 保存最新备份并切换，不自动备份或切换，也不读取旧 state 后直接采用。
 
-```python
-op = device.app_state.invoke("launch", {"bundle_id": "com.example.app"})
-started = device.app_state.wait(op["operation_id"])
-op = device.app_state.invoke("status", {"bundle_id": "com.example.app"})
-current = device.app_state.wait(op["operation_id"])["result"]
-op = device.app_state.invoke("stop", {"bundle_id": "com.example.app"})
-stopped = device.app_state.wait(op["operation_id"])
-```
+## 验证
 
-list returns bundle_id, backups[], current_backup_id (null if unassigned), restore_pending and optional pending_backup_id / duplicate_identity_backup_ids. Each backup has backup_id, kind, display_name, note, date, version, build and idfv. describe returns version/build/current IDFV, container IDs and validated keychain group scope, without credentials or signed raw entitlements. Progress reports phase/stage plus copied bytes/files and savedCurrent where available; no file names or keychain records.
-
-save and switch stop the target app/extensions and leave them stopped. switch saves current before a durable pending marker and target restore; failure leaves pending state, never falsely activates the destination. An explicitly requested retry is permitted after a known completed partial restore; save of a pending environment is blocked. Unknown worker completion/cleanup fences writes until the service is re-established with no outstanding work; list/describe remain available. Errors retain state_may_be_partial/archive_may_be_partial; publication failure may include pending_capture_id for diagnostics, not a switchable backup.
-
-Baseline creation produces an empty template for the current installed version without capturing/changing live app data. Baseline switch clears all target keychain entries, including synchronizable ones, and generates a new IDFV. Snapshot switch restores container/keychain/identity and refreshes preference caches with native readback. Backup format is data-only v2; main-container SplashBoard is excluded and tmp contents follow the source module's current complete-copy behavior. Core validation cannot guarantee a remote app server still accepts historical login tokens.
-
-Native integration requires Dopamine 3/iOS15+ and packaged app-state-worker/app-state-idfv-worker under /var/jb/usr/libexec/trollvnc. The daemon never receives target keychain groups. A copied worker gets exact installed-target scope through on-device ldid, signature readback and effective-authority verification. A package-specific sudo rule authorizes only the root-owned IDFV helper, removed during package removal. Bootstrap paths use standard rootless resolution; system data paths remain on the real data volume. Backups use the phone App’s shared /var/mobile/Media/AppStateBackups directory; explicit backup commands operate on those same records. Worker/operation state remains package-owned under TrollVNC; ProjectX configuration is not used. TrollStore standalone and other packaging schemes are unsupported.
-
-Run `rtk proxy sh vendor/app-state/build.sh test` and `rtk proxy bash tests/run_app_state_socket_tests.sh`. Source/native tests and actual TCP tests have separate boundaries; on-device mutation acceptance must be recorded in vendor/app-state/docs/VALIDATION.md.
+`rtk proxy sh vendor/app-state/build.sh test` 覆盖现行 facade、目录字段、身份规范化、无 token 的身份读取，以及 retained core／原生模拟测试。历史 core 中存在 save/switch 实现不代表公共接口仍开放；手机实际行为必须以安装版本的 HTTP/2 返回验证。

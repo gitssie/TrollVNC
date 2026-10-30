@@ -13,6 +13,7 @@ static void Check(BOOL value,const char *message) { if (!value) { fprintf(stderr
 - (id<PXASResolver>)resolver;
 - (id<TVASProcessRunning>)processRunner;
 - (NSDictionary *)operationPaths;
+- (id)shadowSettingsForBundle:(NSString *)bundle;
 - (NSDictionary *)runBundle:(NSString *)bundleID request:(NSDictionary *)request error:(NSError **)error;
 @end
 @interface BlockingLifecycle : TVASAppLifecycle
@@ -82,12 +83,14 @@ static void Check(BOOL value,const char *message) { if (!value) { fprintf(stderr
 @property (nonatomic, strong) Execution *execution;
 @property (nonatomic, strong) Runner *runner;
 @property (nonatomic, copy) NSDictionary *paths;
+@property (nonatomic, strong) id liveIDFV;
 @end
 @implementation Service
 - (BOOL)isMobile { return YES; }
 - (id<PXASResolver>)resolver { return self.execution; }
 - (id<TVASProcessRunning>)processRunner { return self.runner; }
 - (NSDictionary *)operationPaths { return self.paths; }
+- (id)shadowSettingsForBundle:(NSString *)bundle {(void)bundle;return self.liveIDFV?@{@"Fingerprint_Data":@{@"VendorIdentifier":self.liveIDFV}}:@{};}
 @end
 int main(void) { @autoreleasepool {
     NSString *temp=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"px-app-state-service-" stringByAppendingString:NSUUID.UUID.UUIDString]];
@@ -104,9 +107,21 @@ int main(void) { @autoreleasepool {
     Check([NSFileManager.defaultManager createDirectoryAtPath:snapshot.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:NULL],"create Shadow catalog fixture");
     Check([@{@"format":@"ShadowAppState2",@"bundleID":@"test.app",@"idfv":idfv,@"title":@"Shadow account",@"note":@"metadata only",@"date":NSDate.date,@"version":@"26.41.1",@"build":@"30253"} writeToFile:snapshot atomically:YES],"write Shadow manifest without archives");
     service.paths=@{@"shadow_backups":shadow};
+    service.liveIDFV=idfv;
     NSDictionary *catalog=[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error];
     Check([catalog[@"backups"]count]==1 && [catalog[@"backups"][0][@"display_name"]isEqual:@"Shadow account"] && [catalog[@"backups"][0][@"idfv"]isEqual:idfv],"list maps Shadow manifest metadata");
     Check(service.runner.launches==0,"catalog never launches a worker or verifies archives");
+    Check([catalog[@"current_idfv"]isEqual:idfv],"active identity does not require access token or a keychain worker");
+    service.liveIDFV=@"7A70B21A-2F9D-4F66-81C4-6D21355758D7";
+    Check([[[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error]objectForKey:@"current_idfv"]isEqual:service.liveIDFV],"a different current environment is reported even without credentials");
+    service.liveIDFV=nil;
+    Check([service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error][@"current_idfv"]==NSNull.null,"no Shadow identity is explicit null, not a token error");
+    Check(service.runner.launches==0,"current identity never launches a privileged keychain worker");
+    for(id invalid in @[@"invalid-idfv",@42,NSNull.null,@""]) {
+        service.liveIDFV=invalid;error=nil;
+        Check(![service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error] && error!=nil,"invalid current IDFV is an error, never inactive null");
+    }
+    service.liveIDFV=nil;error=nil;
     Check([NSFileManager.defaultManager contentsOfDirectoryAtPath:snapshot.stringByDeletingLastPathComponent error:NULL].count==1,"catalog leaves snapshot untouched");
     Check([[service runBundle:@"missing.app" request:@{@"operation":@"catalog"} error:&error][@"backups"]count]==0,"missing Shadow catalog is empty without creating directories");
     NSString *lockPath=[[shadow stringByAppendingPathComponent:@"test.app"] stringByAppendingPathComponent:@".lock"];

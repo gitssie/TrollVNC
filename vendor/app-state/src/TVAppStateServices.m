@@ -42,6 +42,23 @@ static NSObject *LifecycleGate(void) {
 - (id<PXASResolver>)resolver { return [PXASLaunchServicesResolver new]; }
 - (id<TVASProcessRunning>)processRunner { return [TVASProcessRunner new]; }
 - (NSDictionary *)operationPaths { return TVASRuntimePaths(); }
+- (id)shadowSettingsForBundle:(NSString *)bundle {
+    NSUserDefaults *defaults=[[NSUserDefaults alloc]initWithSuiteName:@"/var/mobile/Library/Preferences/me.jjolano.shadow.plist"];
+    [defaults synchronize];return [defaults objectForKey:bundle];
+}
+- (NSString *)currentShadowIDFV:(NSString *)bundle error:(NSError **)error {
+    id settings=[self shadowSettingsForBundle:bundle];
+    if(!settings)return nil;
+    if(![settings isKindOfClass:NSDictionary.class]){FailService(error,@"Shadow current environment settings are invalid");return nil;}
+    id fingerprint=settings[@"Fingerprint_Data"];
+    if(!fingerprint)return nil;
+    if(![fingerprint isKindOfClass:NSDictionary.class]){FailService(error,@"Shadow current fingerprint is invalid");return nil;}
+    id value=fingerprint[@"VendorIdentifier"];
+    if(!value)return nil;
+    NSString *idfv=[value isKindOfClass:NSString.class]?[[NSUUID alloc]initWithUUIDString:value].UUIDString:nil;
+    if(!idfv.length){FailService(error,@"Shadow current IDFV is invalid");return nil;}
+    return idfv;
+}
 - (NSDictionary *)shadowCatalog:(NSString *)bundle error:(NSError **)error {
     NSString *root=[self operationPaths][@"shadow_backups"];
     if(!root.length){FailService(error,@"Shadow backup directory is unavailable");return nil;}
@@ -68,8 +85,13 @@ static NSObject *LifecycleGate(void) {
             @"build":[manifest[@"build"]isKindOfClass:NSString.class]?manifest[@"build"]:@"",
             @"date":[manifest[@"date"]isKindOfClass:NSDate.class]?[formatter stringFromDate:manifest[@"date"]]:(id)NSNull.null}];
     }
+    NSError *identityError=nil;
+    NSString *current=[self currentShadowIDFV:bundle error:&identityError];
+    if(identityError){if(error)*error=identityError;return nil;}
     if(error)*error=nil;
-    return @{@"bundle_id":bundle,@"format":@"ShadowAppState2",@"backups":backups};
+    // Current identity is read independently of installed app/keychain contents.
+    return @{@"bundle_id":bundle,@"format":@"ShadowAppState2",@"backups":backups,
+        @"current_idfv":current?:NSNull.null};
 }
 // Metadata edits share Shadow's directory lock but never inspect payload archives.
 - (BOOL)editShadow:(NSString *)bundle request:(NSDictionary *)request error:(NSError **)error {
