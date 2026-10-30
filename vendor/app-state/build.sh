@@ -5,6 +5,9 @@ umask 077
 mkdir -p "$root/build"
 case "${1:-test}" in
     test)
+        xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -I "$root/../shadow/sdk/AppState" \
+            "$root/src/TVASShadowBridge.m" "$root/tests/ShadowBridgeTests.m" -framework Foundation -o "$root/build/shadow-bridge-tests"
+        "$root/build/shadow-bridge-tests"
         xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -DTVAS_DOPAMINE3=1 -I "$root/tests/runtime" \
             "$root/src/TVASRuntime.m" "$root/tests/RuntimePathsTests.m" -framework Foundation -o "$root/build/runtime-path-tests"
         "$root/build/runtime-path-tests"
@@ -39,7 +42,7 @@ case "${1:-test}" in
             "$root/src/TVASAppLifecycle.m" "$root/tests/LifecycleTests.m" -framework Foundation -o "$root/build/lifecycle-tests"
         "$root/build/lifecycle-tests"
         xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror -I "$root/include" -I "$root/src" \
-            "$root/src/TVAppStateServices.m" "$root/src/TVASAppLifecycle.m" "$root/src/TVASRuntime.m" "$root/src/TVASProtocol.m" "$root/src/TVASProcessRunner.m" \
+            -I "$root/../shadow/sdk/AppState" "$root/../shadow/sdk/AppState/SHDWAppStateClient.m" "$root/src/TVASShadowBridge.m" "$root/src/TVAppStateServices.m" "$root/src/TVASAppLifecycle.m" "$root/src/TVASRuntime.m" "$root/src/TVASProtocol.m" "$root/src/TVASProcessRunner.m" \
             "$root/core/PXAppState.m" "$root/adapters/PXASNative.m" "$root/tests/ServiceTests.m" \
             -framework Foundation -framework Security -framework LocalAuthentication -o "$root/build/service-tests"
         "$root/build/service-tests"

@@ -1,5 +1,6 @@
 #import "TVAppStateServices.h"
 #import "TVASRuntime.h"
+#import "TVASShadowBridge.h"
 #import "TVASAppLifecycle.h"
 #import "../adapters/PXASNative.h"
 #include <sys/stat.h>
@@ -42,101 +43,30 @@ static NSObject *LifecycleGate(void) {
 - (id<PXASResolver>)resolver { return [PXASLaunchServicesResolver new]; }
 - (id<TVASProcessRunning>)processRunner { return [TVASProcessRunner new]; }
 - (NSDictionary *)operationPaths { return TVASRuntimePaths(); }
-- (id)shadowSettingsForBundle:(NSString *)bundle {
-    NSUserDefaults *defaults=[[NSUserDefaults alloc]initWithSuiteName:@"/var/mobile/Library/Preferences/me.jjolano.shadow.plist"];
-    [defaults synchronize];return [defaults objectForKey:bundle];
-}
-- (NSString *)currentShadowIDFV:(NSString *)bundle error:(NSError **)error {
-    id settings=[self shadowSettingsForBundle:bundle];
-    if(!settings)return nil;
-    if(![settings isKindOfClass:NSDictionary.class]){FailService(error,@"Shadow current environment settings are invalid");return nil;}
-    id fingerprint=settings[@"Fingerprint_Data"];
-    if(!fingerprint)return nil;
-    if(![fingerprint isKindOfClass:NSDictionary.class]){FailService(error,@"Shadow current fingerprint is invalid");return nil;}
-    id value=fingerprint[@"VendorIdentifier"];
-    if(!value)return nil;
-    NSString *idfv=[value isKindOfClass:NSString.class]?[[NSUUID alloc]initWithUUIDString:value].UUIDString:nil;
-    if(!idfv.length){FailService(error,@"Shadow current IDFV is invalid");return nil;}
-    return idfv;
+- (NSDictionary *)shadowInvoke:(NSString *)action bundle:(NSString *)bundle request:(NSDictionary *)request error:(NSError **)error {
+    return TVASInvokeShadow(action,bundle,request,error);
 }
 - (NSDictionary *)shadowCatalog:(NSString *)bundle error:(NSError **)error {
-    NSString *root=[self operationPaths][@"shadow_backups"];
-    if(!root.length){FailService(error,@"Shadow backup directory is unavailable");return nil;}
-    NSString *app=[root stringByAppendingPathComponent:bundle];
-    NSString *snapshots=[app stringByAppendingPathComponent:@"snapshots"];
-    NSError *listingError=nil;
-    NSArray *names=[NSFileManager.defaultManager contentsOfDirectoryAtPath:snapshots error:&listingError];
-    if(!names && !([listingError.domain isEqual:NSCocoaErrorDomain] && listingError.code==NSFileReadNoSuchFileError)) {
-        if(error)*error=listingError;return nil;
+    NSDictionary *reply=[self shadowInvoke:@"externalCatalog" bundle:bundle request:@{} error:error];
+    if(!reply)return nil;
+    NSMutableArray *backups=[NSMutableArray new]; NSISO8601DateFormatter *formatter=[NSISO8601DateFormatter new];
+    for(NSDictionary *entry in reply[@"backups"]) {
+        NSMutableDictionary *item=[entry mutableCopy]; NSString *idfv=entry[@"idfv"];
+        item[@"backup_id"]=[@"snapshot:" stringByAppendingString:idfv];item[@"kind"]=@"snapshot";
+        item[@"display_name"]=entry[@"title"]?:idfv;item[@"note"]=entry[@"note"]?:@"";
+        item[@"version"]=entry[@"version"]?:@"";item[@"build"]=entry[@"build"]?:@"";
+        item[@"date"]=[entry[@"date"]isKindOfClass:NSDate.class]?[formatter stringFromDate:entry[@"date"]]:NSNull.null;
+        [backups addObject:item];
     }
-    NSMutableArray *backups=[NSMutableArray new];
-    NSISO8601DateFormatter *formatter=[NSISO8601DateFormatter new];
-    // Shadow publishes manifests atomically. Listing reads metadata only;
-    // neither archive is opened, verified, extracted or modified here.
-    for(NSString *name in [names sortedArrayUsingSelector:@selector(compare:)]) {
-        NSString *idfv=[[NSUUID alloc]initWithUUIDString:name].UUIDString;
-        if(![idfv isEqual:name])continue;
-        NSDictionary *manifest=[NSDictionary dictionaryWithContentsOfFile:[[snapshots stringByAppendingPathComponent:name] stringByAppendingPathComponent:@"manifest.plist"]];
-        if(![manifest[@"format"]isEqual:@"ShadowAppState2"] || ![manifest[@"bundleID"]isEqual:bundle] || ![manifest[@"idfv"]isEqual:idfv])continue;
-        [backups addObject:@{@"backup_id":[@"snapshot:" stringByAppendingString:idfv],@"kind":@"snapshot",@"idfv":idfv,
-            @"display_name":[manifest[@"title"]isKindOfClass:NSString.class]?manifest[@"title"]:idfv,
-            @"note":[manifest[@"note"]isKindOfClass:NSString.class]?manifest[@"note"]:@"",
-            @"version":[manifest[@"version"]isKindOfClass:NSString.class]?manifest[@"version"]:@"",
-            @"build":[manifest[@"build"]isKindOfClass:NSString.class]?manifest[@"build"]:@"",
-            @"date":[manifest[@"date"]isKindOfClass:NSDate.class]?[formatter stringFromDate:manifest[@"date"]]:(id)NSNull.null}];
-    }
-    NSError *identityError=nil;
-    NSString *current=[self currentShadowIDFV:bundle error:&identityError];
-    if(identityError){if(error)*error=identityError;return nil;}
-    if(error)*error=nil;
-    // Current identity is read independently of installed app/keychain contents.
-    return @{@"bundle_id":bundle,@"format":@"ShadowAppState2",@"backups":backups,
-        @"current_idfv":current?:NSNull.null};
+    return @{@"bundle_id":bundle,@"format":@"ShadowAppState2",@"current_idfv":[reply[@"current_idfv"]length]?reply[@"current_idfv"]:NSNull.null,@"backups":backups};
 }
-// Metadata edits share Shadow's directory lock but never inspect payload archives.
 - (BOOL)editShadow:(NSString *)bundle request:(NSDictionary *)request error:(NSError **)error {
-    NSString *reference=request[@"reference"], *prefix=[bundle stringByAppendingString:@"/snapshots/"];
-    if(![reference isKindOfClass:NSString.class] || ![reference hasPrefix:prefix])return FailService(error,@"请选择 Shadow 快照");
-    NSString *idfv=[reference substringFromIndex:prefix.length];
-    NSDictionary *account=request[@"account"];
-    if(![account isKindOfClass:NSDictionary.class])return FailService(error,@"备份名称或备注无效");
-    NSString *title=account[@"displayName"], *note=account[@"note"];
-    if(![idfv isEqual:[[NSUUID alloc]initWithUUIDString:idfv].UUIDString] ||
-       ![title isKindOfClass:NSString.class] || ![title stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length || title.length>100 ||
-       ![note isKindOfClass:NSString.class] || note.length>1000)return FailService(error,@"备份名称或备注无效");
-    if(!TVASRequest(@"edit",@{@"bundle_id":bundle,@"backup_id":[@"snapshot:" stringByAppendingString:idfv],@"display_name":title,@"note":note},NULL))return FailService(error,@"备份编辑请求无效");
-    int rootFD=-1,appFD=-1,lockFD=-1,snapshotsFD=-1,snapshotFD=-1,manifestFD=-1,stageFD=-1;
-    NSString *stage=[@".rv-metadata-" stringByAppendingString:NSUUID.UUID.UUIDString];
-    @try {
-        rootFD=open([[self operationPaths][@"shadow_backups"] fileSystemRepresentation],O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
-        if(rootFD<0)return FailService(error,@"Shadow 备份目录不可访问");
-        appFD=openat(rootFD,bundle.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
-        if(appFD<0)return FailService(error,@"Shadow App 目录不可访问");
-        lockFD=openat(appFD,".lock",O_RDWR|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);struct stat info,original;
-        if(lockFD<0 || fstat(lockFD,&info) || !S_ISREG(info.st_mode) || info.st_nlink!=1 || flock(lockFD,LOCK_EX|LOCK_NB))return FailService(error,@"Shadow 正在使用此备份");
-        snapshotsFD=openat(appFD,"snapshots",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
-        if(snapshotsFD<0)return FailService(error,@"Shadow 快照目录不可访问");
-        snapshotFD=openat(snapshotsFD,idfv.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
-        if(snapshotFD<0)return FailService(error,@"Shadow 快照不可访问");
-        manifestFD=openat(snapshotFD,"manifest.plist",O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);
-        if(manifestFD<0 || fstat(manifestFD,&original) || !S_ISREG(original.st_mode) || original.st_nlink!=1 || original.st_size<=0 || original.st_size>16*1024*1024)return FailService(error,@"Shadow 清单不可读取");
-        NSMutableData *bytes=[NSMutableData dataWithLength:(NSUInteger)original.st_size];NSUInteger offset=0;
-        while(offset<bytes.length){ssize_t n=read(manifestFD,(char *)bytes.mutableBytes+offset,bytes.length-offset);if(n<0 && errno==EINTR)continue;if(n<=0)return FailService(error,@"Shadow 清单读取失败");offset+=(NSUInteger)n;}
-        id value=[NSPropertyListSerialization propertyListWithData:bytes options:NSPropertyListMutableContainers format:NULL error:NULL];
-        if(![value isKindOfClass:NSMutableDictionary.class] || ![value[@"format"]isEqual:@"ShadowAppState2"] || ![value[@"bundleID"]isEqual:bundle] || ![value[@"idfv"]isEqual:idfv])return FailService(error,@"Shadow 备份身份不匹配");
-        value[@"title"]=title;value[@"note"]=note;
-        NSData *encoded=[NSPropertyListSerialization dataWithPropertyList:value format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];if(!encoded)return NO;
-        stageFD=openat(snapshotFD,stage.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
-        if(stageFD<0)return FailService(error,@"无法保存备份名称与备注");
-        if(fstat(stageFD,&info) || ((info.st_uid!=original.st_uid || info.st_gid!=original.st_gid) && fchown(stageFD,original.st_uid,original.st_gid)) || fchmod(stageFD,0600))return FailService(error,@"无法保留备份清单权限");
-        offset=0;while(offset<encoded.length){ssize_t n=write(stageFD,(const char *)encoded.bytes+offset,encoded.length-offset);if(n<0 && errno==EINTR)continue;if(n<=0)return FailService(error,@"备份清单写入失败");offset+=(NSUInteger)n;}
-        if(fsync(stageFD) || fstatat(snapshotFD,"manifest.plist",&info,AT_SYMLINK_NOFOLLOW) || info.st_dev!=original.st_dev || info.st_ino!=original.st_ino)return FailService(error,@"备份清单已改变，未保存修改");
-        if(renameat(snapshotFD,stage.fileSystemRepresentation,snapshotFD,"manifest.plist") || fsync(snapshotFD))return FailService(error,@"备份清单发布失败");
-        if(error)*error=nil;return YES;
-    } @finally {
-        if(stageFD>=0)close(stageFD);if(snapshotFD>=0){unlinkat(snapshotFD,stage.fileSystemRepresentation,0);close(snapshotFD);}
-        if(manifestFD>=0)close(manifestFD);if(snapshotsFD>=0)close(snapshotsFD);if(lockFD>=0){flock(lockFD,LOCK_UN);close(lockFD);}if(appFD>=0)close(appFD);if(rootFD>=0)close(rootFD);
-    }
+    NSString *reference=request[@"reference"],*prefix=[bundle stringByAppendingString:@"/snapshots/"];
+    if(![reference isKindOfClass:NSString.class] || ![reference hasPrefix:prefix])return FailService(error,@"Invalid snapshot reference");
+    NSString *idfv=[reference substringFromIndex:prefix.length];NSDictionary *account=request[@"account"];
+    if(![idfv isEqual:[[NSUUID alloc]initWithUUIDString:idfv].UUIDString] || ![account isKindOfClass:NSDictionary.class])return FailService(error,@"Invalid snapshot metadata");
+    NSDictionary *metadata=@{@"title":account[@"displayName"]?:@"",@"note":account[@"note"]?:@""};
+    return [self shadowInvoke:@"externalEdit" bundle:bundle request:@{@"idfv":idfv,@"metadata":metadata} error:error]!=nil;
 }
 - (TVASAppLifecycle *)lifecycle { return [TVASAppLifecycle new]; }
 - (NSTimeInterval)lifecycleTimeout { return 6; }

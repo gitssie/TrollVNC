@@ -19,6 +19,7 @@ extern "C" bool tvnc_http_stream_open(void *p) { auto *b=(Bridge *)p;CHECK(b->re
 extern "C" void tvnc_http_stream_release(void *p) { auto *b=(Bridge *)p;CHECK(b->released.fetch_add(1)==0); }
 // The service seam is substituted; no native workers, containers or credentials are used.
 @implementation TVAppStateServices
+- (NSDictionary *)accessTokenForBundle:(NSString *)bundle error:(NSError **)error {(void)bundle;(void)error;return nil;}
 - (void)executeBundle:(NSString *)b request:(NSDictionary *)r completion:(void (^)(NSDictionary *,NSError *))c {(void)b;(void)r;(void)c;}
 - (void)executeBundle:(NSString *)b request:(NSDictionary *)r progress:(void (^)(NSDictionary *))p completion:(void (^)(NSDictionary *,NSError *))c {(void)b;(void)r;(void)p;(void)c;}
 @end

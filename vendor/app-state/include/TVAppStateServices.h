@@ -12,7 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
 // External method/params -> validated native session request. Never accepts paths/scopes.
 FOUNDATION_EXPORT NSDictionary * _Nullable TVASRequest(NSString *method, NSDictionary *params, NSError **error);
 FOUNDATION_EXPORT NSDictionary * _Nullable TVASResult(NSDictionary *result, NSString *bundleID, NSError **error);
-// Read-only raw Shadow manifest/state transport; no archive extraction or mutation.
+// Shadow helper transport. The root argument is retained for ABI compatibility and ignored.
+// Upload stages one bounded pair; only Shadow publishes the validated transaction.
 FOUNDATION_EXPORT NSData * _Nullable TVASReadShadowPart(NSString *root, NSDictionary *params, NSError **error);
 FOUNDATION_EXPORT NSDictionary * _Nullable TVASWriteShadowPart(NSString *root, NSDictionary *params, NSError **error);
 NS_ASSUME_NONNULL_END

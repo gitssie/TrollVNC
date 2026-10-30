@@ -1,0 +1,3 @@
+[submodule "vendor/shadow"]
+	path = vendor/shadow
+	url = https://github.com/gitssie/shadow.git

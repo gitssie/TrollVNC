@@ -17,10 +17,10 @@ static NSData *Wire(NSDictionary *value) {
 }
 - (instancetype)init {return [self initWithServices:[TVAppStateServices new]];}
 - (NSData *)downloadStatePart:(NSDictionary *)params error:(NSError **)error {
-    return TVASReadShadowPart(TVASRuntimePaths()[@"shadow_backups"],params,error);
+    return TVASReadShadowPart(@"",params,error);
 }
 - (NSDictionary *)uploadStatePart:(NSDictionary *)params error:(NSError **)error {
-    return TVASWriteShadowPart(TVASRuntimePaths()[@"shadow_backups"],params,error);
+    return TVASWriteShadowPart(@"",params,error);
 }
 - (instancetype)initWithServices:(TVAppStateServices *)services {
     if((self=[super init])){_services=services;_operations=[NSMutableDictionary new];_finished=[NSMutableDictionary new];_observers=[NSMutableDictionary new];}return self;
@@ -77,7 +77,7 @@ static NSData *Wire(NSDictionary *value) {
                     NSMutableDictionary *op=self->_operations[identifier];op[@"status"]=@"completed";
                     if(result)op[@"result"]=result;
                     if(failure){
-                        NSMutableDictionary *safe=[@{@"domain":failure.domain,@"code":@(failure.code),@"state_may_be_partial":@([failure.userInfo[@"stateMayBePartial"]boolValue]),@"archive_may_be_partial":@([failure.userInfo[@"archiveMayBePartial"]boolValue])}mutableCopy];
+                        NSMutableDictionary *safe=[@{@"outcome_unknown":@([failure.userInfo[@"outcomeUnknown"]boolValue]),@"domain":failure.domain,@"code":@(failure.code),@"state_may_be_partial":@([failure.userInfo[@"stateMayBePartial"]boolValue]),@"archive_may_be_partial":@([failure.userInfo[@"archiveMayBePartial"]boolValue])}mutableCopy];
                         NSDictionary *reasons=@{
                             @"Retry restoration before backing up this incomplete environment.":@"restore_pending",
                             @"Retry restoration before backing up this incomplete environment":@"restore_pending",

@@ -90,7 +90,12 @@ static void Check(BOOL value,const char *message) { if (!value) { fprintf(stderr
 - (id<PXASResolver>)resolver { return self.execution; }
 - (id<TVASProcessRunning>)processRunner { return self.runner; }
 - (NSDictionary *)operationPaths { return self.paths; }
-- (id)shadowSettingsForBundle:(NSString *)bundle {(void)bundle;return self.liveIDFV?@{@"Fingerprint_Data":@{@"VendorIdentifier":self.liveIDFV}}:@{};}
+- (NSDictionary *)shadowInvoke:(NSString *)action bundle:(NSString *)bundle request:(NSDictionary *)request error:(NSError **)error {
+    (void)bundle;
+    if([action isEqual:@"externalEdit"]) {self.paths=request[@"metadata"];return @{@"edited":@YES};}
+    if(self.liveIDFV && ![self.liveIDFV isKindOfClass:NSString.class]){if(error)*error=[NSError errorWithDomain:@"helper" code:1 userInfo:nil];return nil;}
+    return @{@"current_idfv":self.liveIDFV?:@"",@"backups":@[@{@"idfv":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53",@"title":self.paths[@"title"]?:@"Shadow account",@"note":self.paths[@"note"]?:@"metadata only"}]};
+}
 @end
 int main(void) { @autoreleasepool {
     NSString *temp=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"px-app-state-service-" stringByAppendingString:NSUUID.UUID.UUIDString]];
@@ -101,47 +106,17 @@ int main(void) { @autoreleasepool {
     service.execution.entitlements=@{@"application-identifier":@"TEAM.test.app",@"keychain-access-groups":@[@"TEAM.custom"],@"com.apple.security.application-groups":@[@"group.test.app"]};
     service.paths=@{@"root":[temp stringByAppendingPathComponent:@"operations"],@"worker":template,@"vendor":template,@"bootstrap":temp,@"ldid":[temp stringByAppendingPathComponent:@"ldid"]};
     NSError *error=nil;
-    NSString *shadow=[temp stringByAppendingPathComponent:@"ShadowBackups"];
-    NSString *idfv=@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53";
-    NSString *snapshot=[[[shadow stringByAppendingPathComponent:@"test.app/snapshots"] stringByAppendingPathComponent:idfv] stringByAppendingPathComponent:@"manifest.plist"];
-    Check([NSFileManager.defaultManager createDirectoryAtPath:snapshot.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:NULL],"create Shadow catalog fixture");
-    Check([@{@"format":@"ShadowAppState2",@"bundleID":@"test.app",@"idfv":idfv,@"title":@"Shadow account",@"note":@"metadata only",@"date":NSDate.date,@"version":@"26.41.1",@"build":@"30253"} writeToFile:snapshot atomically:YES],"write Shadow manifest without archives");
-    service.paths=@{@"shadow_backups":shadow};
-    service.liveIDFV=idfv;
+    NSString *idfv=@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53";service.liveIDFV=idfv;
     NSDictionary *catalog=[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error];
-    Check([catalog[@"backups"]count]==1 && [catalog[@"backups"][0][@"display_name"]isEqual:@"Shadow account"] && [catalog[@"backups"][0][@"idfv"]isEqual:idfv],"list maps Shadow manifest metadata");
-    Check(service.runner.launches==0,"catalog never launches a worker or verifies archives");
-    Check([catalog[@"current_idfv"]isEqual:idfv],"active identity does not require access token or a keychain worker");
-    service.liveIDFV=@"7A70B21A-2F9D-4F66-81C4-6D21355758D7";
-    Check([[[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error]objectForKey:@"current_idfv"]isEqual:service.liveIDFV],"a different current environment is reported even without credentials");
+    Check([catalog[@"backups"][0][@"display_name"]isEqual:@"Shadow account"] && [catalog[@"current_idfv"]isEqual:idfv],"catalog maps helper response");
     service.liveIDFV=nil;
-    Check([service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error][@"current_idfv"]==NSNull.null,"no Shadow identity is explicit null, not a token error");
-    Check(service.runner.launches==0,"current identity never launches a privileged keychain worker");
-    for(id invalid in @[@"invalid-idfv",@42,NSNull.null,@""]) {
-        service.liveIDFV=invalid;error=nil;
-        Check(![service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error] && error!=nil,"invalid current IDFV is an error, never inactive null");
-    }
-    service.liveIDFV=nil;error=nil;
-    Check([NSFileManager.defaultManager contentsOfDirectoryAtPath:snapshot.stringByDeletingLastPathComponent error:NULL].count==1,"catalog leaves snapshot untouched");
-    Check([[service runBundle:@"missing.app" request:@{@"operation":@"catalog"} error:&error][@"backups"]count]==0,"missing Shadow catalog is empty without creating directories");
-    NSString *lockPath=[[shadow stringByAppendingPathComponent:@"test.app"] stringByAppendingPathComponent:@".lock"];
-    Check([NSData.data writeToFile:lockPath atomically:NO],"create existing Shadow lock");
-    NSDictionary *beforeEdit=[NSDictionary dictionaryWithContentsOfFile:snapshot];
-    NSDictionary *edit=TVASRequest(@"edit",@{@"bundle_id":@"test.app",@"backup_id":[@"snapshot:" stringByAppendingString:idfv],@"display_name":@"New title",@"note":@""},&error);
-    NSDictionary *edited=[service runBundle:@"test.app" request:edit error:&error];
-    Check(edited!=nil && error==nil && [edited[@"backups"][0][@"display_name"]isEqual:@"New title"] && [edited[@"backups"][0][@"note"]isEqual:@""],"Shadow edit returns refreshed metadata and accepts empty note");
-    NSMutableDictionary *expectedEdit=[beforeEdit mutableCopy];expectedEdit[@"title"]=@"New title";expectedEdit[@"note"]=@"";
-    Check([[NSDictionary dictionaryWithContentsOfFile:snapshot]isEqual:expectedEdit],"edit changes only title and note, preserving all manifest fields");
-    Check(service.runner.launches==0 && [NSFileManager.defaultManager contentsOfDirectoryAtPath:snapshot.stringByDeletingLastPathComponent error:NULL].count==1,"metadata edit never launches legacy worker, opens archives or leaves staging files");
-    struct stat editedInfo;Check(!stat(snapshot.fileSystemRepresentation,&editedInfo) && (editedInfo.st_mode&0777)==0600 && editedInfo.st_uid==getuid(),"metadata edit preserves owner and private permissions");
-    int held=open(lockPath.fileSystemRepresentation,O_RDWR);Check(held>=0 && !flock(held,LOCK_EX|LOCK_NB),"hold Shadow directory lock");
-    error=nil;Check(![service runBundle:@"test.app" request:edit error:&error] && error!=nil,"metadata edit refuses busy Shadow lock");flock(held,LOCK_UN);close(held);
-    NSMutableDictionary *bad=[edit mutableCopy];bad[@"reference"]=@"test.app/snapshots/../escape";error=nil;Check(![service runBundle:@"test.app" request:bad error:&error],"metadata edit rejects noncanonical identity");
-    NSString *savedManifest=[snapshot stringByAppendingString:@".saved"];Check([NSFileManager.defaultManager moveItemAtPath:snapshot toPath:savedManifest error:NULL],"pin original manifest for link check");
-    Check(!symlink(savedManifest.fileSystemRepresentation,snapshot.fileSystemRepresentation),"create symlink fixture");error=nil;Check(![service runBundle:@"test.app" request:edit error:&error],"metadata edit refuses symlink manifest");unlink(snapshot.fileSystemRepresentation);Check([NSFileManager.defaultManager moveItemAtPath:savedManifest toPath:snapshot error:NULL],"restore regular manifest fixture");
-    error=nil;
-    NSMutableDictionary *wrong=[[NSDictionary dictionaryWithContentsOfFile:snapshot]mutableCopy];wrong[@"format"]=@"AppState2";[wrong writeToFile:snapshot atomically:YES];
-    Check([[service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error][@"backups"]count]==0,"old format is not listed");
+    Check([service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error][@"current_idfv"]==NSNull.null,"helper empty identity maps explicit null");
+    service.liveIDFV=@42;error=nil;
+    Check(![service runBundle:@"test.app" request:@{@"operation":@"catalog"} error:&error] && error,"helper identity failure propagated");
+    service.liveIDFV=idfv;error=nil;
+    NSDictionary *edit=TVASRequest(@"edit",@{@"bundle_id":@"test.app",@"backup_id":[@"snapshot:"stringByAppendingString:idfv],@"display_name":@"New title",@"note":@""},&error);
+    Check([[service runBundle:@"test.app" request:edit error:&error][@"backups"][0][@"display_name"]isEqual:@"New title"],"edit delegated and catalog refreshed");
+    Check(service.runner.launches==0,"catalog/edit do not launch legacy worker");
     service.paths=@{@"root":[temp stringByAppendingPathComponent:@"operations"],@"worker":template,@"vendor":template,@"bootstrap":temp,@"ldid":[temp stringByAppendingPathComponent:@"ldid"]};
     NSDictionary *result=[service runBundle:@"test.app" request:@{@"operation":@"save"} error:&error];
     Check(result!=nil && error==nil,"scoped worker success is parsed");

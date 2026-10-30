@@ -6,3 +6,7 @@ APP_STATE_WORKER_FILES := $(APP_STATE_ROOT)/product/Worker.m $(APP_STATE_ROOT)/s
 APP_STATE_WORKER_FILES += $(APP_STATE_ROOT)/profiles/TVAppProfile.m $(APP_STATE_ROOT)/profiles/TVVintedProfile.m $(APP_STATE_ROOT)/profiles/TVSessionSupplementStore.m
 
 APP_STATE_WORKER_FILES += $(APP_STATE_ROOT)/profiles/TVLiveAccessToken.m
+
+SHADOW_SDK_ROOT ?= $(APP_STATE_ROOT)/../shadow/sdk/AppState
+APP_STATE_FILES += $(APP_STATE_ROOT)/src/TVASShadowBridge.m $(SHADOW_SDK_ROOT)/SHDWAppStateClient.m
+APP_STATE_CFLAGS += -I$(SHADOW_SDK_ROOT)

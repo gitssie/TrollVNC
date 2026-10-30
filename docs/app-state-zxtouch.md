@@ -1,42 +1,67 @@
-# App state：当前 ZXTouch HTTP/2 接口
+# Shadow AppState 与 ZXTouch HTTP/2
 
-所有请求使用已认证 HTTP/2 和 Bearer 控制令牌。备份创建、恢复和环境切换由 Shadow 提供，RV 不调用旧 save、switch、createBaseline、delete、describe、profile 或 sessionSupplement。
+所有请求使用已认证 HTTP/2 和 Bearer 控制令牌。备份创建、恢复和环境切换由 Shadow 提供；RV 不调用旧 save、switch、createBaseline、delete、describe、profile 或 sessionSupplement。
+
+## 依赖与执行入口
+
+TrollVNC 依赖安装了 AppState API v1 的 Shadow。两项目通过
+`vendor/shadow/sdk/AppState` 的客户端调用 Shadow 安装的 `shadow-cleaner`，
+按操作启动 helper，完成后退出，无新增常驻服务。
+源码由 `.gitmodules` 与 gitlink 固定，初始化使用：
+
+```sh
+git submodule update --init vendor/shadow
+```
+
+list/edit/download/upload 均委托 Shadow；TrollVNC 不再自行解析手机备份目录、
+编辑清单或发布 state 文件。调用前检查 capabilities 的 API 版本、存储格式和操作支持；
+Shadow 缺失或不兼容时明确报错，不回退到旧核心。
 
 ## 目录与当前身份
 
-`POST /api/app-state/list`，请求仅为 `{"bundle_id":"lt.manodrabuziai.fr"}`。完成结果：
+`POST /api/app-state/list` 请求仅为 `{"bundle_id":"lt.manodrabuziai.fr"}`。
+Shadow helper 返回目录及当前身份，TrollVNC 转换为现有 HTTP 字段：
 
 - `bundle_id`、`format=ShadowAppState2`。
 - `backups[]`：`backup_id`、`kind`、`idfv`、`display_name`、`note`、`date`、`version`、`build`。
-- 4.0-16 新增 `current_idfv`：独立读取 Shadow 当前指纹的 VendorIdentifier，不访问 Keychain、不要求存在 access token、不启动 worker。明确没有身份时为 null；存在但格式无效时报错，不能误报为 null。
+- Shadow 的 `unavailable`、`error`、`restorePending`、`recoverySource`、`finalizationPending` 等状态随条目保留。损坏项由 Shadow 标记，不再静默隐藏。
+- `current_idfv` 独立于 Keychain 和 access token；没有身份时为 null，格式无效时报错。身份查询不启动目标 App 或 Keychain worker。
 
-备份目录取自 `/private/var/mobile/Library/ShadowBackups/<BundleID>/snapshots/<IDFV>/manifest.plist`，引用仍为 `snapshot:<IDFV>`。目录不打开、校验或解压归档，不修改备份或指纹。
-
-不要要求旧协议中的 `current_backup_id`、`restore_pending` 或 `duplicate_identity_backup_ids`。4.0-15 没有独立的当前 IDFV 字段；使用该功能需要更新手机服务，不能通过实时 token 读取失败来推断 active 状态。
+备份引用保持 `snapshot:<IDFV>`，不是磁盘路径。存储格式、目录访问和恢复状态规则由 Shadow 维护。目录查询不执行恢复或解压归档。
+不要依赖旧协议的 `current_backup_id`、`restore_pending` 或 `duplicate_identity_backup_ids`，也不能通过 token 查询失败推断当前环境。
 
 ## 操作与结果
 
 | 路径 | 参数与作用 |
 | --- | --- |
-| `/api/app-state/list` | bundle_id，读取上述目录和当前 IDFV |
-| `/api/app-state/edit` | bundle_id、backup_id、display_name、note，仅修改所选快照标题和备注 |
+| `/api/app-state/list` | bundle_id，由 Shadow 查询目录及当前 IDFV |
+| `/api/app-state/edit` | bundle_id、backup_id、display_name、note，由 Shadow 修改标题和备注并保护 pending 恢复源 |
 | `/api/app-state/launch` | bundle_id，启动并确认主进程出现 |
 | `/api/app-state/stop` | bundle_id，关闭主进程及扩展并确认全部退出 |
 | `/api/app-state/status` | bundle_id，只读 installed/running/main_running/extension_process_count/pids |
 | `/api/app-state/result` | operation_id，查询原操作，不重复发送变更 |
 
-这些异步操作返回 `operation_id`、`method`、`status`。`status=completed` 只表示已结束，还必须检查 `error` 与 `result`。结果在内存保留600秒，不跨服务重启；查询超时不能重放原变更。
+异步操作返回 `operation_id`、`method`、`status`。`status=completed` 只表示已结束，还必须检查 `error` 与 `result`。结果在内存保留600秒，不跨服务重启；查询超时不能重放原变更。错误中的 `outcome_unknown` 表示无法确认原操作结果，不能据此自动重试。
 
-stop 先对经过 UID、PID/start time、canonical path 核对的进程发送 SIGTERM，再对原身份仍存在的进程发送 SIGKILL，最终重新检查退出。仅请求 ACK 不表示 App 已关闭。Apple 系统 App 与 TrollVNC 自身禁止通过此入口启动／关闭。
+launch/stop/status 保留 TrollVNC 独立应用控制实现。stop 对经过 UID、PID/start time、canonical path 核对的进程发送 SIGTERM，再对原身份仍存在的进程发送 SIGKILL，最后重新检查退出。仅请求 ACK 不表示 App 已关闭。Apple 系统 App 与 TrollVNC 自身禁止通过此入口启动／关闭。
 
 ## 所选备份 state 传输
 
-- `/api/app-state/download`：按 canonical Bundle、snapshot引用及 part 读取 manifest/state；不执行恢复或导入。
-- `/api/app-state/upload`：仅在用户明确交给手机时，顺序回写所选现有快照的 state、manifest；使用 SHA、偏移、大小和手机当前 data 哈希校验，保留 mobile 属主及0600。不上传 data、不写 live Keychain／偏好、不创建备份或启动 App。
-- `/api/apps/access-token`：独立的 Vinted 手机实时 access token 读取入口，含当前 IDFV、到期元数据和白名单请求头；不返回 refresh token。它依赖 Keychain token 能被读取，不能充当通用 active 身份查询。
+`/api/app-state/download` 按 canonical Bundle、snapshot 引用和 part 委托 Shadow 导出 manifest/state，不执行恢复或导入。下载 state 时提交从 manifest 取得的 state SHA，避免混用不同版本。
 
-RV 接管前后比对目录的 `current_idfv`。目标仍为 active 时提示用户在 Shadow 保存最新备份并切换，不自动备份或切换，也不读取旧 state 后直接采用。
+`/api/app-state/upload` 保留 state 在先、manifest 在后的分块协议，但 state 完成只表示 TrollVNC 已暂存，尚未发布。首次暂存通过 Shadow 捕获当前 manifest SHA 和 data SHA；所有分块检查偏移、长度、传输身份及校验和。manifest 完成后将完整文件对交给 Shadow，Shadow 在应用锁内重新检查快照版本、pending 保护和归档内容，再原子发布整个快照，保留 mobile 属主及私有权限。TrollVNC 不直接写手机备份文件。
+
+全进程仅允许一个上传事务，最多 64MiB state + 16MiB manifest；内存暂存在下一次请求时回收超过600秒的事务，服务重启即丢失。提交失败或结果未知会释放暂存，不自动提交第二次。上传不传输 data、不写 live Keychain／偏好、不创建备份或启动 App。
+
+`/api/apps/access-token` 仍是独立的 Vinted 手机实时 access token 读取入口，含当前 IDFV、到期元数据和白名单请求头，不返回 refresh token。它依赖 Keychain token 能被读取，不能代替通用当前身份查询。
+
+RV 接管前后比对 `current_idfv`。目标仍为 active 时提示用户在 Shadow 保存最新备份并切换，不自动备份或切换，也不读取旧 state 后直接采用。
 
 ## 验证
 
-`rtk proxy sh vendor/app-state/build.sh test` 覆盖现行 facade、目录字段、身份规范化、无 token 的身份读取，以及 retained core／原生模拟测试。历史 core 中存在 save/switch 实现不代表公共接口仍开放；手机实际行为必须以安装版本的 HTTP/2 返回验证。
+```sh
+rtk proxy sh vendor/app-state/build.sh test
+rtk proxy bash tests/run_app_state_stream_tests.sh
+```
+
+主机测试覆盖 helper 能力协商、字段映射、暂存事务、原始错误传播与结果未知时不重放，以及 retained core／原生模拟测试。历史 core 中存在 save/switch 不代表公共接口开放。本轮改动尚未安装手机；设备权限、真实文件发布和恢复行为仍需使用兼容 Shadow 与 TrollVNC 的安装版本验收。

@@ -258,7 +258,7 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     if ([path isEqual:@"/api/app-state/upload"]) {
         NSError *error=nil;
         NSDictionary *result=[_appStateService uploadStatePart:input error:&error];
-        return result?TVNCHTTPJSON(result,200):TVNCHTTPJSON(@{@"error":error.localizedDescription?:@"state_upload_failed"},400);
+        return result?TVNCHTTPJSON(result,200):TVNCHTTPJSON(@{@"error":error.localizedDescription?:@"state_upload_failed",@"outcome_unknown":@([error.userInfo[@"outcomeUnknown"]boolValue]),@"state_may_be_partial":@([error.userInfo[@"stateMayBePartial"]boolValue])},400);
     }
     if ([path isEqual:@"/api/app-state/download"]) {
         NSError *error=nil;
