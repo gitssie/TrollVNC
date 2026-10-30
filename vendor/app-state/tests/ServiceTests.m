@@ -92,6 +92,7 @@ static void Check(BOOL value,const char *message) { if (!value) { fprintf(stderr
 - (NSDictionary *)operationPaths { return self.paths; }
 - (NSDictionary *)shadowInvoke:(NSString *)action bundle:(NSString *)bundle request:(NSDictionary *)request error:(NSError **)error {
     (void)bundle;
+    if([@[@"backup",@"restore",@"externalDelete",@"externalVerify"]containsObject:action]){self.paths=@{@"action":action,@"parameters":request};return @{@"idfv":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53",@"verified":@YES};}
     if([action isEqual:@"externalEdit"]) {self.paths=request[@"metadata"];return @{@"edited":@YES};}
     if(self.liveIDFV && ![self.liveIDFV isKindOfClass:NSString.class]){if(error)*error=[NSError errorWithDomain:@"helper" code:1 userInfo:nil];return nil;}
     return @{@"current_idfv":self.liveIDFV?:@"",@"backups":@[@{@"idfv":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53",@"title":self.paths[@"title"]?:@"Shadow account",@"note":self.paths[@"note"]?:@"metadata only"}]};
@@ -117,6 +118,16 @@ int main(void) { @autoreleasepool {
     NSDictionary *edit=TVASRequest(@"edit",@{@"bundle_id":@"test.app",@"backup_id":[@"snapshot:"stringByAppendingString:idfv],@"display_name":@"New title",@"note":@""},&error);
     Check([[service runBundle:@"test.app" request:edit error:&error][@"backups"][0][@"display_name"]isEqual:@"New title"],"edit delegated and catalog refreshed");
     Check(service.runner.launches==0,"catalog/edit do not launch legacy worker");
+    for(NSString *method in @[@"backup",@"restore",@"delete",@"verify"]) {
+        NSDictionary *params=[method isEqual:@"backup"]?@{@"bundle_id":@"test.app",@"note":@"note only"}:@{@"bundle_id":@"test.app",@"backup_id":[@"snapshot:"stringByAppendingString:idfv]};
+        NSDictionary *native=TVASRequest(method,params,&error);NSDictionary *reply=[service runBundle:@"test.app" request:native error:&error];
+        Check([reply[@"bundle_id"]isEqual:@"test.app"] && [reply[@"backup_id"]isEqual:[@"snapshot:"stringByAppendingString:idfv]],"Shadow operation result maps bundle and backup identity");
+        if([method isEqual:@"backup"])Check([service.paths[@"parameters"][@"metadata"]isEqual:@{@"note":@"note only"}],"backup forwards only provided metadata");
+        if([method isEqual:@"restore"])Check([service.paths[@"parameters"][@"saveCurrent"]boolValue],"restore default saves current");
+        if([method isEqual:@"delete"])Check([service.paths[@"action"]isEqual:@"externalDelete"],"delete delegates Shadow only");
+        if([method isEqual:@"verify"])Check([service.paths[@"action"]isEqual:@"externalVerify"],"verify delegates full Shadow verification");
+    }
+
     service.paths=@{@"root":[temp stringByAppendingPathComponent:@"operations"],@"worker":template,@"vendor":template,@"bootstrap":temp,@"ldid":[temp stringByAppendingPathComponent:@"ldid"]};
     NSDictionary *result=[service runBundle:@"test.app" request:@{@"operation":@"save"} error:&error];
     Check(result!=nil && error==nil,"scoped worker success is parsed");
@@ -125,7 +136,7 @@ int main(void) { @autoreleasepool {
     service.runner.mode=@"copy-failure";error=nil;
     Check(![service runBundle:@"test.app" request:@{@"operation":@"save"} error:&error] && error.code==2 && [error.userInfo[@"posixCode"]intValue]==28 && [error.userInfo[@"sourceDomain"]isEqual:@"PXAppState"] && [error.userInfo[@"sourceCode"]intValue]==1,"known copy failure preserves finite file error metadata without becoming an unknown outcome");error=nil;
     Check([NSFileManager.defaultManager contentsOfDirectoryAtPath:service.paths[@"root"] error:NULL].count==0,"operation artifacts removed after success");
-    for(NSString *operation in @[@"save",@"baseline",@"switch",@"delete",@"describe",@"profile",@"sessionSupplement"]) {
+    for(NSString *operation in @[@"save",@"baseline",@"switch",@"describe",@"profile",@"sessionSupplement"]) {
         __block BOOL finished=NO;NSUInteger count=service.runner.launches;
         [service executeBundle:@"test.app" request:@{@"operation":operation} completion:^(NSDictionary *value,NSError *failure){Check(value==nil && failure!=nil,"obsolete public interface is rejected");finished=YES;}];
         NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:5];

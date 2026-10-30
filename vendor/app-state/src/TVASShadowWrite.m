@@ -5,9 +5,10 @@ static NSString *Hash(NSData *data) {
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,digest);
     NSMutableString *s=[NSMutableString new];for(NSUInteger i=0;i<sizeof(digest);i++)[s appendFormat:@"%02x",digest[i]];return s;
 }
-static NSDictionary *Fail(NSError **error,NSString *message) {
-    if(error)*error=[NSError errorWithDomain:@"TVASShadowWrite" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];return nil;
+static NSDictionary *FailCode(NSError **error,NSString *code,NSString *message) {
+    if(error)*error=[NSError errorWithDomain:@"TVASShadowWrite" code:1 userInfo:@{@"errorCode":code,NSLocalizedDescriptionKey:message}];return nil;
 }
+static NSDictionary *Fail(NSError **error,NSString *message) {return FailCode(error,@"invalid_request",message);}
 // Transport staging only. Shadow validates and publishes the complete pair.
 NSDictionary *TVASWriteShadowPart(NSString *root,NSDictionary *params,NSError **error) {
     (void)root;if(error)*error=nil;
@@ -31,11 +32,11 @@ NSDictionary *TVASWriteShadowPart(NSString *root,NSDictionary *params,NSError **
             if(offset || ![part isEqual:@"state"])return Fail(error,@"Start with state offset zero");
             NSDictionary *original=TVASInvokeShadow(@"exportState",bundle,@{@"idfv":[backup substringFromIndex:9],@"part":@"manifest"},error);
             if(!original)return nil;
-            if(![original[@"dataSHA"]isEqual:params[@"data_sha256"]])return Fail(error,@"Snapshot data changed");
+            if(![original[@"dataSHA"]isEqual:params[@"data_sha256"]])return FailCode(error,@"snapshot_changed",@"Snapshot data changed");
             transfer=[@{@"key":key,@"baseline":original[@"manifestSHA"],@"dataSHA":params[@"data_sha256"],@"time":@(now)}mutableCopy];
         }
-        if(![transfer[@"key"]isEqual:key])return Fail(error,@"Another transfer is staged");
-        if(![transfer[@"dataSHA"]isEqual:params[@"data_sha256"]])return Fail(error,@"Transfer data identity changed");
+        if(![transfer[@"key"]isEqual:key]){if(error)*error=[NSError errorWithDomain:@"TVASShadowWrite" code:1 userInfo:@{@"errorCode":@"busy",NSLocalizedDescriptionKey:@"Another transfer is staged"}];return nil;};
+        if(![transfer[@"dataSHA"]isEqual:params[@"data_sha256"]])return FailCode(error,@"snapshot_changed",@"Transfer data identity changed");
         if([part isEqual:@"manifest"] && !transfer[@"stateComplete"])return Fail(error,@"Complete state first");
         NSString *infoKey=[part stringByAppendingString:@"Info"];
         NSDictionary *info=@{@"total":@(total),@"sha":params[@"sha256"]?:@""};
@@ -45,7 +46,7 @@ NSDictionary *TVASWriteShadowPart(NSString *root,NSDictionary *params,NSError **
         [bytes appendData:chunk];transfer[@"time"]=@(now);
         BOOL complete=bytes.length==(NSUInteger)total;
         if(complete) {
-            if(![Hash(bytes)isEqual:params[@"sha256"]]){transfer=nil;return Fail(error,@"Transfer checksum mismatch");}
+            if(![Hash(bytes)isEqual:params[@"sha256"]]){transfer=nil;return FailCode(error,@"invalid_archive",@"Transfer checksum mismatch");}
             if([part isEqual:@"state"])transfer[@"stateComplete"]=@YES;
             else {
                 NSDictionary *result=TVASInvokeShadow(@"importState",bundle,@{@"idfv":[backup substringFromIndex:9],@"manifest":bytes,@"state":transfer[@"state"],@"expectedManifestSHA":transfer[@"baseline"]},error);

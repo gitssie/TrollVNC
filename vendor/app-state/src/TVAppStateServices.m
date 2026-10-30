@@ -1,6 +1,7 @@
 #import "TVAppStateServices.h"
 #import "TVASRuntime.h"
 #import "TVASShadowBridge.h"
+#import "TVASErrors.h"
 #import "TVASAppLifecycle.h"
 #import "../adapters/PXASNative.h"
 #include <sys/stat.h>
@@ -9,7 +10,7 @@
 #include <unistd.h>
 
 static BOOL FailService(NSError **error, NSString *message) {
-    if (error) *error=[NSError errorWithDomain:@"TVAppStateServices" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
+    if (error) *error=[NSError errorWithDomain:@"TVAppStateServices" code:1 userInfo:@{@"errorCode":@"operation_failed",NSLocalizedDescriptionKey:message}];
     return NO;
 }
 static NSString *PhysicalPath(NSString *path) {
@@ -44,7 +45,7 @@ static NSObject *LifecycleGate(void) {
 - (id<TVASProcessRunning>)processRunner { return [TVASProcessRunner new]; }
 - (NSDictionary *)operationPaths { return TVASRuntimePaths(); }
 - (NSDictionary *)shadowInvoke:(NSString *)action bundle:(NSString *)bundle request:(NSDictionary *)request error:(NSError **)error {
-    return TVASInvokeShadow(action,bundle,request,error);
+    return TVASInvokeShadowWithProgress(action,bundle,request,self.operationProgress,error);
 }
 - (NSDictionary *)shadowCatalog:(NSString *)bundle error:(NSError **)error {
     NSDictionary *reply=[self shadowInvoke:@"externalCatalog" bundle:bundle request:@{} error:error];
@@ -62,9 +63,9 @@ static NSObject *LifecycleGate(void) {
 }
 - (BOOL)editShadow:(NSString *)bundle request:(NSDictionary *)request error:(NSError **)error {
     NSString *reference=request[@"reference"],*prefix=[bundle stringByAppendingString:@"/snapshots/"];
-    if(![reference isKindOfClass:NSString.class] || ![reference hasPrefix:prefix])return FailService(error,@"Invalid snapshot reference");
+    if(![reference isKindOfClass:NSString.class] || ![reference hasPrefix:prefix]){if(error)*error=TVASMakeError(@"invalid_request",@"Invalid snapshot reference.");return NO;}
     NSString *idfv=[reference substringFromIndex:prefix.length];NSDictionary *account=request[@"account"];
-    if(![idfv isEqual:[[NSUUID alloc]initWithUUIDString:idfv].UUIDString] || ![account isKindOfClass:NSDictionary.class])return FailService(error,@"Invalid snapshot metadata");
+    if(![idfv isEqual:[[NSUUID alloc]initWithUUIDString:idfv].UUIDString] || ![account isKindOfClass:NSDictionary.class]){if(error)*error=TVASMakeError(@"invalid_request",@"Invalid snapshot metadata.");return NO;}
     NSDictionary *metadata=@{@"title":account[@"displayName"]?:@"",@"note":account[@"note"]?:@""};
     return [self shadowInvoke:@"externalEdit" bundle:bundle request:@{@"idfv":idfv,@"metadata":metadata} error:error]!=nil;
 }
@@ -73,20 +74,20 @@ static NSObject *LifecycleGate(void) {
 - (NSDictionary *)runLifecycle:(NSString *)method bundle:(NSString *)bundle error:(NSError **)error {
     BOOL mutation=![method isEqual:@"status"];
     @synchronized(LifecycleGate()) {
-        if(LifecyclePending){FailService(error,@"App operation is still running");return nil;}
+        if(LifecyclePending){if(error)*error=TVASMakeError(@"busy",@"An app operation is still running.");return nil;}
         LifecyclePending=YES;
     }
     dispatch_semaphore_t done=dispatch_semaphore_create(0);NSMutableDictionary *outcome=[NSMutableDictionary new];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{@autoreleasepool {
         NSError *failure=nil;NSDictionary *result=nil;
         @try {result=[[self lifecycle]execute:method bundle:bundle error:&failure];}
-        @catch(__unused NSException *exception){failure=[NSError errorWithDomain:@"TVAppStateServices" code:mutation?4:1 userInfo:@{@"stateMayBePartial":@(mutation)}];}
+        @catch(__unused NSException *exception){failure=[NSError errorWithDomain:@"TVAppStateServices" code:mutation?4:1 userInfo:@{@"errorCode":mutation?@"outcome_unknown":@"operation_failed",@"outcomeUnknown":@(mutation),NSLocalizedDescriptionKey:@"The app operation did not complete within its deadline.",@"stateMayBePartial":@(mutation)}];}
         @synchronized(outcome){if(result)outcome[@"result"]=result;if(failure)outcome[@"error"]=failure;}
         @synchronized(LifecycleGate()){LifecyclePending=NO;}
         dispatch_semaphore_signal(done);
     }});
     if(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,(int64_t)([self lifecycleTimeout]*NSEC_PER_SEC)))!=0) {
-        if(error)*error=[NSError errorWithDomain:@"TVAppStateServices" code:mutation?4:1 userInfo:@{@"stateMayBePartial":@(mutation)}];return nil;
+        if(error)*error=[NSError errorWithDomain:@"TVAppStateServices" code:mutation?4:1 userInfo:@{@"errorCode":mutation?@"outcome_unknown":@"operation_failed",@"outcomeUnknown":@(mutation),NSLocalizedDescriptionKey:@"The app operation did not complete within its deadline.",@"stateMayBePartial":@(mutation)}];return nil;
     }
     @synchronized(outcome){if(error)*error=outcome[@"error"];return outcome[@"result"];}
 }
@@ -107,14 +108,35 @@ static NSObject *LifecycleGate(void) {
 }
 - (NSDictionary *)runBundle:(NSString *)bundleID request:(NSDictionary *)request error:(NSError **)error {
     if (![self isMobile]) { FailService(error,@"App-state operations must run as mobile"); return nil; }
-    BOOL readOnly=[@[@"catalog",@"describe",@"status",@"profile",@"accessToken"] containsObject:request[@"operation"]];
+    BOOL readOnly=[@[@"catalog",@"verify",@"describe",@"status",@"profile",@"accessToken"] containsObject:request[@"operation"]];
     @synchronized(LifecycleGate()) {
         if(!readOnly && LifecyclePending) {
-            FailService(error,@"App operation is still running");return nil;
+            if(error)*error=TVASMakeError(@"busy",@"An app operation is still running.");return nil;
         }
     }
     if ([@[@"launch",@"stop",@"status"] containsObject:request[@"operation"]])
         return [self runLifecycle:request[@"operation"] bundle:bundleID error:error];
+    NSString *operation=request[@"operation"];
+    if([@[@"backup",@"restore",@"delete",@"verify"]containsObject:operation]) {
+        NSMutableDictionary *parameters=[NSMutableDictionary new];
+        if([operation isEqual:@"backup"]) {
+            NSDictionary *patch=request[@"accountPatch"];NSMutableDictionary *metadata=[NSMutableDictionary new];
+            if(patch[@"displayName"])metadata[@"title"]=patch[@"displayName"];if(patch[@"note"])metadata[@"note"]=patch[@"note"];
+            if(metadata.count)parameters[@"metadata"]=metadata;
+        } else {
+            NSString *reference=request[@"reference"],*prefix=[bundleID stringByAppendingString:@"/snapshots/"];
+            if(![reference isKindOfClass:NSString.class] || ![reference hasPrefix:prefix]){if(error)*error=TVASMakeError(@"invalid_request",@"Select a Shadow snapshot.");return nil;}
+            parameters[@"idfv"]=[reference substringFromIndex:prefix.length];
+            if([operation isEqual:@"restore"])parameters[@"saveCurrent"]=request[@"saveCurrent"]?:@YES;
+        }
+        NSString *action=[operation isEqual:@"delete"]?@"externalDelete":[operation isEqual:@"verify"]?@"externalVerify":operation;
+        NSDictionary *result=[self shadowInvoke:action bundle:bundleID request:parameters error:error];
+        if(!result)return nil;
+        NSMutableDictionary *mapped=[result mutableCopy];mapped[@"bundle_id"]=bundleID;
+        if([mapped[@"date"]isKindOfClass:NSDate.class])mapped[@"date"]=[[[NSISO8601DateFormatter alloc]init]stringFromDate:mapped[@"date"]];
+        if([mapped[@"idfv"]isKindOfClass:NSString.class])mapped[@"backup_id"]=[@"snapshot:"stringByAppendingString:mapped[@"idfv"]];
+        return mapped;
+    }
     if ([request[@"operation"]isEqual:@"catalog"])
         return [self shadowCatalog:bundleID error:error];
     if ([request[@"operation"]isEqual:@"switch"]) {
@@ -231,6 +253,7 @@ static NSObject *LifecycleGate(void) {
         }
         if (!completionKnown && executionStarted && error) {
             NSMutableDictionary *info=*error?[(*error).userInfo mutableCopy]:[NSMutableDictionary dictionary];
+            info[@"errorCode"]=@"outcome_unknown";info[@"outcomeUnknown"]=@YES;
             info[NSLocalizedDescriptionKey]=info[NSLocalizedDescriptionKey]?:@"Worker completion could not be verified";
             if ([request[@"operation"] isEqual:@"switch"]) info[@"stateMayBePartial"]=@YES;
             if ([@[@"save",@"switch",@"edit",@"delete",@"baseline"] containsObject:request[@"operation"]]) info[@"archiveMayBePartial"]=@YES;
@@ -252,8 +275,8 @@ static NSObject *LifecycleGate(void) {
         self.operationProgress=progress;
         NSError *error=nil; NSDictionary *result=nil;
         @try {
-            if(![@[@"catalog",@"edit",@"launch",@"stop",@"status"]containsObject:payload[@"operation"]])
-                FailService(&error,@"此旧 App-state 接口已移除，备份创建与恢复请使用 Shadow");
+            if(![@[@"catalog",@"edit",@"backup",@"restore",@"delete",@"verify",@"launch",@"stop",@"status"]containsObject:payload[@"operation"]])
+                {error=TVASMakeError(@"unsupported_operation",@"This AppState operation is no longer supported.");}
             else result=[self runBundle:bundle request:payload error:&error];
         }
         @catch (NSException *exception) { (void)exception; FailService(&error,@"App-state operation could not be completed"); }

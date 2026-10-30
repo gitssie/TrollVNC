@@ -3,6 +3,7 @@
 #import "TVNCZXTouchService.h"
 #import "TVNCAppleService.h"
 #import "TVNCAppStateService.h"
+#import "TVASErrors.h"
 #import "TVNCAppStateStream.h"
 #import "AppManagement.h"
 #import "TVNCHTTPServer.h"
@@ -258,12 +259,12 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
     if ([path isEqual:@"/api/app-state/upload"]) {
         NSError *error=nil;
         NSDictionary *result=[_appStateService uploadStatePart:input error:&error];
-        return result?TVNCHTTPJSON(result,200):TVNCHTTPJSON(@{@"error":error.localizedDescription?:@"state_upload_failed",@"outcome_unknown":@([error.userInfo[@"outcomeUnknown"]boolValue]),@"state_may_be_partial":@([error.userInfo[@"stateMayBePartial"]boolValue])},400);
+        return result?TVNCHTTPJSON(result,200):TVNCHTTPJSON(TVASHTTPError(error),TVASErrorHTTPStatus(error));
     }
     if ([path isEqual:@"/api/app-state/download"]) {
         NSError *error=nil;
         NSData *data=[_appStateService downloadStatePart:input error:&error];
-        return data?TVNCHTTPData(data,200,"application/octet-stream"):TVNCHTTPJSON(@{@"error":error.localizedDescription?:@"state_download_failed"},400);
+        return data?TVNCHTTPData(data,200,"application/octet-stream"):TVNCHTTPJSON(TVASHTTPError(error),TVASErrorHTTPStatus(error));
     }
     if ([path isEqual:@"/api/app-state/stream"]) {
         if(!([input[@"action"] isEqual:@"invoke"] || [input[@"action"] isEqual:@"result"]))
@@ -346,7 +347,13 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
             NSMutableDictionary *action = [input mutableCopy]; action[@"action"] = method; request = action;
         } else request = @{@"action":@"invoke", @"method":method, @"params":input};
         NSDictionary *result = [prefix isEqual:@"/api/apple/"] ? [_appleService request:request] : [_appStateService request:request];
-        return TVNCHTTPJSON(result, result[@"error"] ? 400 : 200);
+        NSInteger status=result[@"error"]?400:200;
+        if([prefix isEqual:@"/api/app-state/"] && result[@"operation_id"])status=200;
+        else if([prefix isEqual:@"/api/app-state/"] && [result[@"error"]isKindOfClass:NSDictionary.class]) {
+            NSDictionary *record=result[@"error"];
+            status=TVASErrorHTTPStatus(TVASMakeError(record[@"error_code"]?:@"operation_failed",record[@"message"]?:@"The AppState request failed."));
+        }
+        return TVNCHTTPJSON(result,status);
     }
     if ([path isEqual:@"/api/device/info"]) {
         __block NSDictionary *info;

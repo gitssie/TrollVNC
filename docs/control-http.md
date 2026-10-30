@@ -46,7 +46,7 @@ All native actions use `POST`, `Content-Type: application/json`, plain JSON requ
 | `/api/apps/foreground`, `/api/device/home` | `{}` |
 | `/api/device/clipboard` | `{"token":"<ack UUID>","text":"…"}` |
 | `/api/apple/<native method>` | Native method parameters directly, e.g. `queryAccountState` with `{}` or `queryName` with `{"apple_id":"…"}` |
-| `/api/app-state/<native method>` | Native method parameters directly, e.g. `listApps` |
+| `/api/app-state/<native method>` | Parameters directly; `list`, `edit`, `backup`, `restore`, `delete`, `verify`, `launch`, `stop`, `status`; see [AppState contract](app-state-zxtouch.md) |
 | `/api/apple/result`, `/api/app-state/result` | `{"operation_id":"…"}` |
 | `/api/apple/submit_code`, `/cancel_challenge` | Existing operation/challenge/code parameters directly |
 | `/api/device/touch` | `{"touches":[{"type":1,"finger":0,"x":100,"y":200}]}`; type 0=end, 1=begin, 2=move |
@@ -155,7 +155,7 @@ Deleting a backup or baseline removes its archive only. Current/pending referenc
 
 ## App-state progress stream (3.2-328)
 
-`/api/control/authorize` advertises `app_state_stream: 1`. Authenticated `POST /api/app-state/stream` accepts the native request envelope: `{"action":"invoke","method":"save","params":{"bundle_id":"…","name":"…"}}`, or `{"action":"result","operation_id":"…"}` to observe an existing operation without executing it again. The response is HTTP/2 `application/x-ndjson`, with `{"event":"state","record":{…}}` and five-second `{"event":"heartbeat"}` records. An HTTP 200 starts observation; only the completed operation record establishes the outcome. Initial state and subscription are atomic. Completed cached results return immediately, and the first terminal result remains final despite late callbacks.
+`/api/control/authorize` advertises `app_state_stream: 1`. Authenticated `POST /api/app-state/stream` accepts the native request envelope: `{"action":"invoke","method":"backup","params":{"bundle_id":"…","display_name":"…"}}`, or `{"action":"result","operation_id":"…"}` to observe an existing operation without executing it again. The response is HTTP/2 `application/x-ndjson`, with `{"event":"state","record":{…}}` and five-second `{"event":"heartbeat"}` records. An HTTP 200 starts observation; only the completed operation record establishes the outcome. Initial state and subscription are atomic. Completed cached results return immediately, and the first terminal result remains final despite late callbacks.
 
 Only sanitized phase/stage/count progress is exported. Slow receivers get coalesced latest progress (200ms cadence); the terminal record is retained until queued or disconnected. Subscription lifetime is bounded to 600 seconds, checks session authorization, and disconnect removes the observer without cancelling or repeating the native operation. Native result retention remains 600 seconds; reconnecting reads the current snapshot rather than replaying every intermediate progress sample.
 
@@ -239,3 +239,10 @@ endpoint. Response bodies/tokens are not retained in the operation registry.
 Errors return a JSON `error`/`message` object; clients inspect the body as well
 as HTTP status. The source reader may return an expired token if the App has
 not refreshed it yet; the client must not treat this as proof of validity.
+
+AppState failures retain readable messages and legacy numeric codes, with additive
+stable `error_code` and independent `outcome_unknown` fields. Once an operation
+has an `operation_id`, its records use HTTP 200 even when the completed record
+contains an error. Synchronous rejection and raw transfer failures use the
+status associated with the stable error code. Full operations, parameters and
+examples are specified in [the AppState contract](app-state-zxtouch.md).

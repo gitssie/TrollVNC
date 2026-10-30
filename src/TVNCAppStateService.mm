@@ -1,7 +1,8 @@
 #import "TVNCAppStateService.h"
 #import "TVAppStateServices.h"
 #import "TVASRuntime.h"
-static NSDictionary *Fail(NSString *code) {return @{@"error":@{@"code":code}};}
+#import "TVASErrors.h"
+static NSDictionary *Fail(NSString *code) {NSMutableDictionary *record=[TVASErrorRecord(TVASMakeError(code,[@{@"busy":@"An AppState operation is already running.",@"invalid_request":@"Invalid AppState request.",@"operation_unavailable":@"The operation result is unavailable or expired.",@"service_stopping":@"The AppState service is stopping."}objectForKey:code]?:@"The AppState request could not be completed."))mutableCopy];record[@"code"]=code;return @{@"error":record};}
 static NSData *Wire(NSDictionary *value) {
     NSData *data=[NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
     if(!data || data.length>700000)data=[NSJSONSerialization dataWithJSONObject:Fail(@"response_too_large") options:0 error:nil];
@@ -57,7 +58,7 @@ static NSData *Wire(NSDictionary *value) {
         if([request[@"action"] isEqual:@"result"] && request.count==2 && [request[@"operation_id"]isKindOfClass:NSString.class])return _operations[request[@"operation_id"]]?[_operations[request[@"operation_id"]]copy]:Fail(@"operation_unavailable");
         if(![request[@"action"]isEqual:@"invoke"] || request.count!=3)return Fail(@"invalid_request");
         NSError *error=nil;NSDictionary *native=TVASRequest(request[@"method"],request[@"params"],&error);
-        if(!native)return Fail(@"invalid_request");
+        if(!native)return @{@"error":TVASErrorRecord(error)};
         NSString *method=request[@"method"],*bundle=request[@"params"][@"bundle_id"];
         if(_stopped)return Fail(@"service_stopping");
         if(_active)return Fail(@"busy");
@@ -68,7 +69,7 @@ static NSData *Wire(NSDictionary *value) {
             [_services executeBundle:bundle request:native progress:^(NSDictionary *event){
                 @synchronized(self){if(![self->_active isEqual:identifier])return;
                     NSMutableDictionary *safe=[NSMutableDictionary new];
-                    for(NSString *key in @[@"phase",@"stage",@"completed",@"total",@"files",@"bytes",@"savedCurrent"])if([event[key]isKindOfClass:NSString.class] || [event[key]isKindOfClass:NSNumber.class])safe[key]=event[key];
+                    for(NSString *key in @[@"phase",@"stage",@"completed",@"total",@"files",@"entries",@"bytes",@"savedCurrent"])if([event[key]isKindOfClass:NSString.class] || [event[key]isKindOfClass:NSNumber.class])safe[key]=event[key];
                     self->_operations[identifier][@"progress"]=safe;
                     [self publish:identifier];
                 }
@@ -77,44 +78,17 @@ static NSData *Wire(NSDictionary *value) {
                     NSMutableDictionary *op=self->_operations[identifier];op[@"status"]=@"completed";
                     if(result)op[@"result"]=result;
                     if(failure){
-                        NSMutableDictionary *safe=[@{@"outcome_unknown":@([failure.userInfo[@"outcomeUnknown"]boolValue]),@"domain":failure.domain,@"code":@(failure.code),@"state_may_be_partial":@([failure.userInfo[@"stateMayBePartial"]boolValue]),@"archive_may_be_partial":@([failure.userInfo[@"archiveMayBePartial"]boolValue])}mutableCopy];
-                        NSDictionary *reasons=@{
-                            @"Retry restoration before backing up this incomplete environment.":@"restore_pending",
-                            @"Retry restoration before backing up this incomplete environment":@"restore_pending",
-                            @"Name this account before its first backup":@"name_required",
-                            @"Store is busy":@"store_busy",
-                            @"App operation is still running":@"operation_busy",
-                            @"Container copy failed":@"file_copy_failed",
-                            @"The selected backup is unavailable":@"archive_unavailable",
-                            @"Invalid snapshot manifest":@"invalid_archive",
-                            @"Invalid baseline manifest":@"invalid_archive",
-                            @"Container payload differs":@"invalid_archive",
-                            @"Keychain archive checksum differs":@"invalid_archive",
-                            @"Cannot restore keychain":@"keychain_failed",
-                            @"Keychain restore failed":@"keychain_failed",
-                            @"Cannot restore identity":@"identity_failed",
-                            @"Identity restore failed":@"identity_failed"};
-                        NSString *reason=reasons[failure.localizedDescription];if(reason)safe[@"reason"]=reason;
-                        // Preserve the native failure explanation, never arbitrary userInfo or payloads.
-                        NSString *message=failure.localizedDescription;
-                        if(message.length)safe[@"message"]=[message substringToIndex:MIN(message.length,2048)];
-                        if([failure.userInfo[@"sourceDomain"] isKindOfClass:NSString.class])safe[@"source_domain"]=failure.userInfo[@"sourceDomain"];
-                        if([failure.userInfo[@"sourceCode"] isKindOfClass:NSNumber.class])safe[@"source_code"]=failure.userInfo[@"sourceCode"];
-                        NSNumber *posix=failure.userInfo[@"posixCode"];
-                        if([posix isKindOfClass:NSNumber.class] && posix.integerValue>0 && posix.integerValue<=255)safe[@"posix_code"]=posix;
-                        NSString *pending=failure.userInfo[@"pendingCaptureReference"];
-                        NSString *prefix=[bundle stringByAppendingString:@"/snapshots/.capture-"];
-                        if([pending isKindOfClass:NSString.class] && [pending hasPrefix:prefix] && [[NSUUID alloc]initWithUUIDString:[pending substringFromIndex:prefix.length]])safe[@"pending_capture_id"]=[@"capture:" stringByAppendingString:[pending substringFromIndex:prefix.length]];
+                        NSDictionary *safe=TVASErrorRecord(failure);
                         op[@"error"]=safe;
                     }
-                    if(!result && !failure)op[@"error"]=@{@"code":@"missing_result"};
+                    if(!result && !failure){NSMutableDictionary *missing=[TVASErrorRecord([NSError errorWithDomain:@"TVAppStateServices" code:4 userInfo:@{@"errorCode":@"operation_failed",@"outcomeUnknown":@YES,NSLocalizedDescriptionKey:@"The operation returned no result; completion could not be confirmed."}])mutableCopy];missing[@"code"]=@"missing_result";op[@"error"]=missing;}
                     self->_finished[identifier]=@(NSProcessInfo.processInfo.systemUptime);self->_active=nil;
                     [self publish:identifier];
                 }
             }];
         } @catch(__unused NSException *exception){
             _active=nil;
-            _operations[identifier][@"status"]=@"completed";_operations[identifier][@"error"]=@{@"code":@"outcome_unknown"};_finished[identifier]=@(NSProcessInfo.processInfo.systemUptime);
+            _operations[identifier][@"status"]=@"completed";NSMutableDictionary *uncertain=[TVASErrorRecord([NSError errorWithDomain:@"TVAppStateServices" code:4 userInfo:@{@"errorCode":@"operation_failed",@"outcomeUnknown":@YES,NSLocalizedDescriptionKey:@"The operation completion could not be confirmed."}])mutableCopy];uncertain[@"code"]=@"outcome_unknown";_operations[identifier][@"error"]=uncertain;_finished[identifier]=@(NSProcessInfo.processInfo.systemUptime);
             [self publish:identifier];
         }
         return [_operations[identifier]copy];

@@ -7,6 +7,7 @@ NSDictionary *TVASRuntimePaths(void){return @{@"shadow_helper":@"/fixture/shadow
 - (id)invokeAction:(NSString *)action bundleIdentifier:(NSString *)bundle request:(NSDictionary *)request progress:(SHDWAppStateClientProgress)progress error:(NSError **)error {
     (void)bundle;(void)request;(void)progress;
     if([action isEqual:@"capabilities"])return capability;
+    if(progress)progress(@{@"phase":@"backup",@"stage":@"capture",@"bytes":@4096,@"entries":@2});
     if(error)*error=failure;return result;
 }
 @end
@@ -20,5 +21,7 @@ int main(void){@autoreleasepool {
     capability=valid;result=@[];error=nil;NSCAssert(!TVASInvokeShadow(@"importState",@"test.app",@{},&error) && error.code==3,@"malformed result error");
     result=nil;failure=[NSError errorWithDomain:@"Shadow" code:4 userInfo:@{@"outcomeUnknown":@YES}];error=nil;
     NSCAssert(!TVASInvokeShadow(@"importState",@"test.app",@{},&error) && error==failure && [error.userInfo[@"outcomeUnknown"]boolValue],@"unknown completion propagated unchanged");
+    result=@{@"saved":@YES};failure=nil;__block NSUInteger events=0;
+    NSCAssert(TVASInvokeShadowWithProgress(@"importState",@"test.app",@{},^(NSDictionary *event){NSCAssert([event[@"entries"]integerValue]==2,@"helper entry progress retained");events++;},&error)!=nil && events==1,@"helper progress forwarded");
     puts("PASS Shadow capability negotiation and helper error propagation");
 }return 0;}

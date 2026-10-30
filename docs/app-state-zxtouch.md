@@ -1,6 +1,6 @@
 # Shadow AppState 与 ZXTouch HTTP/2
 
-所有请求使用已认证 HTTP/2 和 Bearer 控制令牌。备份创建、恢复和环境切换由 Shadow 提供；RV 不调用旧 save、switch、createBaseline、delete、describe、profile 或 sessionSupplement。
+所有请求使用已认证 HTTP/2 和 Bearer 控制令牌。备份创建、恢复、删除和完整校验均通过 Shadow 唯一 helper 提供。旧 save、switch、createBaseline、describe、profile 和 sessionSupplement 保持退役。
 
 ## 依赖与执行入口
 
@@ -13,7 +13,7 @@ TrollVNC 依赖安装了 AppState API v1 的 Shadow。两项目通过
 git submodule update --init vendor/shadow
 ```
 
-list/edit/download/upload 均委托 Shadow；TrollVNC 不再自行解析手机备份目录、
+list/edit/backup/restore/delete/verify/download/upload 均委托 Shadow；TrollVNC 不再自行解析手机备份目录、
 编辑清单或发布 state 文件。调用前检查 capabilities 的 API 版本、存储格式和操作支持；
 Shadow 缺失或不兼容时明确报错，不回退到旧核心。
 
@@ -36,12 +36,37 @@ Shadow helper 返回目录及当前身份，TrollVNC 转换为现有 HTTP 字段
 | --- | --- |
 | `/api/app-state/list` | bundle_id，由 Shadow 查询目录及当前 IDFV |
 | `/api/app-state/edit` | bundle_id、backup_id、display_name、note，由 Shadow 修改标题和备注并保护 pending 恢复源 |
+| `/api/app-state/backup` | bundle_id，可选 display_name/note，仅将提供的字段交给 Shadow 创建或更新当前 IDFV 快照 |
+| `/api/app-state/restore` | bundle_id、backup_id，可选 save_current 布尔值，默认 true；显式恢复重试可传 false |
+| `/api/app-state/delete` | bundle_id、backup_id，由 Shadow 删除所选快照并保护 pending 恢复源 |
+| `/api/app-state/verify` | bundle_id、backup_id，由 Shadow 对归档与逻辑载荷执行完整校验，不恢复或启动 App |
 | `/api/app-state/launch` | bundle_id，启动并确认主进程出现 |
 | `/api/app-state/stop` | bundle_id，关闭主进程及扩展并确认全部退出 |
 | `/api/app-state/status` | bundle_id，只读 installed/running/main_running/extension_process_count/pids |
 | `/api/app-state/result` | operation_id，查询原操作，不重复发送变更 |
 
-异步操作返回 `operation_id`、`method`、`status`。`status=completed` 只表示已结束，还必须检查 `error` 与 `result`。结果在内存保留600秒，不跨服务重启；查询超时不能重放原变更。错误中的 `outcome_unknown` 表示无法确认原操作结果，不能据此自动重试。
+异步操作返回 `operation_id`、`method`、`status`。`status=completed` 只表示已结束，还必须检查 `error` 与 `result`。结果在内存保留600秒，不跨服务重启；查询超时不能重放原变更。错误保留原 numeric `code`、`domain` 和可读 `message`，新增稳定字符串 `error_code`，例如 invalid_request、unsupported_operation、busy、shadow_unavailable、shadow_incompatible、operation_failed。Shadow 的 errorCode 原样映射，不根据翻译后的错误文本推断。`outcome_unknown` 表示无法确认原操作结果，不能据此自动重试。上传/下载错误保留顶层 error 字符串并提供相同 error_code/message/outcome_unknown 字段。
+
+错误码与状态：invalid_request/unsupported_operation 为400，busy/restore_pending/active_environment/snapshot_changed 为409，permission_denied 为403，snapshot_unavailable 为404，shadow_unavailable/shadow_incompatible 为503，invalid_archive 为422，outcome_unknown 为504，operation_failed 为500。异步操作一旦取得 operation_id，其运行或终结记录始终通过 HTTP200 返回；必须读取 error/error_code。同步拒绝及原始上传/下载失败才使用对应非200状态。
+
+backup/restore/verify 的 helper 进度沿用 operation_id/result/stream，包含 phase、stage、bytes、entries；完成不自动启动 App。
+
+请求示例（均为 POST，请带现有 Bearer 控制令牌）：
+
+```text
+/api/app-state/backup
+{"bundle_id":"com.example.app","display_name":"工作环境","note":"切换前保存"}
+
+/api/app-state/restore
+{"bundle_id":"com.example.app","backup_id":"snapshot:11111111-2222-3333-4444-555555555555","save_current":true}
+
+/api/app-state/delete
+{"bundle_id":"com.example.app","backup_id":"snapshot:11111111-2222-3333-4444-555555555555"}
+
+/api/app-state/verify
+{"bundle_id":"com.example.app","backup_id":"snapshot:11111111-2222-3333-4444-555555555555"}
+```
+
 
 launch/stop/status 保留 TrollVNC 独立应用控制实现。stop 对经过 UID、PID/start time、canonical path 核对的进程发送 SIGTERM，再对原身份仍存在的进程发送 SIGKILL，最后重新检查退出。仅请求 ACK 不表示 App 已关闭。Apple 系统 App 与 TrollVNC 自身禁止通过此入口启动／关闭。
 
@@ -62,6 +87,7 @@ RV 接管前后比对 `current_idfv`。目标仍为 active 时提示用户在 Sh
 ```sh
 rtk proxy sh vendor/app-state/build.sh test
 rtk proxy bash tests/run_app_state_stream_tests.sh
+rtk proxy python3 tests/AppStateHTTPTests.py
 ```
 
 主机测试覆盖 helper 能力协商、字段映射、暂存事务、原始错误传播与结果未知时不重放，以及 retained core／原生模拟测试。历史 core 中存在 save/switch 不代表公共接口开放。本轮改动尚未安装手机；设备权限、真实文件发布和恢复行为仍需使用兼容 Shadow 与 TrollVNC 的安装版本验收。

@@ -1,6 +1,39 @@
 #import "../include/TVAppStateServices.h"
+#import "TVASErrors.h"
+NSError *TVASMakeError(NSString *code,NSString *message) {
+    return [NSError errorWithDomain:@"TVAppStateServices" code:1 userInfo:@{@"errorCode":code,NSLocalizedDescriptionKey:message}];
+}
+NSDictionary *TVASErrorRecord(NSError *error) {
+    error=error?:TVASMakeError(@"operation_failed",@"The operation returned no result.");
+    NSString *code=[error.userInfo[@"errorCode"]isKindOfClass:NSString.class]?error.userInfo[@"errorCode"]:@"operation_failed";
+    if(!code.length)code=@"operation_failed";
+    NSString *message=error.localizedDescription.length?error.localizedDescription:@"The operation failed.";
+    NSMutableDictionary *value=[@{@"error_code":code,@"domain":error.domain,@"code":@(error.code),@"message":[message substringToIndex:MIN(message.length,2048)],@"outcome_unknown":@([error.userInfo[@"outcomeUnknown"]boolValue]),@"state_may_be_partial":@([error.userInfo[@"stateMayBePartial"]boolValue]),@"archive_may_be_partial":@([error.userInfo[@"archiveMayBePartial"]boolValue])}mutableCopy];
+    for(NSString *key in @[@"sourceDomain",@"sourceCode",@"posixCode"]) {
+        id item=error.userInfo[key];
+        if(([key isEqual:@"sourceDomain"] && [item isKindOfClass:NSString.class]) || (![key isEqual:@"sourceDomain"] && [item isKindOfClass:NSNumber.class]))value[@{@"sourceDomain":@"source_domain",@"sourceCode":@"source_code",@"posixCode":@"posix_code"}[key]]=item;
+    }
+    return value;
+}
+NSDictionary *TVASHTTPError(NSError *error) {
+    NSMutableDictionary *value=[TVASErrorRecord(error)mutableCopy];value[@"error"]=value[@"message"];return value;
+}
+NSInteger TVASErrorHTTPStatus(NSError *error) {
+    NSDictionary *record=TVASErrorRecord(error);
+    NSString *code=record[@"error_code"];
+    if([record[@"outcome_unknown"]boolValue] || [code isEqual:@"outcome_unknown"])return 504;
+    if([code isEqual:@"permission_denied"])return 403;
+    if([code isEqual:@"snapshot_unavailable"])return 404;
+    if([@[@"busy",@"restore_pending",@"pending_source",@"same_identity",@"active_environment",@"snapshot_changed"]containsObject:code])return 409;
+    if([@[@"shadow_unavailable",@"shadow_incompatible",@"service_stopping"]containsObject:code])return 503;
+    if([code isEqual:@"invalid_request"])return 400;
+    if([code isEqual:@"unsupported_operation"])return 400;
+    if([code isEqual:@"invalid_archive"])return 422;
+    return 500;
+}
+
 static NSDictionary *Bad(NSError **error) {
-    if(error)*error=[NSError errorWithDomain:@"TVAppStateRequest" code:1 userInfo:nil];return nil;
+    if(error)*error=[NSError errorWithDomain:@"TVAppStateRequest" code:1 userInfo:@{@"errorCode":@"invalid_request",NSLocalizedDescriptionKey:@"Invalid AppState request parameters."}];return nil;
 }
 static BOOL TVASComponent(id value) {
     if(![value isKindOfClass:NSString.class] || ![value length] || [value length]>200 || [value hasPrefix:@"."] || [value containsString:@".."])return NO;
@@ -19,13 +52,15 @@ static NSString *BackupID(NSString *reference,NSString *bundle) {
     return [NSString stringWithFormat:@"%@:%@",[parts[1] isEqual:@"snapshots"]?@"snapshot":@"baseline",parts[2]];
 }
 NSDictionary *TVASRequest(NSString *method,NSDictionary *params,NSError **error) {
-    NSDictionary *map=@{@"list":@"catalog",@"describe":@"describe",@"profile":@"profile",@"sessionSupplement":@"sessionSupplement",@"save":@"save",@"createBaseline":@"baseline",@"switch":@"switch",@"edit":@"edit",@"delete":@"delete",@"launch":@"launch",@"stop":@"stop",@"status":@"status"};
+    NSDictionary *map=@{@"list":@"catalog",@"backup":@"backup",@"restore":@"restore",@"verify":@"verify",@"describe":@"describe",@"profile":@"profile",@"sessionSupplement":@"sessionSupplement",@"save":@"save",@"createBaseline":@"baseline",@"switch":@"switch",@"edit":@"edit",@"delete":@"delete",@"launch":@"launch",@"stop":@"stop",@"status":@"status"};
+    if([method isKindOfClass:NSString.class] && !map[method]){if(error)*error=TVASMakeError(@"unsupported_operation",@"Unsupported AppState operation.");return nil;}
     if(![method isKindOfClass:NSString.class] || !map[method] || ![params isKindOfClass:NSDictionary.class] || !TVASComponent(params[@"bundle_id"]))return Bad(error);
     NSMutableSet *allowed=[NSMutableSet setWithObject:@"bundle_id"];
-    BOOL reference=[@[@"switch",@"edit",@"delete",@"profile",@"sessionSupplement"] containsObject:method];
+    BOOL reference=[@[@"switch",@"edit",@"delete",@"restore",@"verify",@"profile",@"sessionSupplement"] containsObject:method];
     if(reference)[allowed addObject:@"backup_id"];
-    if([@[@"save",@"switch",@"edit"] containsObject:method])[allowed addObjectsFromArray:@[@"display_name",@"note"]];
+    if([@[@"save",@"backup",@"switch",@"edit"] containsObject:method])[allowed addObjectsFromArray:@[@"display_name",@"note"]];
     if([method isEqual:@"switch"])[allowed addObject:@"discard_current"];
+    if([method isEqual:@"restore"])[allowed addObject:@"save_current"];
     if([method isEqual:@"sessionSupplement"])[allowed addObjectsFromArray:@[@"idfv",@"access_token",@"refresh_token"]];
     for(id key in params)if(![allowed containsObject:key])return Bad(error);
     NSMutableDictionary *request=[@{@"operation":map[method]} mutableCopy];
@@ -33,6 +68,15 @@ NSDictionary *TVASRequest(NSString *method,NSDictionary *params,NSError **error)
         NSString *ref=Reference(params[@"backup_id"],params[@"bundle_id"]);
         if(!ref || ([@[@"edit",@"profile",@"sessionSupplement"] containsObject:method] && ![params[@"backup_id"] hasPrefix:@"snapshot:"]))return Bad(error);
         request[@"reference"]=ref;
+    }
+    if([@[@"restore",@"delete",@"verify"]containsObject:method]) {
+        NSString *backup=params[@"backup_id"];
+        if(![backup hasPrefix:@"snapshot:"] || ![[NSUUID alloc]initWithUUIDString:[backup substringFromIndex:9]])return Bad(error);
+    }
+    if([method isEqual:@"restore"]) {
+        id save=params[@"save_current"]?:@YES;
+        if(![save isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)save)!=CFBooleanGetTypeID())return Bad(error);
+        request[@"saveCurrent"]=save;
     }
     if([method isEqual:@"sessionSupplement"]) {
         if(![params[@"idfv"]isKindOfClass:NSString.class] || ![[NSUUID alloc]initWithUUIDString:params[@"idfv"]])return Bad(error);

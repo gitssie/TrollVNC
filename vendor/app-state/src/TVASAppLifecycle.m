@@ -11,7 +11,7 @@
 - (BOOL)openApplicationWithBundleID:(NSString *)identifier;
 @end
 static id Failure(NSError **error, BOOL partial) {
-    if(error)*error=[NSError errorWithDomain:@"TVASAppLifecycle" code:partial?2:1 userInfo:@{NSLocalizedDescriptionKey:@"App lifecycle operation failed",@"stateMayBePartial":@(partial)}];
+    if(error)*error=[NSError errorWithDomain:@"TVASAppLifecycle" code:partial?2:1 userInfo:@{@"errorCode":@"operation_failed",NSLocalizedDescriptionKey:@"App lifecycle operation failed",@"stateMayBePartial":@(partial)}];
     return nil;
 }
 static NSString *Canonical(NSString *path) {
