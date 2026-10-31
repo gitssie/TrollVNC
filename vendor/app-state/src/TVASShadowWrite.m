@@ -18,7 +18,9 @@ NSDictionary *TVASWriteShadowPart(NSString *root,NSDictionary *params,NSError **
     @synchronized(gate) {
         NSString *bundle=params[@"bundle_id"],*backup=params[@"backup_id"],*part=params[@"part"],*identifier=params[@"transfer_id"];
         if(!TVASRequest(@"profile",@{@"bundle_id":bundle?:@"",@"backup_id":backup?:@""},NULL) || ![@[@"state",@"manifest"]containsObject:part] || ![identifier isKindOfClass:NSString.class] || ![identifier isEqual:[[NSUUID alloc]initWithUUIDString:identifier].UUIDString])return Fail(error,@"Invalid transfer target");
-        for(id key in params)if(![@[@"bundle_id",@"backup_id",@"part",@"transfer_id",@"offset",@"total",@"sha256",@"data_sha256",@"data"]containsObject:key])return Fail(error,@"Invalid transfer field");
+        for(id key in params)if(![@[@"bundle_id",@"backup_id",@"part",@"transfer_id",@"offset",@"total",@"sha256",@"data_sha256",@"data",@"requester"]containsObject:key])return Fail(error,@"Invalid transfer field");
+        NSString *requester=params[@"requester"]?:@"phone";
+        if(![@[@"phone",@"rv"]containsObject:requester])return Fail(error,@"Invalid requester");
         id ov=params[@"offset"],tv=params[@"total"];
         if(![ov isKindOfClass:NSNumber.class] || ![tv isKindOfClass:NSNumber.class] || [ov doubleValue]!=[ov longLongValue] || [tv doubleValue]!=[tv longLongValue])return Fail(error,@"Invalid transfer length");
         long long offset=[ov longLongValue],total=[tv longLongValue],maximum=[part isEqual:@"state"]?64LL*1024*1024:16LL*1024*1024;
@@ -27,10 +29,10 @@ NSDictionary *TVASWriteShadowPart(NSString *root,NSDictionary *params,NSError **
         if(!chunk.length || chunk.length>256*1024 || offset+(long long)chunk.length>total)return Fail(error,@"Invalid transfer chunk");
         double now=NSProcessInfo.processInfo.systemUptime;
         if(transfer && now-[transfer[@"time"]doubleValue]>600)transfer=nil;
-        NSString *key=[NSString stringWithFormat:@"%@/%@/%@",bundle,backup,identifier];
+        NSString *key=[NSString stringWithFormat:@"%@/%@/%@",bundle,backup,[identifier stringByAppendingFormat:@"/%@",requester]];
         if(!transfer) {
             if(offset || ![part isEqual:@"state"])return Fail(error,@"Start with state offset zero");
-            NSDictionary *original=TVASInvokeShadow(@"exportState",bundle,@{@"idfv":[backup substringFromIndex:9],@"part":@"manifest"},error);
+            NSDictionary *original=TVASInvokeShadow(@"exportState",bundle,@{@"idfv":[backup substringFromIndex:9],@"part":@"manifest",@"requester":requester},error);
             if(!original)return nil;
             if(![original[@"dataSHA"]isEqual:params[@"data_sha256"]])return FailCode(error,@"snapshot_changed",@"Snapshot data changed");
             transfer=[@{@"key":key,@"baseline":original[@"manifestSHA"],@"dataSHA":params[@"data_sha256"],@"time":@(now)}mutableCopy];
@@ -49,7 +51,7 @@ NSDictionary *TVASWriteShadowPart(NSString *root,NSDictionary *params,NSError **
             if(![Hash(bytes)isEqual:params[@"sha256"]]){transfer=nil;return FailCode(error,@"invalid_archive",@"Transfer checksum mismatch");}
             if([part isEqual:@"state"])transfer[@"stateComplete"]=@YES;
             else {
-                NSDictionary *result=TVASInvokeShadow(@"importState",bundle,@{@"idfv":[backup substringFromIndex:9],@"manifest":bytes,@"state":transfer[@"state"],@"expectedManifestSHA":transfer[@"baseline"]},error);
+                NSDictionary *result=TVASInvokeShadow(@"importState",bundle,@{@"idfv":[backup substringFromIndex:9],@"manifest":bytes,@"state":transfer[@"state"],@"expectedManifestSHA":transfer[@"baseline"],@"requester":requester},error);
                 transfer=nil;if(!result)return nil;
             }
         }

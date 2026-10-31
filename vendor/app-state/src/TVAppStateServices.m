@@ -53,6 +53,7 @@ static NSObject *LifecycleGate(void) {
     NSMutableArray *backups=[NSMutableArray new]; NSISO8601DateFormatter *formatter=[NSISO8601DateFormatter new];
     for(NSDictionary *entry in reply[@"backups"]) {
         NSMutableDictionary *item=[entry mutableCopy]; NSString *idfv=entry[@"idfv"];
+        item[@"owner"]=entry[@"owner"]?:@"phone";item[@"owner_id"]=NSNull.null;
         item[@"backup_id"]=[@"snapshot:" stringByAppendingString:idfv];item[@"kind"]=@"snapshot";
         item[@"display_name"]=entry[@"title"]?:idfv;item[@"note"]=entry[@"note"]?:@"";
         item[@"version"]=entry[@"version"]?:@"";item[@"build"]=entry[@"build"]?:@"";
@@ -67,7 +68,7 @@ static NSObject *LifecycleGate(void) {
     NSString *idfv=[reference substringFromIndex:prefix.length];NSDictionary *account=request[@"account"];
     if(![idfv isEqual:[[NSUUID alloc]initWithUUIDString:idfv].UUIDString] || ![account isKindOfClass:NSDictionary.class]){if(error)*error=TVASMakeError(@"invalid_request",@"Invalid snapshot metadata.");return NO;}
     NSDictionary *metadata=@{@"title":account[@"displayName"]?:@"",@"note":account[@"note"]?:@""};
-    return [self shadowInvoke:@"externalEdit" bundle:bundle request:@{@"idfv":idfv,@"metadata":metadata} error:error]!=nil;
+    return [self shadowInvoke:@"externalEdit" bundle:bundle request:@{@"idfv":idfv,@"metadata":metadata,@"requester":request[@"requester"]?:@"phone"} error:error]!=nil;
 }
 - (TVASAppLifecycle *)lifecycle { return [TVASAppLifecycle new]; }
 - (NSTimeInterval)lifecycleTimeout { return 6; }
@@ -108,7 +109,7 @@ static NSObject *LifecycleGate(void) {
 }
 - (NSDictionary *)runBundle:(NSString *)bundleID request:(NSDictionary *)request error:(NSError **)error {
     if (![self isMobile]) { FailService(error,@"App-state operations must run as mobile"); return nil; }
-    BOOL readOnly=[@[@"catalog",@"verify",@"describe",@"status",@"profile",@"accessToken"] containsObject:request[@"operation"]];
+    BOOL readOnly=[@[@"catalog",@"verify",@"describe",@"status",@"profile",@"accessToken",@"ownership"] containsObject:request[@"operation"]];
     @synchronized(LifecycleGate()) {
         if(!readOnly && LifecyclePending) {
             if(error)*error=TVASMakeError(@"busy",@"An app operation is still running.");return nil;
@@ -117,7 +118,7 @@ static NSObject *LifecycleGate(void) {
     if ([@[@"launch",@"stop",@"status"] containsObject:request[@"operation"]])
         return [self runLifecycle:request[@"operation"] bundle:bundleID error:error];
     NSString *operation=request[@"operation"];
-    if([@[@"backup",@"restore",@"delete",@"verify"]containsObject:operation]) {
+    if([@[@"backup",@"restore",@"delete",@"verify",@"claim",@"release",@"ownership"]containsObject:operation]) {
         NSMutableDictionary *parameters=[NSMutableDictionary new];
         if([operation isEqual:@"backup"]) {
             NSDictionary *patch=request[@"accountPatch"];NSMutableDictionary *metadata=[NSMutableDictionary new];
@@ -129,10 +130,11 @@ static NSObject *LifecycleGate(void) {
             parameters[@"idfv"]=[reference substringFromIndex:prefix.length];
             if([operation isEqual:@"restore"])parameters[@"saveCurrent"]=request[@"saveCurrent"]?:@YES;
         }
-        NSString *action=[operation isEqual:@"delete"]?@"externalDelete":[operation isEqual:@"verify"]?@"externalVerify":operation;
+        if(request[@"requester"])parameters[@"requester"]=request[@"requester"];
+        NSString *action=[operation isEqual:@"claim"]?@"externalClaim":[operation isEqual:@"release"]?@"externalRelease":[operation isEqual:@"ownership"]?@"externalOwnership":[operation isEqual:@"delete"]?@"externalDelete":[operation isEqual:@"verify"]?@"externalVerify":operation;
         NSDictionary *result=[self shadowInvoke:action bundle:bundleID request:parameters error:error];
         if(!result)return nil;
-        NSMutableDictionary *mapped=[result mutableCopy];mapped[@"bundle_id"]=bundleID;
+        NSMutableDictionary *mapped=[result mutableCopy];if(mapped[@"owner"])mapped[@"owner_id"]=NSNull.null;mapped[@"bundle_id"]=bundleID;
         if([mapped[@"date"]isKindOfClass:NSDate.class])mapped[@"date"]=[[[NSISO8601DateFormatter alloc]init]stringFromDate:mapped[@"date"]];
         if([mapped[@"idfv"]isKindOfClass:NSString.class])mapped[@"backup_id"]=[@"snapshot:"stringByAppendingString:mapped[@"idfv"]];
         return mapped;
@@ -275,7 +277,7 @@ static NSObject *LifecycleGate(void) {
         self.operationProgress=progress;
         NSError *error=nil; NSDictionary *result=nil;
         @try {
-            if(![@[@"catalog",@"edit",@"backup",@"restore",@"delete",@"verify",@"launch",@"stop",@"status"]containsObject:payload[@"operation"]])
+            if(![@[@"catalog",@"edit",@"backup",@"restore",@"delete",@"verify",@"launch",@"stop",@"status",@"claim",@"release",@"ownership"]containsObject:payload[@"operation"]])
                 {error=TVASMakeError(@"unsupported_operation",@"This AppState operation is no longer supported.");}
             else result=[self runBundle:bundle request:payload error:&error];
         }

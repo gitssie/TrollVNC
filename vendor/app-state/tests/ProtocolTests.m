@@ -29,5 +29,13 @@ int main(){@autoreleasepool{
     CHECK(TVASRequest(@"delete",target,&e) && TVASRequest(@"verify",target,&e));
     CHECK(TVASRequest(@"backup",@{@"bundle_id":@"test.app"},&e)[@"accountPatch"]==nil);
     CHECK([TVASRequest(@"backup",@{@"bundle_id":@"test.app",@"note":@"note"},&e)[@"accountPatch"][@"note"]isEqual:@"note"]);
+    for(NSString *method in @[@"claim",@"release",@"ownership"]) {
+        CHECK(TVASRequest(method,target,&e));
+        CHECK(!TVASRequest(method,@{@"bundle_id":@"test.app",@"backup_id":@"baseline:1"},&e));
+    }
+    NSMutableDictionary *rv=[target mutableCopy];rv[@"requester"]=@"rv";
+    CHECK([TVASRequest(@"verify",rv,&e)[@"requester"]isEqual:@"rv"]);
+    CHECK(!TVASRequest(@"restore",rv,&e));
+    rv[@"requester"]=@"invalid";CHECK(!TVASRequest(@"delete",rv,&e));
     puts("App-state command/backup-ID/JSON tests PASS");
 }return 0;}

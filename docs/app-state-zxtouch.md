@@ -91,3 +91,9 @@ rtk proxy python3 tests/AppStateHTTPTests.py
 ```
 
 主机测试覆盖 helper 能力协商、字段映射、暂存事务、原始错误传播与结果未知时不重放，以及 retained core／原生模拟测试。历史 core 中存在 save/switch 不代表公共接口开放。2026-10-31 已在 iPhone9,2 / iOS15.8.8 安装本轮兼容版本。已认证 HTTP/2 的列表、当前身份、完整校验及原始下载通过；两份现有备份在独立临时目录解压后逐文件核对通过，手机原文件哈希、权限与修改时间保持不变。真机发现并修正当前身份持久化路径读取问题。遵照只读验收范围，未执行备份创建、恢复、删除、编辑或回写；这些变更操作仍仅有主机测试与构建验证。
+
+## 最小 ownership
+
+新增异步 `claim`、`release`、`ownership`，参数均为bundle_id、backup_id，结果含owner=phone|rv及owner_id=null。active或pending恢复源不能claim；同一单RV重复claim/release由Shadow幂等处理。既有列表补充归属字段，缺失视为phone。无控制凭证、generation、租约或超时释放。
+
+edit/delete/verify/download/upload可选requester=phone|rv，省略为phone。上传事务绑定requester，开始导出和最终发布使用同一上下文；普通backup/restore始终为phone。归属不符由Shadow返回ownership_conflict，HTTP409（已有operation_id的异步结果仍HTTP200）。requester是合作客户端的操作上下文，不是新的安全认证。归属规则仅由Shadow核心执行；TrollVNC不直接改manifest owner。
