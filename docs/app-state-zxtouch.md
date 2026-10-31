@@ -90,4 +90,4 @@ rtk proxy bash tests/run_app_state_stream_tests.sh
 rtk proxy python3 tests/AppStateHTTPTests.py
 ```
 
-主机测试覆盖 helper 能力协商、字段映射、暂存事务、原始错误传播与结果未知时不重放，以及 retained core／原生模拟测试。历史 core 中存在 save/switch 不代表公共接口开放。本轮改动尚未安装手机；设备权限、真实文件发布和恢复行为仍需使用兼容 Shadow 与 TrollVNC 的安装版本验收。
+主机测试覆盖 helper 能力协商、字段映射、暂存事务、原始错误传播与结果未知时不重放，以及 retained core／原生模拟测试。历史 core 中存在 save/switch 不代表公共接口开放。2026-10-31 已在 iPhone9,2 / iOS15.8.8 安装本轮兼容版本。已认证 HTTP/2 的列表、当前身份、完整校验及原始下载通过；两份现有备份在独立临时目录解压后逐文件核对通过，手机原文件哈希、权限与修改时间保持不变。真机发现并修正当前身份持久化路径读取问题。遵照只读验收范围，未执行备份创建、恢复、删除、编辑或回写；这些变更操作仍仅有主机测试与构建验证。
