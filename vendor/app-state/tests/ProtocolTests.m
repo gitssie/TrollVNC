@@ -1,3 +1,4 @@
+#import "../src/TVASErrors.h"
 #import "../include/TVAppStateServices.h"
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL %d\n",__LINE__);exit(1);}}while(0)
 int main(){@autoreleasepool{
@@ -37,5 +38,11 @@ int main(){@autoreleasepool{
     CHECK([TVASRequest(@"verify",rv,&e)[@"requester"]isEqual:@"rv"]);
     CHECK(!TVASRequest(@"restore",rv,&e));
     rv[@"requester"]=@"invalid";CHECK(!TVASRequest(@"delete",rv,&e));
+    NSDictionary *reset=TVASRequest(@"backup_and_reset",@{@"bundle_id":@"test.app",@"idfv":@"c65d96d4-7bd2-4fff-bf95-0cb2930cab53"},&e);
+    CHECK([reset[@"operation"]isEqual:@"backupAndReset"]&&[reset[@"idfv"]isEqual:@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53"]);
+    CHECK(!TVASRequest(@"backup_and_reset",@{@"bundle_id":@"test.app"},&e));
+    CHECK(!TVASRequest(@"backup_and_reset",@{@"bundle_id":@"test.app",@"idfv":@"invalid"},&e));
+    for(NSString *extra in @[@"steps",@"save_current",@"requester",@"backup_name"])CHECK(!TVASRequest(@"backup_and_reset",@{@"bundle_id":@"test.app",@"idfv":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53",extra:@NO},&e));
+    CHECK(TVASErrorHTTPStatus(TVASMakeError(@"idfv_mismatch",@"mismatch"))==409);
     puts("App-state command/backup-ID/JSON tests PASS");
 }return 0;}

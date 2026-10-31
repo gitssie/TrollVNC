@@ -92,7 +92,7 @@ static void Check(BOOL value,const char *message) { if (!value) { fprintf(stderr
 - (NSDictionary *)operationPaths { return self.paths; }
 - (NSDictionary *)shadowInvoke:(NSString *)action bundle:(NSString *)bundle request:(NSDictionary *)request error:(NSError **)error {
     (void)bundle;
-    if([@[@"backup",@"restore",@"externalDelete",@"externalVerify"]containsObject:action]){self.paths=@{@"action":action,@"parameters":request};return @{@"idfv":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53",@"verified":@YES};}
+    if([@[@"backup",@"backupAndReset",@"restore",@"externalDelete",@"externalVerify"]containsObject:action]){self.paths=@{@"action":action,@"parameters":request};return @{@"idfv":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53",@"verified":@YES};}
     if([action isEqual:@"externalEdit"]) {self.paths=request[@"metadata"];return @{@"edited":@YES};}
     if(self.liveIDFV && ![self.liveIDFV isKindOfClass:NSString.class]){if(error)*error=[NSError errorWithDomain:@"helper" code:1 userInfo:nil];return nil;}
     return @{@"current_idfv":self.liveIDFV?:@"",@"backups":@[@{@"idfv":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53",@"title":self.paths[@"title"]?:@"Shadow account",@"note":self.paths[@"note"]?:@"metadata only"}]};
@@ -118,6 +118,9 @@ int main(void) { @autoreleasepool {
     NSDictionary *edit=TVASRequest(@"edit",@{@"bundle_id":@"test.app",@"backup_id":[@"snapshot:"stringByAppendingString:idfv],@"display_name":@"New title",@"note":@""},&error);
     Check([[service runBundle:@"test.app" request:edit error:&error][@"backups"][0][@"display_name"]isEqual:@"New title"],"edit delegated and catalog refreshed");
     Check(service.runner.launches==0,"catalog/edit do not launch legacy worker");
+    NSDictionary *resetRequest=TVASRequest(@"backup_and_reset",@{@"bundle_id":@"test.app",@"idfv":idfv},&error);
+    NSDictionary *resetReply=[service runBundle:@"test.app" request:resetRequest error:&error];
+    Check([resetReply[@"bundle_id"]isEqual:@"test.app"]&&[service.paths[@"action"]isEqual:@"backupAndReset"]&&[service.paths[@"parameters"]isEqual:@{@"idfv":idfv}],"backup/reset delegates the whole transaction to Shadow");
     for(NSString *method in @[@"backup",@"restore",@"delete",@"verify"]) {
         NSDictionary *params=[method isEqual:@"backup"]?@{@"bundle_id":@"test.app",@"note":@"note only"}:@{@"bundle_id":@"test.app",@"backup_id":[@"snapshot:"stringByAppendingString:idfv]};
         NSDictionary *native=TVASRequest(method,params,&error);NSDictionary *reply=[service runBundle:@"test.app" request:native error:&error];

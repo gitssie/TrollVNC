@@ -36,6 +36,7 @@ Shadow helper 返回目录及当前身份，TrollVNC 转换为现有 HTTP 字段
 | --- | --- |
 | `/api/app-state/list` | bundle_id，由 Shadow 查询目录及当前 IDFV |
 | `/api/app-state/edit` | bundle_id、backup_id、display_name、note，由 Shadow 修改标题和备注并保护 pending 恢复源 |
+| `/api/app-state/backup_and_reset` | 必填 bundle_id、idfv；Shadow 停止 App 并核对当前 IDFV，完整备份成功后全量清理、刷新指纹、校验；不支持跳过备份或指定步骤 |
 | `/api/app-state/backup` | bundle_id，可选 display_name/note，仅将提供的字段交给 Shadow 创建或更新当前 IDFV 快照 |
 | `/api/app-state/restore` | bundle_id、backup_id，可选 save_current 布尔值，默认 true；显式恢复重试可传 false |
 | `/api/app-state/delete` | bundle_id、backup_id，由 Shadow 删除所选快照并保护 pending 恢复源 |
@@ -97,3 +98,13 @@ rtk proxy python3 tests/AppStateHTTPTests.py
 新增异步 `claim`、`release`、`ownership`，参数均为bundle_id、backup_id，结果含owner=phone|rv及owner_id=null。active或pending恢复源不能claim；同一单RV重复claim/release由Shadow幂等处理。既有列表补充归属字段，缺失视为phone。无控制凭证、generation、租约或超时释放。
 
 edit/delete/verify/download/upload可选requester=phone|rv，省略为phone。上传事务绑定requester，开始导出和最终发布使用同一上下文；普通backup/restore始终为phone。归属不符由Shadow返回ownership_conflict，HTTP409（已有operation_id的异步结果仍HTTP200）。requester是合作客户端的操作上下文，不是新的安全认证。归属规则仅由Shadow核心执行；TrollVNC不直接改manifest owner。
+
+## 自动备份并重置
+
+`backup_and_reset` 整体委托 Shadow `backupAndReset`，TrollVNC 不编排独立 backup/clean。
+只接收 `bundle_id`、`idfv`；服务端规范化 UUID，拒绝步骤、元数据、requester 或跳过备份选项。
+成功返回 `backup_id`、`previous_idfv`、`current_idfv`、`reset`、`verified`。
+`idfv_mismatch` 为409，已有 operation_id 的终结记录仍HTTP200并通过error说明失败。
+已知清理失败保留 error.backup_id、step、state_may_be_partial，未知结果不自动重放。
+Shadow 使用现有 pending 恢复保护备份；中断重置后显式恢复应传 save_current=false，
+即使 IDFV 尚未刷新也允许完整恢复该 pending 来源；普通 active 恢复规则不变。

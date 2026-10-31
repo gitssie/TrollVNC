@@ -65,6 +65,11 @@ int main(int argc,const char **argv){@autoreleasepool{
     op=Invoke(s,@"list",@{@"bundle_id":@"test.app"})[@"operation_id"];CHECK(op);fake.pending(@{@"backups":@[]},nil);
     // Duplicate completion cannot overwrite a finished result.
     fake.pending(nil,[NSError errorWithDomain:@"fake" code:1 userInfo:nil]);CHECK(!Call(s,@{@"action":@"result",@"operation_id":op})[@"error"]);
+    op=Invoke(s,@"backup_and_reset",@{@"bundle_id":@"test.app",@"idfv":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53"})[@"operation_id"];
+    CHECK(op && [fake.request[@"operation"]isEqual:@"backupAndReset"] && [fake.request[@"idfv"]isEqual:@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53"]);
+    fake.pending(nil,[NSError errorWithDomain:@"fixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"reset failed",@"errorCode":@"operation_failed",@"backupIDFV":@"C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53",@"step":@"keychain",@"stateMayBePartial":@YES}]);
+    state=Call(s,@{@"action":@"result",@"operation_id":op});
+    CHECK([state[@"error"][@"backup_id"]isEqual:@"snapshot:C65D96D4-7BD2-4FFF-BF95-0CB2930CAB53"] && [state[@"error"][@"step"]isEqual:@"keychain"]);
     op=Invoke(s,@"describe",@{@"bundle_id":@"test.app"})[@"operation_id"];[s stop];fake.pending(@{@"bundle_id":@"test.app"},nil);
     CHECK([Call(s,@{@"action":@"result",@"operation_id":op})[@"status"]isEqual:@"completed"]);CHECK(Invoke(s,@"list",@{@"bundle_id":@"test.app"})[@"error"]);
     puts("App-state socket adapter tests PASS");

@@ -118,6 +118,10 @@ static NSObject *LifecycleGate(void) {
     if ([@[@"launch",@"stop",@"status"] containsObject:request[@"operation"]])
         return [self runLifecycle:request[@"operation"] bundle:bundleID error:error];
     NSString *operation=request[@"operation"];
+    if([operation isEqual:@"backupAndReset"]) {
+        NSDictionary *result=[self shadowInvoke:@"backupAndReset" bundle:bundleID request:@{@"idfv":request[@"idfv"]} error:error];
+        if(!result)return nil;NSMutableDictionary *mapped=[result mutableCopy];mapped[@"bundle_id"]=bundleID;return mapped;
+    }
     if([@[@"backup",@"restore",@"delete",@"verify",@"claim",@"release",@"ownership"]containsObject:operation]) {
         NSMutableDictionary *parameters=[NSMutableDictionary new];
         if([operation isEqual:@"backup"]) {
@@ -277,7 +281,7 @@ static NSObject *LifecycleGate(void) {
         self.operationProgress=progress;
         NSError *error=nil; NSDictionary *result=nil;
         @try {
-            if(![@[@"catalog",@"edit",@"backup",@"restore",@"delete",@"verify",@"launch",@"stop",@"status",@"claim",@"release",@"ownership"]containsObject:payload[@"operation"]])
+            if(![@[@"catalog",@"edit",@"backup",@"backupAndReset",@"restore",@"delete",@"verify",@"launch",@"stop",@"status",@"claim",@"release",@"ownership"]containsObject:payload[@"operation"]])
                 {error=TVASMakeError(@"unsupported_operation",@"This AppState operation is no longer supported.");}
             else result=[self runBundle:bundle request:payload error:&error];
         }
