@@ -108,3 +108,11 @@ edit/delete/verify/download/upload可选requester=phone|rv，省略为phone。�
 已知清理失败保留 error.backup_id、step、state_may_be_partial，未知结果不自动重放。
 Shadow 使用现有 pending 恢复保护备份；中断重置后显式恢复应传 save_current=false，
 即使 IDFV 尚未刷新也允许完整恢复该 pending 来源；普通 active 恢复规则不变。
+
+2026-10-31：Shadow 4.0.6 与 TrollVNC 4.0-17 已安装到此前确认的 iPhone13
+（iPhone14,5），HookKit 保持 3.0.6-1。安装包与 staging 的字节、mode 和 numeric
+root 所有权匹配，上传 SHA256 一致；dpkg 均为 install ok installed。
+已通过 Python SDK 认证 HTTP/2、backup_and_reset 缺少 IDFV 的400/invalid_request
+拒绝，以及只读目录查询。Shadow helper 的 capabilities 包含 backupAndReset。
+安装前后133个现有备份文件的 SHA256 全部一致。没有执行真实 App 备份、重置、
+恢复、启动或所有权变更；完整清理仍需单独授权真机验收，不能从这些只读检查宣称已实测。
