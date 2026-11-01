@@ -376,3 +376,6 @@
 "Saved. WireGuard stays off." = "已保存，WireGuard 保持关闭。";
 
 "Saved. Restarting services…" = "已保存，正在重启服务…";
+
+"Handshake established" = "握手已建立";
+"Waiting for handshake…" = "等待握手…";

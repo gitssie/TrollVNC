@@ -65,7 +65,7 @@ static BOOL TVNCStatusFieldEqual(NSDictionary *left, NSDictionary *right, NSStri
     BOOL serviceRunning = [TVNCServiceState sharedState].running && TVNCServiceSnapshotProcessAlive(status);
     BOOL wireGuardChanged = serviceRunning != self.displayedServiceRunning;
     for (NSString *key in @[@"ServerPID", @"WireGuardStarted", @"WireGuardEnabled", @"WireGuardConfigured",
-                            @"WireGuardAddress", @"WireGuardError", @"VNCPort", @"ZXTouchPort"]) {
+                            @"WireGuardAddress", @"WireGuardError", @"WireGuardConnected", @"VNCPort", @"ZXTouchPort"]) {
         if (!TVNCStatusFieldEqual(previous, status, key)) wireGuardChanged = YES;
     }
     self.displayedStatus = status;
@@ -171,23 +171,21 @@ static BOOL TVNCStatusFieldEqual(NSDictionary *left, NSDictionary *right, NSStri
 }
 - (UIView *)wireGuardStatusView {
     BOOL serviceRunning = [TVNCServiceState sharedState].running && TVNCServiceSnapshotProcessAlive(self.status);
+    BOOL started = serviceRunning && [self.status[@"WireGuardStarted"] boolValue];
+    BOOL connected = started && [self.status[@"WireGuardConnected"] boolValue];
     NSString *state = self.restartDeadline ? @"Restarting services…" :
-        !self.status ? @"Checking service" :
-        !serviceRunning ? @"Services stopped" :
-        [self.status[@"WireGuardStarted"] boolValue] ? @"Interface running" :
-        ![self wireGuardEnabledInStatus] ? @"Interface disabled" : @"Network failed to start";
+        TVNCWGStateText(self.status, serviceRunning, [self wireGuardEnabledInStatus]);
     UILabel *label = TVNCSettingsLabel(UIFontTextStyleFootnote, UIColor.secondaryLabelColor);
     label.text = [self text:state];
     UIView *icon;
-    if (self.restartDeadline) {
+    if (self.restartDeadline || (started && !connected)) {
         UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
         [spinner startAnimating]; icon = spinner;
     } else {
-        BOOL running = serviceRunning && [self.status[@"WireGuardStarted"] boolValue];
-        BOOL failed = self.status && (!serviceRunning || ([self wireGuardEnabledInStatus] && !running));
+        BOOL failed = self.status && (!serviceRunning || ([self wireGuardEnabledInStatus] && !started));
         UIImageView *image = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:
-            running ? @"checkmark.circle.fill" : failed ? @"exclamationmark.triangle.fill" : @"circle"]];
-        image.tintColor = running ? UIColor.systemGreenColor : failed ? UIColor.systemOrangeColor : UIColor.tertiaryLabelColor;
+            connected ? @"checkmark.circle.fill" : failed ? @"exclamationmark.triangle.fill" : @"circle"]];
+        image.tintColor = connected ? UIColor.systemGreenColor : failed ? UIColor.systemOrangeColor : UIColor.tertiaryLabelColor;
         icon = image;
     }
     UIStackView *status = [[UIStackView alloc] initWithArrangedSubviews:@[icon, label]];

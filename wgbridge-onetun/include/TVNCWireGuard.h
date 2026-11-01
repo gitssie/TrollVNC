@@ -13,6 +13,7 @@ typedef struct {
 
 char* TVNCWGStartServices(const char* config_json, const char* services_json);
 char* TVNCWGStart(const char* config_json, int port);
+int TVNCWGConnectedPeers(void);
 void TVNCWGStop(void);
 void TVNCWGFree(char* value);
 

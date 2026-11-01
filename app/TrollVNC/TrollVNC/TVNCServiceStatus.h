@@ -31,6 +31,14 @@ NS_INLINE BOOL TVNCSharedBindAllowsWireGuard(NSString *host) {
     NSString *bind = [host stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     return TVNCIPv4BindAllowsWireGuard(bind);
 }
+// A started local engine is not evidence of an authenticated remote handshake.
+NS_INLINE NSString *TVNCWGStateText(NSDictionary *status, BOOL serviceRunning, BOOL enabled) {
+    if (!status) return @"Checking service";
+    if (!serviceRunning) return @"Services stopped";
+    if ([status[@"WireGuardStarted"] boolValue])
+        return [status[@"WireGuardConnected"] boolValue] ? @"Handshake established" : @"Waiting for handshake…";
+    return enabled ? @"Network failed to start" : @"Interface disabled";
+}
 // Call on a worker queue. One absolute deadline bounds connect and fragmented reads.
 NS_INLINE NSDictionary *TVNCFetchServiceStatus(int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);

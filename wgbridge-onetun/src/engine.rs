@@ -2,7 +2,7 @@ use crate::config::{cidr, key, BridgeConfig, ServiceRoute};
 use crate::device::PacketDevice;
 use anyhow::{anyhow, Context, Result};
 use boringtun::{
-    noise::{rate_limiter::RateLimiter, Tunn, TunnResult},
+    noise::{errors::WireGuardError, rate_limiter::RateLimiter, Tunn, TunnResult},
     x25519::{PublicKey, StaticSecret},
 };
 use smoltcp::{
@@ -16,10 +16,18 @@ use std::{
     collections::HashMap,
     io,
     net::{IpAddr, Shutdown, SocketAddr, UdpSocket},
-    sync::{mpsc, Arc},
-    time::{Duration, Instant as Clock},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc,
+    },
+    time::Duration,
 };
 use tokio::{net::TcpStream, task::JoinHandle};
+
+#[cfg(feature = "test-clock")]
+use mock_instant::Instant as Clock;
+#[cfg(not(feature = "test-clock"))]
+use std::time::Instant as Clock;
 
 const MAX_CONNECTIONS: usize = 128;
 const BUFFER_SIZE: usize = 32 * 1024;
@@ -35,6 +43,8 @@ struct Peer {
     tunnel: Tunn,
     endpoint: Option<SocketAddr>,
     allowed: Vec<IpCidr>,
+    initiate: bool,
+    retry_after: Clock,
 }
 struct Listener {
     route: ServiceRoute,
@@ -126,6 +136,8 @@ impl Engine {
             peers.push(Peer {
                 tunnel,
                 endpoint,
+                initiate: endpoint.is_some(),
+                retry_after: Clock::now(),
                 allowed: peer
                     .allowed_ips
                     .iter()
@@ -204,11 +216,46 @@ impl Engine {
             let handle = engine.listen(route.port)?;
             engine.listeners.push(Listener { route, handle });
         }
+        // Inbound-only services otherwise have no packet to trigger the first handshake.
+        for index in 0..engine.peers.len() {
+            engine.initiate_peer(index);
+        }
         Ok(engine)
+    }
+    fn initiate_peer(&mut self, index: usize) {
+        if !self.peers[index].initiate {
+            return;
+        }
+        let Some(endpoint) = self.peers[index].endpoint else {
+            return;
+        };
+        let mut output = [0u8; 65568];
+        self.peers[index].retry_after = Clock::now() + Duration::from_secs(5);
+        if let Action::Network(bytes) = action(
+            self.peers[index]
+                .tunnel
+                .format_handshake_initiation(&mut output, false),
+        ) {
+            self.send_udp(&bytes, endpoint);
+        }
+    }
+    pub fn connected_peers(&self) -> usize {
+        self.peers
+            .iter()
+            .filter(|peer| {
+                !peer.tunnel.is_expired()
+                    && peer
+                        .tunnel
+                        .time_since_last_handshake()
+                        .is_some_and(|age| age < Duration::from_secs(180))
+            })
+            .count()
     }
     #[cfg(test)]
     pub fn set_endpoint(&mut self, endpoint: SocketAddr) {
         self.peers[0].endpoint = Some(endpoint);
+        self.peers[0].initiate = true;
+        self.initiate_peer(0);
     }
     #[cfg(test)]
     pub fn handshake_complete(&self) -> bool {
@@ -337,12 +384,21 @@ impl Engine {
             }
         }
         for index in 0..self.peers.len() {
-            if let Action::Network(bytes) =
-                action(self.peers[index].tunnel.update_timers(&mut output))
-            {
-                if let Some(endpoint) = self.peers[index].endpoint {
-                    self.send_udp(&bytes, endpoint);
+            match self.peers[index].tunnel.update_timers(&mut output) {
+                TunnResult::WriteToNetwork(bytes) => {
+                    if let Some(endpoint) = self.peers[index].endpoint {
+                        let bytes = bytes.to_vec();
+                        self.send_udp(&bytes, endpoint);
+                    }
                 }
+                TunnResult::Err(WireGuardError::ConnectionExpired)
+                    if Clock::now() >= self.peers[index].retry_after =>
+                {
+                    // BoringTun stops its own retries after expiration. Keep configured
+                    // outbound peers recoverable when connectivity returns.
+                    self.initiate_peer(index);
+                }
+                _ => {}
             }
         }
     }
@@ -511,11 +567,17 @@ impl Engine {
             }
         }
     }
-    pub async fn run(&mut self, stopping: mpsc::Receiver<()>) {
+    pub async fn run(&mut self, stopping: mpsc::Receiver<()>, connected: Arc<AtomicUsize>) {
+        let mut next_status = Clock::now();
         while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
             self.step().await;
+            if Clock::now() >= next_status {
+                connected.store(self.connected_peers(), Ordering::Relaxed);
+                next_status = Clock::now() + Duration::from_millis(100);
+            }
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
+        connected.store(0, Ordering::Relaxed);
         self.connections.clear();
         for (_, socket) in self.sockets.iter_mut() {
             if let smoltcp::socket::Socket::Tcp(socket) = socket {
@@ -536,3 +598,7 @@ impl Engine {
 #[cfg(test)]
 #[path = "engine_tests.rs"]
 mod regression_tests;
+
+#[cfg(all(test, feature = "test-clock"))]
+#[path = "handshake_tests.rs"]
+mod handshake_tests;

@@ -1,6 +1,7 @@
 // GPL-2.0-only.
 #import "TVNCServiceStatus.h"
 #import "TVNCWireGuardConfig.h"
+#import "TVNCControlCommand.h"
 #include <cassert>
 #include <climits>
 #include <thread>
@@ -41,6 +42,24 @@ int main(int argc, char **argv) {
             return [cached[@"LocalAddresses"] isEqual:@[@"127.0.0.1"]] &&
                 [cached[@"VNCPort"] isEqual:@5901] && [cached[@"ZXTouchPort"] isEqual:@6000] ? 0 : 1;
         }
+        int delayed[2]; assert(socketpair(AF_UNIX, SOCK_STREAM, 0, delayed) == 0);
+        fcntl(delayed[0], F_SETFL, O_NONBLOCK);
+        std::thread writer([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            assert(send(delayed[1], "sta", 3, 0) == 3);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            assert(send(delayed[1], "tus\n", 4, 0) == 4);
+        });
+        uint8_t command[1024] = {0};
+        assert(TVNCReadControlCommand(delayed[0], command, sizeof(command), 1000) == 7);
+        assert(memcmp(command, "status\n", 7) == 0);
+        writer.join(); close(delayed[0]); close(delayed[1]);
+        assert(socketpair(AF_UNIX, SOCK_STREAM, 0, delayed) == 0);
+        fcntl(delayed[0], F_SETFL, O_NONBLOCK);
+        CFAbsoluteTime before = CFAbsoluteTimeGetCurrent();
+        assert(TVNCReadControlCommand(delayed[0], command, sizeof(command), 50) == 0);
+        assert(CFAbsoluteTimeGetCurrent() - before < 0.5);
+        close(delayed[0]); close(delayed[1]);
         assert(TVNCServicePortsValid(5901, 6000, 0));
         assert(!TVNCServicePortsValid(6000, 6000, 0));
         assert(!TVNCServicePortsValid(5901, 6000, 6000));
@@ -71,6 +90,18 @@ int main(int argc, char **argv) {
             @"ZXTouchRunning": @YES, @"VNCAcceptsIPv4": @YES, @"VNCAcceptsIPv6": @NO, @"WireGuardConfigured": @YES,
             @"WireGuardEnabled": @YES, @"WireGuardStarted": @NO,
             @"BindHost": @"", @"WireGuardAddress": @"", @"WireGuardError": @"invalid configuration"};
+        NSMutableDictionary *wg = [status mutableCopy];
+        wg[@"WireGuardStarted"] = @YES;
+        assert([TVNCWGStateText(wg, YES, YES) isEqual:@"Waiting for handshake…"]);
+        wg[@"WireGuardConnected"] = @YES;
+        assert([TVNCWGStateText(wg, YES, YES) isEqual:@"Handshake established"]);
+        wg[@"WireGuardConnected"] = @NO;
+        assert([TVNCWGStateText(wg, YES, YES) isEqual:@"Waiting for handshake…"]);
+        assert([TVNCWGStateText(wg, NO, YES) isEqual:@"Services stopped"]);
+        wg[@"WireGuardStarted"] = @NO;
+        assert([TVNCWGStateText(wg, YES, YES) isEqual:@"Network failed to start"]);
+        assert([TVNCWGStateText(wg, YES, NO) isEqual:@"Interface disabled"]);
+        assert([TVNCWGStateText(nil, YES, YES) isEqual:@"Checking service"]);
         NSString *runtimeDomain = [@"com.82flex.trollvnc.runtime-tests." stringByAppendingString:NSUUID.UUID.UUIDString];
         NSUserDefaults *runtime = [[NSUserDefaults alloc] initWithSuiteName:runtimeDomain];
         NSMutableDictionary *published = [status mutableCopy];

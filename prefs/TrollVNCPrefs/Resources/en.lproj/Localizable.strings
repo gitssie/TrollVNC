@@ -373,3 +373,6 @@
 "Saved. WireGuard stays off." = "Saved. WireGuard stays off.";
 
 "Saved. Restarting services…" = "Saved. Restarting services…";
+
+"Handshake established" = "Handshake established";
+"Waiting for handshake…" = "Waiting for handshake…";

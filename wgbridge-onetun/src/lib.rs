@@ -7,13 +7,17 @@ use anyhow::{anyhow, Result};
 use config::{BridgeConfig, ServiceRoute};
 use engine::Engine;
 use std::ffi::{c_char, CStr, CString};
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    mpsc, Arc, Mutex, OnceLock,
+};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 struct Bridge {
     stop: mpsc::Sender<()>,
     worker: Option<JoinHandle<()>>,
+    connected: Arc<AtomicUsize>,
     #[cfg(test)]
     port: u16,
 }
@@ -23,6 +27,8 @@ impl Bridge {
         config::validate_routes(&services)?;
         let (stop, stopping) = mpsc::channel();
         let (ready, startup) = mpsc::sync_channel(1);
+        let connected = Arc::new(AtomicUsize::new(0));
+        let published = connected.clone();
         let worker = std::thread::Builder::new()
             .name("tvnc-wireguard".into())
             .spawn(move || {
@@ -45,7 +51,7 @@ impl Bridge {
                     {
                         Ok(Ok(mut engine)) => {
                             if ready.send(Ok(engine.port())).is_ok() {
-                                engine.run(stopping).await;
+                                engine.run(stopping, published).await;
                             }
                         }
                         Ok(Err(error)) => {
@@ -65,6 +71,7 @@ impl Bridge {
                 Ok(Self {
                     stop,
                     worker: Some(worker),
+                    connected,
                     #[cfg(test)]
                     port,
                 })
@@ -156,6 +163,28 @@ pub unsafe extern "C" fn TVNCWGStart(config_json: *const c_char, port: i32) -> *
         )
     })())
 }
+/// Number of peers with a currently valid authenticated handshake; no cached success after stop.
+#[no_mangle]
+pub extern "C" fn TVNCWGConnectedPeers() -> i32 {
+    active()
+        .lock()
+        .ok()
+        .and_then(|state| {
+            state.as_ref().map(|bridge| {
+                if bridge
+                    .worker
+                    .as_ref()
+                    .is_some_and(|worker| !worker.is_finished())
+                {
+                    bridge.connected.load(Ordering::Relaxed) as i32
+                } else {
+                    0
+                }
+            })
+        })
+        .unwrap_or(0)
+}
+
 #[no_mangle]
 pub extern "C" fn TVNCWGStop() {
     if let Ok(mut state) = active().lock() {

@@ -53,6 +53,7 @@
 #import "ScreenUnlock.h"
 #import "TVNCServiceSnapshot.h"
 #import "TVNCWireGuardConfig.h"
+#import "TVNCControlCommand.h"
 #import "TVNCZXTouchService.h"
 #include "ZXTouchProtocol.hpp"
 #import "IOKitSPI.h"
@@ -89,9 +90,7 @@ static dispatch_source_t gReverseRetryTimer = nil;
 
 static TVNCZXTouchService *gZXTouchService = nil;
 #if !TARGET_IPHONE_SIMULATOR
-extern "C" char *TVNCWGStartServices(const char *configurationJSON, const char *servicesJSON);
-extern "C" void TVNCWGStop(void);
-extern "C" void TVNCWGFree(char *value);
+#import "TVNCWireGuard.h"
 #endif
 static NSString *gDesktopName = @"TrollVNC";
 static BOOL gViewOnly = NO;
@@ -3364,22 +3363,7 @@ void tvCtlHandleConnection(int cfd, struct sockaddr_in caddr) {
 
     // Read a single line command
     uint8_t buf[1024];
-    size_t off = 0;
-    for (;;) {
-        ssize_t n = recv(cfd, buf + off, sizeof(buf) - off, 0);
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            break;
-        }
-        if (n == 0)
-            break;
-        off += (size_t)n;
-        if (off >= sizeof(buf))
-            break;
-        if (memchr(buf, '\n', off))
-            break;
-    }
+    size_t off = TVNCReadControlCommand(cfd, buf, sizeof(buf), 2000);
 
     // Parse command
     NSString *cmd = [[NSString alloc] initWithBytes:buf length:off encoding:NSUTF8StringEncoding];
@@ -3399,6 +3383,11 @@ void tvCtlHandleConnection(int cfd, struct sockaddr_in caddr) {
         }
         gServiceStatus = current;
         NSMutableDictionary *status = [current mutableCopy];
+#if !TARGET_IPHONE_SIMULATOR
+        status[@"WireGuardConnected"] = @(gWireGuardStarted && TVNCWGConnectedPeers() > 0);
+#else
+        status[@"WireGuardConnected"] = @NO;
+#endif
         status[@"ClientCount"] = @(gClientCount);
         NSMutableData *json = [[NSJSONSerialization dataWithJSONObject:status ?: @{} options:0 error:nil] mutableCopy];
         [json appendBytes:"\n" length:1]; resp = json;

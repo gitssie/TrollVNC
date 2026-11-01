@@ -75,6 +75,7 @@ dependencies = [
  "ip_network",
  "ip_network_table",
  "libc",
+ "mock_instant",
  "nix",
  "parking_lot",
  "rand_core",
@@ -408,6 +409,12 @@ dependencies = [
  "wasi",
  "windows-sys",
 ]
+
+[[package]]
+name = "mock_instant"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "717e29a243b81f8130e31e24e04fb151b04a44b5a7d05370935f7d937e9de06d"
 
 [[package]]
 name = "nix"
@@ -780,6 +787,7 @@ dependencies = [
  "base64",
  "boringtun",
  "log",
+ "mock_instant",
  "rand",
  "serde",
  "serde_json",

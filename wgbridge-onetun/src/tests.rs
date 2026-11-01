@@ -332,6 +332,7 @@ fn ffi_validates_inputs_without_a_caller_runtime_and_stop_is_idempotent() {
     }
     TVNCWGStop();
     TVNCWGStop();
+    assert_eq!(TVNCWGConnectedPeers(), 0);
     let (secret, _) = pair();
     let (_, public) = pair();
     let raw = CString::new(
@@ -344,10 +345,16 @@ fn ffi_validates_inputs_without_a_caller_runtime_and_stop_is_idempotent() {
     unsafe {
         let error = TVNCWGStartServices(raw.as_ptr(), services.as_ptr());
         assert!(error.is_null());
+        assert_eq!(
+            TVNCWGConnectedPeers(),
+            0,
+            "local start without a peer handshake is not connected"
+        );
         let duplicate = TVNCWGStartServices(raw.as_ptr(), services.as_ptr());
         assert!(!duplicate.is_null());
         TVNCWGFree(duplicate);
         TVNCWGStop();
+        assert_eq!(TVNCWGConnectedPeers(), 0);
         for port in [0, -1, 65536] {
             let error = TVNCWGStart(raw.as_ptr(), port);
             assert!(!error.is_null());

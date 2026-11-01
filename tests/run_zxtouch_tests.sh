@@ -43,3 +43,7 @@ xcrun clang++ -x objective-c++ -std=c++20 -fobjc-arc -framework Foundation \
     "$PROJECT_ROOT/tests/TVNCSettingsModelTests.mm" \
     "$PROJECT_ROOT/app/TrollVNC/TrollVNC/TVNCSettingsModel.m" -o "$TEST_DIR/settings-tests"
 "$TEST_DIR/settings-tests" "$PROJECT_ROOT/prefs/TrollVNCPrefs/Resources/SettingsCatalog.plist"
+
+xcrun clang -fobjc-arc -framework Foundation -I "$PROJECT_ROOT/src" \
+    "$PROJECT_ROOT/tests/PublicIPTests.m" "$PROJECT_ROOT/src/TVNCPublicIP.m" -o "$TEST_DIR/public-ip-tests"
+"$TEST_DIR/public-ip-tests"

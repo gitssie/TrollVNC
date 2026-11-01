@@ -1,4 +1,4 @@
-export PACKAGE_VERSION := 4.0-17
+export PACKAGE_VERSION := 4.0-19
 # Device releases target Dopamine 3's standard rootless bootstrap only.
 ifeq ($(THEOS_DEVICE_SIMULATOR),)
 THEOS_PACKAGE_SCHEME ?= rootless
@@ -77,7 +77,7 @@ app-state-idfv-worker_INSTALL_PATH := /usr/libexec/trollvnc
 app-state-idfv-worker_CODESIGN_FLAGS := -S$(APP_STATE_ROOT)/product/idfv.entitlements
 endif
 trollvncserver_FILES += src/TVNCAppleService.mm
-trollvncserver_FILES += src/TVNCZXTouchService.mm
+trollvncserver_FILES += src/TVNCZXTouchService.mm src/TVNCPublicIP.m
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchProtocol.cpp
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchImage.cpp
 trollvncserver_FILES += vendor/zxtouch/src/ZXTouchProcessRunner.mm

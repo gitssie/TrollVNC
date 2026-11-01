@@ -1,6 +1,7 @@
 #import "ScreenUnlock.h"
 // SPDX-License-Identifier: GPL-2.0-only
 #import "TVNCZXTouchService.h"
+#import "TVNCPublicIP.h"
 #import "TVNCAppleService.h"
 #import "TVNCAppStateService.h"
 #import "TVASErrors.h"
@@ -185,12 +186,23 @@ static zxtouch::GrayImage ZXGray(CGImageRef image, int width, int height) {
         capabilities[@"karing_vpn_control"]=@1;
         capabilities[@"keyboard_literal"]=@1;
         capabilities[@"app_access_token"]=@1;
+        capabilities[@"device_public_ip"]=@1;
         return TVNCHTTPJSON(capabilities,200);
     }
     if (_stopping) return TVNCHTTPJSON(@{@"error":@"service_stopping"}, 503);
     id value = body.length ? [NSJSONSerialization JSONObjectWithData:body options:0 error:nil] : @{};
     if (![value isKindOfClass:NSDictionary.class]) return TVNCHTTPJSON(@{@"error":@"invalid_json"}, 400);
     NSDictionary *input = value;
+    if ([path isEqual:@"/api/device/public-ip"]) {
+        if (input.count) return TVNCHTTPJSON(@{@"error":@"invalid_request"},400);
+        void *producer=NULL;void *stream=tvnc_http_stream_new(&producer);
+        TVNCQueryPublicIP(^(NSDictionary *result) {
+            NSData *data=[NSJSONSerialization dataWithJSONObject:result options:0 error:NULL];
+            if(data)tvnc_http_stream_send(producer,(const unsigned char *)data.bytes,data.length);
+            tvnc_http_stream_release(producer);
+        });
+        return {NULL,0,200,"application/json",stream};
+    }
     if ([path isEqual:@"/api/apps/access-token"]) {
         if(input.count!=1 || ![input[@"bundle_id"]isEqual:@"lt.manodrabuziai.fr"])
             return TVNCHTTPJSON(@{@"error":@"unsupported_app"},400);
