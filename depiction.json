@@ -9,7 +9,7 @@
       "views": [
         {
           "class": "DepictionMarkdownView",
-          "markdown": "# TrollVNC 3.2-308\n\nControl and view your iPhone over VNC. This **XenSpace** build is packaged for **Dopamine RootHide** on iOS 15 or later.\n\n- VNC and ZXTouch access over local Wi-Fi or WireGuard\n- Unified native settings for both services\n- Reverse connections to a listening viewer or UltraVNC repeater\n- Browser viewer and file transfer support\n\n**Package:** iphoneos-arm64e · 3.93 MB\n\n**SHA-256:** `31002f7797a96cfd3fea0284330bd86e3390e71f2b661bcd9bb5fd2aa43a227d`\n\nBased on the open-source TrollVNC project by 82Flex."
+          "markdown": "# TrollVNC 4.0-19\n\nControl and view your iPhone over VNC. This **XenSpace** build is packaged for **Dopamine 3** on iOS 15 or later.\n\n- VNC and ZXTouch access over local Wi-Fi or WireGuard\n- Unified native settings for both services\n- Reverse connections to a listening viewer or UltraVNC repeater\n- Browser viewer and file transfer support\n\n**Package:** iphoneos-arm64 · 3.30 MB\n\n**SHA-256:** `2605285b5195d178d5f9392d1aa52a15b58b1467f4e1e572a24229ff6ba632c0`\n\nBased on the open-source TrollVNC project by 82Flex."
         },
         {
           "class": "DepictionSeparatorView"
@@ -34,7 +34,7 @@
       "views": [
         {
           "class": "DepictionMarkdownView",
-          "markdown": "## Install with Sileo\n\nAdd `https://gitssie.github.io/TrollVNC` as a source, refresh it, then install **TrollVNC**. This package is for Dopamine RootHide on iOS 15+."
+          "markdown": "## Install with Sileo\n\nAdd `https://gitssie.github.io/TrollVNC` as a source, refresh it, then install **TrollVNC**. This package is for Dopamine 3 on iOS 15+."
         },
         {
           "class": "DepictionTableButtonView",
