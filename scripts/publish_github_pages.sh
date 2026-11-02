@@ -64,20 +64,20 @@ remote_url=$(git -C "$root" remote get-url "$remote_name") || fail "origin remot
 [ "$remote_url" = git@github.com:gitssie/TrollVNC.git ] ||
     fail "origin must be git@github.com:gitssie/TrollVNC.git"
 
-assert_main() {
+assert_dev() {
     current_branch=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-    [ "$current_branch" = main ] || fail "publish from main only"
+    [ "$current_branch" = dev ] || fail "publish from dev only"
     [ -z "$(git -C "$root" status --porcelain --untracked-files=normal)" ] ||
-        fail "main worktree must be clean"
+        fail "dev worktree must be clean"
     local_sha=$(git -C "$root" rev-parse HEAD)
-    remote_line=$(git ls-remote --heads "$remote_url" refs/heads/main) ||
-        fail "could not read remote main"
+    remote_line=$(git ls-remote --heads "$remote_url" refs/heads/dev) ||
+        fail "could not read remote dev"
     remote_sha=$(printf '%s\n' "$remote_line" | awk 'NR == 1 {print $1}')
-    [ -n "$remote_sha" ] || fail "remote main is missing"
-    [ "$local_sha" = "$remote_sha" ] || fail "local main must match remote main"
+    [ -n "$remote_sha" ] || fail "remote dev is missing"
+    [ "$local_sha" = "$remote_sha" ] || fail "local dev must match remote dev"
 }
 
-assert_main
+assert_dev
 release_head=$local_sha
 
 if [ -z "${THEOS:-}" ]; then
@@ -97,7 +97,7 @@ package="$root/packages/${package_id}_${version}_iphoneos-arm64.deb"
 [ ! -L "$package" ] || fail "expected package path must not be a symlink"
 rm -f -- "$package"
 umask 022
-make -C "$root" clean package THEOS_PACKAGE_SCHEME=rootless THEBOOTSTRAP= THEOS_DEVICE_SIMULATOR=
+make -C "$root" -j1 clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless THEBOOTSTRAP= THEOS_DEVICE_SIMULATOR=
 umask 077
 [ -f "$package" ] && [ ! -L "$package" ] || fail "fresh Dopamine 3 package was not produced"
 
@@ -112,8 +112,8 @@ published_version=$(awk -F= '$1 == "version" {print $2}' "$metadata")
 published_sha256=$(awk -F= '$1 == "sha256" {print $2}' "$metadata")
 [ -n "$published_version" ] && [ -n "$published_sha256" ] || fail "renderer did not report package metadata"
 
-assert_main
-[ "$local_sha" = "$release_head" ] || fail "main changed while building"
+assert_dev
+[ "$local_sha" = "$release_head" ] || fail "dev changed while building"
 
 git -C "$repository" init --quiet
 git -C "$repository" remote add "$remote_name" "$remote_url"
@@ -151,8 +151,8 @@ fi
 cp -Rf "$site/." "$repository/"
 git -C "$repository" add --all
 
-assert_main
-[ "$local_sha" = "$release_head" ] || fail "main changed while preparing publication"
+assert_dev
+[ "$local_sha" = "$release_head" ] || fail "dev changed while preparing publication"
 if git -C "$repository" diff --cached --quiet; then
     printf 'already_published_version=%s\nsource_url=%s\n' "$published_version" "$source_url"
     exit 0
@@ -164,8 +164,8 @@ git_email=$(git -C "$root" config user.email || true)
 git -C "$repository" -c "user.name=$git_name" -c "user.email=$git_email" \
     commit --quiet -m "repo: publish TrollVNC $published_version"
 
-assert_main
-[ "$local_sha" = "$release_head" ] || fail "main changed before push"
+assert_dev
+[ "$local_sha" = "$release_head" ] || fail "dev changed before push"
 git -C "$repository" push "$remote_name" "HEAD:refs/heads/$branch"
 printf 'published_version=%s\npublished_sha256=%s\npublished_branch=%s\nsource_url=%s\nsileo_url=sileo://source/%s\n' \
     "$published_version" "$published_sha256" "$branch" "$source_url" "$source_url"

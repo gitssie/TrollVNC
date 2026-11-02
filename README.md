@@ -681,14 +681,14 @@ The existing XenSpace source is hosted at
 After an explicitly requested publication, this branch targets Dopamine 3. The publication script builds a fresh `iphoneos-arm64` deb locally, checks
 the package identity and metadata, renders a static website and APT indexes,
 then pushes only the generated files to `gh-pages`. It does not switch the
-current `main` worktree or run the device tunnel.
+current `dev` worktree or run the device tunnel.
 
 ```sh
 scripts/publish_github_pages.sh --dry-run publish
 scripts/publish_github_pages.sh publish
 ```
 
-Publish from a clean `main` branch that matches `origin/main`. The first time,
+Publish from a clean `dev` branch that matches `origin/dev`. The first time,
 set GitHub **Settings → Pages → Deploy from a branch → gh-pages → /(root)**.
 The page and package metadata show **XenSpace** as the Sileo developer; the
 site and depiction retain attribution to the original TrollVNC project by
